@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "841919184301",
+    "project_id": "myfsl-638bb",
+    "storage_bucket": "myfsl-638bb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:841919184301:android:bdc8dd857dd248b0fab524",
+        "android_client_info": {
+          "package_name": "com.example.myfsl"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDo230U6WfrDBCUEvSaS_wpBlhYg-URt9A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
