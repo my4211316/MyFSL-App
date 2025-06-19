@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace = "com.example.myfsl"
-    compileSdk = 34
+    compileSdk = 35  // 更新到 35 以支援新的依賴
 
     defaultConfig {
         applicationId = "com.example.myfsl"
         minSdk = 24
-        targetSdk = 34
+        targetSdk = 34  // 保持 34，不會影響運行時行為
         versionCode = 1
         versionName = "1.0"
 
@@ -74,10 +74,10 @@ dependencies {
     implementation("com.google.firebase:firebase-auth-ktx")
     implementation("com.google.firebase:firebase-firestore-ktx")
 
-    // Vico Chart Library - 暫時註解掉，稍後再加
-    // implementation("com.patrykandpatrick.vico:compose:1.13.1")
-    // implementation("com.patrykandpatrick.vico:compose-m3:1.13.1")
-    // implementation("com.patrykandpatrick.vico:core:1.13.1")
+    // 將 Vico 版本從 2.1.0 降級到 1.14.0
+    implementation("com.patrykandpatrick.vico:compose:1.14.0")
+    implementation("com.patrykandpatrick.vico:compose-m3:1.14.0")
+    implementation("com.patrykandpatrick.vico:core:1.14.0")
 
     // Testing
     testImplementation("junit:junit:4.13.2")

@@ -1,67 +1,317 @@
 package com.example.myfsl
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
-import java.time.LocalDate
-import java.time.ZoneId
 import java.util.*
+
+// 注意：FilterType 和 DateFilterState 已經移到 MainViewModel.kt 中
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@Composable
+fun TransactionListScreen(vm: MainViewModel) {
+
+    // 根據ViewModel的狀態，決定是否顯示日期範圍選擇器
+    if (vm.showDateRangePicker) {
+        val dateRangePickerState = rememberDateRangePickerState()
+        DateRangePickerDialog(
+            state = dateRangePickerState,
+            onDismiss = vm::closeDateRangePicker,
+            onConfirm = {
+                val start = dateRangePickerState.selectedStartDateMillis?.let { Date(it) }
+                val end = dateRangePickerState.selectedEndDateMillis?.let { Date(it) }
+                if (start != null && end != null) {
+                    vm.onFilterChange(FilterType.CUSTOM, startDate = start, endDate = end)
+                }
+                vm.closeDateRangePicker()
+            }
+        )
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("交易列表") },
+                actions = {
+                    // 右上角的日曆按鈕
+                    IconButton(onClick = vm::openDateRangePicker) {
+                        Icon(imageVector = Icons.Default.DateRange, contentDescription = "選擇日期範圍")
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
+        Column(modifier = Modifier.padding(paddingValues)) {
+            // 1. 定義我們的分頁 - 動態增加自訂範圍頁籤
+            val tabs = when (vm.dateFilterState.type) {
+                FilterType.CUSTOM -> listOf("本日", "本週", "本月", "自訂範圍")
+                else -> listOf("本日", "本週", "本月")
+            }
+
+            val pagerState = rememberPagerState { tabs.size }
+            val coroutineScope = rememberCoroutineScope()
+
+            // 監聽並同步 Pager 和 Tab 的狀態
+            LaunchedEffect(vm.dateFilterState.type) {
+                // 當篩選條件改變時，同步pager位置
+                val targetIndex = when (vm.dateFilterState.type) {
+                    FilterType.TODAY -> 0
+                    FilterType.THIS_WEEK -> 1
+                    FilterType.THIS_MONTH -> 2
+                    FilterType.CUSTOM -> 3 // 自訂範圍到第4個頁籤
+                }
+                if (targetIndex < tabs.size && targetIndex != pagerState.currentPage) {
+                    pagerState.animateScrollToPage(targetIndex)
+                }
+            }
+
+            LaunchedEffect(pagerState.settledPage) {
+                // 只有在用戶手動滑動或點擊Tab時才觸發篩選
+                when (pagerState.settledPage) {
+                    0 -> vm.onFilterChange(FilterType.TODAY)
+                    1 -> vm.onFilterChange(FilterType.THIS_WEEK)
+                    2 -> vm.onFilterChange(FilterType.THIS_MONTH)
+                    3 -> {
+                        // 如果是自訂範圍頁籤，保持當前的自訂篩選
+                        if (vm.dateFilterState.type != FilterType.CUSTOM) {
+                            // 如果不是自訂範圍狀態，回到本月
+                            vm.onFilterChange(FilterType.THIS_MONTH)
+                        }
+                    }
+                }
+            }
+
+            // 2. 建立頂部的 TabRow (頁籤) - 只在有自訂範圍時顯示4個tab
+            if (tabs.size > 3) {
+                val selectedTabIndex = when(vm.dateFilterState.type) {
+                    FilterType.TODAY -> 0
+                    FilterType.THIS_WEEK -> 1
+                    FilterType.THIS_MONTH -> 2
+                    FilterType.CUSTOM -> 3
+                }
+
+                TabRow(selectedTabIndex = selectedTabIndex) {
+                    tabs.forEachIndexed { index, title ->
+                        Tab(
+                            selected = selectedTabIndex == index,
+                            onClick = {
+                                coroutineScope.launch {
+                                    // 先滑動到對應頁面
+                                    pagerState.animateScrollToPage(index)
+                                    // 再觸發篩選
+                                    when (index) {
+                                        0 -> vm.onFilterChange(FilterType.TODAY)
+                                        1 -> vm.onFilterChange(FilterType.THIS_WEEK)
+                                        2 -> vm.onFilterChange(FilterType.THIS_MONTH)
+                                        3 -> {
+                                            // 保持當前的自訂範圍狀態
+                                            // 不需要重新觸發篩選
+                                        }
+                                    }
+                                }
+                            },
+                            text = {
+                                if (index == 3 && vm.dateFilterState.type == FilterType.CUSTOM) {
+                                    // 顯示自訂範圍的日期
+                                    val startDate = vm.dateFilterState.startDate?.let {
+                                        SimpleDateFormat("MM/dd", Locale.getDefault()).format(it)
+                                    } ?: ""
+                                    val endDate = vm.dateFilterState.endDate?.let {
+                                        SimpleDateFormat("MM/dd", Locale.getDefault()).format(it)
+                                    } ?: ""
+                                    Text(
+                                        text = if (startDate.isNotEmpty() && endDate.isNotEmpty()) {
+                                            "$startDate-$endDate"
+                                        } else {
+                                            title
+                                        },
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                } else {
+                                    Text(text = title)
+                                }
+                            }
+                        )
+                    }
+                }
+            } else {
+                // 原本的3個tab
+                val selectedTabIndex = when(vm.dateFilterState.type) {
+                    FilterType.TODAY -> 0
+                    FilterType.THIS_WEEK -> 1
+                    FilterType.THIS_MONTH -> 2
+                    FilterType.CUSTOM -> 2 // 如果是自訂範圍但沒有專屬tab，回到本月
+                }
+
+                TabRow(selectedTabIndex = selectedTabIndex) {
+                    tabs.forEachIndexed { index, title ->
+                        Tab(
+                            selected = selectedTabIndex == index,
+                            onClick = {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(index)
+                                    when (index) {
+                                        0 -> vm.onFilterChange(FilterType.TODAY)
+                                        1 -> vm.onFilterChange(FilterType.THIS_WEEK)
+                                        2 -> vm.onFilterChange(FilterType.THIS_MONTH)
+                                    }
+                                }
+                            },
+                            text = { Text(text = title) }
+                        )
+                    }
+                }
+            }
+
+            // 3. 建立可以水平滑動的 Pager
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                // Pager 的每一頁，都是我們之前建立的那個交易列表
+                TransactionList(vm = vm)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DateRangePickerDialog(
+    state: DateRangePickerState,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                enabled = state.selectedStartDateMillis != null && state.selectedEndDateMillis != null
+            ) {
+                Text("確認")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    ) {
+        // 使用更大的高度避免裁切，並調整 padding
+        DateRangePicker(
+            state = state,
+            modifier = Modifier
+                .height(500.dp)  // 增加高度避免底部裁切
+                .padding(horizontal = 8.dp), // 增加水平邊距避免文字被圓角擋到
+            title = {
+                Text(
+                    text = "選取日期",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 8.dp) // 給標題額外的左邊距
+                )
+            },
+            headline = {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 12.dp), // 增加邊距
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(
+                            text = state.selectedStartDateMillis?.let {
+                                SimpleDateFormat("yyyy/MM/dd", Locale.getDefault()).format(Date(it))
+                            } ?: "開始日期",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Text(
+                        text = "-",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    )
+
+                    Column {
+                        Text(
+                            text = state.selectedEndDateMillis?.let {
+                                SimpleDateFormat("yyyy/MM/dd", Locale.getDefault()).format(Date(it))
+                            } ?: "結束日期",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            },
+            showModeToggle = false
+        )
+    }
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TransactionListScreen(vm: MainViewModel) {
+fun TransactionList(vm: MainViewModel) {
     val transactions by vm.transactions.collectAsState()
 
-    // 加入調試日誌
-    LaunchedEffect(transactions) {
-        println("TransactionListScreen: Got ${transactions.size} transactions")
-        transactions.forEach { transaction ->
-            println("Transaction: amount=${transaction.amount}, isExpense=${transaction.isExpense}, category=${transaction.category}")
-        }
+    // 根據日期篩選交易
+    val filteredTransactions = remember(transactions, vm.dateFilterState) {
+        filterTransactionsByDate(transactions, vm.dateFilterState)
     }
 
-    val groupedTransactions = transactions.groupBy {
-        it.transactionDate.toInstant().atZone(ZoneId.systemDefault()).toLocalDate()
+    // 按日期分組
+    val groupedTransactions = remember(filteredTransactions) {
+        filteredTransactions
+            .groupBy {
+                SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(it.transactionDate)
+            }
+            .toSortedMap(compareByDescending { it })
     }
 
-    if (groupedTransactions.isEmpty()) {
+    if (filteredTransactions.isEmpty()) {
         Box(
-            modifier = Modifier.fillMaxSize().padding(16.dp),
+            modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
-            Text("尚未有任何交易紀錄。")
+            Text(
+                text = "此期間無交易記錄",
+                style = MaterialTheme.typography.bodyLarge,
+                color = Color.Gray
+            )
         }
     } else {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            val sortedGroups = groupedTransactions.entries.sortedByDescending { it.key }
-
-            sortedGroups.forEach { (date, transactionsOnDate) ->
+            groupedTransactions.forEach { (date, transactionsForDate) ->
                 stickyHeader {
                     DateHeader(date = date)
                 }
-                items(transactionsOnDate) { transaction ->
+
+                items(
+                    items = transactionsForDate,
+                    key = { transaction -> transaction.hashCode() }
+                ) { transaction ->
                     TransactionRowItem(transaction = transaction)
-                    Spacer(modifier = Modifier.height(8.dp))
                 }
             }
         }
@@ -69,145 +319,177 @@ fun TransactionListScreen(vm: MainViewModel) {
 }
 
 @Composable
-fun DateHeader(date: LocalDate?) {
-    if (date == null) return
-    val today = LocalDate.now()
-    val yesterday = today.minusDays(1)
-
-    val dateText = when (date) {
-        today -> "今天"
-        yesterday -> "昨天"
-        else -> SimpleDateFormat("yyyy年 M月 d日 (E)", Locale.TAIWAN).format(
-            Date.from(date.atStartOfDay(ZoneId.systemDefault()).toInstant())
-        )
-    }
-
-    Box(
+fun DateHeader(date: String) {
+    Card(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(vertical = 8.dp)
+            .padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
     ) {
         Text(
-            text = dateText,
-            style = MaterialTheme.typography.titleSmall,
+            text = formatDisplayDate(date),
+            modifier = Modifier.padding(12.dp),
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary
+            color = MaterialTheme.colorScheme.onPrimaryContainer
         )
     }
 }
 
 @Composable
 fun TransactionRowItem(transaction: Transaction) {
-    // 加入調試日誌
-    println("TransactionRowItem: amount=${transaction.amount}, isExpense=${transaction.isExpense}")
-
-    // 定義顏色
-    val backgroundColor = if (transaction.isExpense) {
-        Color(0xFFFFF3F3) // 淡紅色背景
-    } else {
-        Color(0xFFF0FFF4) // 淡綠色背景
-    }
-
-    val borderColor = if (transaction.isExpense) {
-        Color(0xFFFFE1E1) // 紅色邊框
-    } else {
-        Color(0xFFE1F5E1) // 綠色邊框
-    }
-
-    val amountColor = if (transaction.isExpense) {
-        Color(0xFFDC2626) // 紅色金額
-    } else {
-        Color(0xFF059669) // 綠色金額
-    }
-
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp)),
-        colors = CardDefaults.cardColors(containerColor = backgroundColor),
+        modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
             modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth(),
+                .fillMaxWidth()
+                .padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 左側：圖示 + 分類資訊
-            Row(
-                modifier = Modifier.weight(1f),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // 收支標籤
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(borderColor),
-                    contentAlignment = Alignment.Center
-                ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = transaction.category,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+
+                if (transaction.notes.isNotBlank()) {
                     Text(
-                        text = if (transaction.isExpense) "支" else "收",
-                        color = amountColor,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
+                        text = transaction.notes,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.Gray
                     )
                 }
 
-                Spacer(modifier = Modifier.width(12.dp))
-
-                // 交易資訊
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = if (transaction.isExpense) "支出" else "收入",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = amountColor,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = transaction.category,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-
-                    if (transaction.notes.isNotBlank()) {
-                        Text(
-                            text = transaction.notes,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.Gray
-                        )
-                    }
-
-                    val details = mutableListOf<String>()
-                    if (transaction.isExpense && transaction.paymentMethod != "N/A") {
-                        details.add(transaction.paymentMethod)
-                    }
-                    transaction.transactionDate.let {
-                        details.add(SimpleDateFormat("HH:mm", Locale.TAIWAN).format(it))
-                    }
+                if (transaction.isExpense && transaction.paymentMethod.isNotBlank()) {
                     Text(
-                        text = details.joinToString(" · "),
+                        text = transaction.paymentMethod,
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.Gray
                     )
                 }
             }
 
-            // 右側：金額
             Column(horizontalAlignment = Alignment.End) {
-                val amountText = "%,.0f".format(transaction.amount)
                 Text(
-                    text = if (transaction.isExpense) "-NT$ $amountText" else "+NT$ $amountText",
-                    color = amountColor,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
+                    text = if (transaction.isExpense) {
+                        "-NT$ ${"%,.0f".format(transaction.amount)}"
+                    } else {
+                        "+NT$ ${"%,.0f".format(transaction.amount)}"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (transaction.isExpense) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        Color(0xFF4CAF50)
+                    }
+                )
+
+                Text(
+                    text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(transaction.transactionDate),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
                 )
             }
         }
+    }
+}
+
+// 輔助函數
+private fun filterTransactionsByDate(
+    transactions: List<Transaction>,
+    filterState: DateFilterState
+): List<Transaction> {
+    val calendar = Calendar.getInstance()
+    val now = Date()
+
+    return when (filterState.type) {
+        FilterType.TODAY -> {
+            calendar.time = now
+            val startOfDay = calendar.apply {
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.time
+
+            val endOfDay = calendar.apply {
+                set(Calendar.HOUR_OF_DAY, 23)
+                set(Calendar.MINUTE, 59)
+                set(Calendar.SECOND, 59)
+                set(Calendar.MILLISECOND, 999)
+            }.time
+
+            transactions.filter {
+                !it.transactionDate.before(startOfDay) && !it.transactionDate.after(endOfDay)
+            }
+        }
+
+        FilterType.THIS_WEEK -> {
+            calendar.time = now
+            calendar.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+            calendar.set(Calendar.HOUR_OF_DAY, 0)
+            calendar.set(Calendar.MINUTE, 0)
+            calendar.set(Calendar.SECOND, 0)
+            calendar.set(Calendar.MILLISECOND, 0)
+            val startOfWeek = calendar.time
+
+            transactions.filter { !it.transactionDate.before(startOfWeek) }
+        }
+
+        FilterType.THIS_MONTH -> {
+            calendar.time = now
+            calendar.set(Calendar.DAY_OF_MONTH, 1)
+            calendar.set(Calendar.HOUR_OF_DAY, 0)
+            calendar.set(Calendar.MINUTE, 0)
+            calendar.set(Calendar.SECOND, 0)
+            calendar.set(Calendar.MILLISECOND, 0)
+            val startOfMonth = calendar.time
+
+            transactions.filter { !it.transactionDate.before(startOfMonth) }
+        }
+
+        FilterType.CUSTOM -> {
+            if (filterState.startDate != null && filterState.endDate != null) {
+                // 設定開始日期為當天的00:00:00
+                calendar.time = filterState.startDate
+                calendar.set(Calendar.HOUR_OF_DAY, 0)
+                calendar.set(Calendar.MINUTE, 0)
+                calendar.set(Calendar.SECOND, 0)
+                calendar.set(Calendar.MILLISECOND, 0)
+                val startOfStartDate = calendar.time
+
+                // 設定結束日期為當天的23:59:59
+                calendar.time = filterState.endDate
+                calendar.set(Calendar.HOUR_OF_DAY, 23)
+                calendar.set(Calendar.MINUTE, 59)
+                calendar.set(Calendar.SECOND, 59)
+                calendar.set(Calendar.MILLISECOND, 999)
+                val endOfEndDate = calendar.time
+
+                transactions.filter {
+                    !it.transactionDate.before(startOfStartDate) && !it.transactionDate.after(endOfEndDate)
+                }
+            } else {
+                transactions
+            }
+        }
+    }
+}
+
+private fun formatDisplayDate(dateString: String): String {
+    return try {
+        val inputFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val outputFormat = SimpleDateFormat("MM月dd日 (E)", Locale.getDefault())
+        val date = inputFormat.parse(dateString)
+        outputFormat.format(date ?: Date())
+    } catch (e: Exception) {
+        dateString
     }
 }

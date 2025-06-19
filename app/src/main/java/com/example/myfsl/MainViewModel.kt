@@ -1,32 +1,59 @@
 package com.example.myfsl
 
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.ktx.auth
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.firestore.toObjects
 import com.google.firebase.ktx.Firebase
+// Vico 1.14.0 版本的正確 imports
+import com.patrykandpatrick.vico.core.chart.values.ChartValues
+import com.patrykandpatrick.vico.core.entry.ChartEntryModelProducer
+import com.patrykandpatrick.vico.core.entry.entryOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.*
 
+// 篩選類型枚舉 - 移到這裡避免編譯錯誤
+enum class FilterType {
+    TODAY, THIS_WEEK, THIS_MONTH, CUSTOM
+}
+
+// 日期篩選狀態 - 移到這裡避免編譯錯誤
+data class DateFilterState(
+    val type: FilterType = FilterType.TODAY,
+    val startDate: Date? = null,
+    val endDate: Date? = null
+)
+
+// 用來代表單一預算項目狀態的資料類別
+data class CategoryBudgetState(
+    val categoryName: String,
+    val budgetAmount: Double,
+    val spentAmount: Double,
+    val percentage: Float
+)
+
 // 儀表板所需的數據狀態
 data class DashboardUiState(
     val totalNetWorth: Double = 0.0,
     val thisMonthIncome: Double = 0.0,
     val thisMonthExpense: Double = 0.0,
+    val chartModelProducer: ChartEntryModelProducer? = null,
+    val chartXAxisLabels: List<String> = emptyList(),
+    val categoryBudgetStates: List<CategoryBudgetState> = emptyList(),
     val isLoading: Boolean = false,
     val errorMessage: String? = null
 )
@@ -59,6 +86,10 @@ class MainViewModel : ViewModel() {
         private set
     var showDatePicker by mutableStateOf(false)
         private set
+    var showDateRangePicker by mutableStateOf(false)
+        private set
+    var dateFilterState by mutableStateOf(DateFilterState())
+        private set
     var saveStatus by mutableStateOf<String?>(null)
         private set
 
@@ -68,11 +99,18 @@ class MainViewModel : ViewModel() {
     private val _dashboardState = MutableStateFlow(DashboardUiState())
     val dashboardState: StateFlow<DashboardUiState> = _dashboardState.asStateFlow()
 
-    private val _isLoading = MutableStateFlow(false)
-    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
-
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    // Vico 1.14.0 版本的正確建構方式
+    private val chartModelProducer = ChartEntryModelProducer()
+
+    // 暫時的預算資料庫，第九課會改為從Firebase讀取
+    private val monthlyBudgets: Map<String, Double> = mapOf(
+        "餐飲" to 13000.0, "交通" to 5000.0, "購物" to 11000.0,
+        "娛樂" to 2000.0, "醫療" to 1000.0, "教育" to 3000.0,
+        "其他" to 5000.0, "孝親費" to 10000.0, "信貸還款" to 27000.0
+    )
 
     init {
         if (auth.currentUser == null) {
@@ -126,25 +164,62 @@ class MainViewModel : ViewModel() {
     }
 
     private fun processDataForDashboard(transactions: List<Transaction>) {
-        // 修正：統一使用 isExpense 來判斷收支，金額都保持正數
+        // 1. 修正：正確計算總淨值
         val totalIncome = transactions.filter { !it.isExpense }.sumOf { it.amount }
         val totalExpense = transactions.filter { it.isExpense }.sumOf { it.amount }
-        val netWorth = totalIncome - totalExpense // 總淨值 = 總收入 - 總支出
+        val netWorth = totalIncome - totalExpense
 
+        // 2. 計算本月收支
         val now = LocalDate.now()
         val startOfMonth = now.withDayOfMonth(1)
-
         val thisMonthTransactions = transactions.filter {
             !it.transactionDate.toInstant().atZone(ZoneId.systemDefault()).toLocalDate().isBefore(startOfMonth)
         }
-
         val thisMonthIncome = thisMonthTransactions.filter { !it.isExpense }.sumOf { it.amount }
         val thisMonthExpense = thisMonthTransactions.filter { it.isExpense }.sumOf { it.amount }
 
+        // 3. 準備圖表資料 (最近6個月) - Vico 1.14.0 版本
+        val monthlySummary = transactions
+            .groupBy { YearMonth.from(it.transactionDate.toInstant().atZone(ZoneId.systemDefault()).toLocalDate()) }
+            .mapValues { entry ->
+                val income = entry.value.filter { !it.isExpense }.sumOf { it.amount }
+                val expense = entry.value.filter { it.isExpense }.sumOf { it.amount }
+                Pair(income, expense)
+            }.toSortedMap()
+            .entries
+            .toList()
+            .takeLast(6)
+
+        // Vico 1.14.0 新的數據設置方式
+        val incomeEntries = monthlySummary.mapIndexed { index, entry ->
+            entryOf(index, entry.value.first)
+        }
+        val expenseEntries = monthlySummary.mapIndexed { index, entry ->
+            entryOf(index, entry.value.second)
+        }
+
+        chartModelProducer.setEntries(listOf(incomeEntries, expenseEntries))
+
+        // 4. 計算本月各項預算的執行狀況
+        val spendingByCategory = thisMonthTransactions
+            .filter { it.isExpense }
+            .groupBy { it.category }
+            .mapValues { entry -> entry.value.sumOf { it.amount } }
+
+        val categoryBudgetStates = monthlyBudgets.map { (category, budget) ->
+            val spent = spendingByCategory[category] ?: 0.0
+            val percentage = if (budget > 0) (spent / budget).toFloat() else 0f
+            CategoryBudgetState(category, budget, spent, percentage)
+        }
+
+        // 5. 更新UI狀態
         _dashboardState.value = DashboardUiState(
             totalNetWorth = netWorth,
             thisMonthIncome = thisMonthIncome,
             thisMonthExpense = thisMonthExpense,
+            chartModelProducer = chartModelProducer,
+            chartXAxisLabels = monthlySummary.map { it.key.format(DateTimeFormatter.ofPattern("M月")) },
+            categoryBudgetStates = categoryBudgetStates,
             isLoading = false,
             errorMessage = null
         )
@@ -231,7 +306,11 @@ class MainViewModel : ViewModel() {
     }
 
     // --- 事件 (Events) ---
-    fun onAmountChange(newAmount: String) { if (newAmount.isEmpty() || newAmount.matches(Regex("^\\d*\\.?\\d*$"))) { amount = newAmount } }
+    fun onAmountChange(newAmount: String) {
+        if (newAmount.isEmpty() || newAmount.matches(Regex("^\\d*\\.?\\d*$"))) {
+            amount = newAmount
+        }
+    }
     fun onNotesChange(newNotes: String) { notes = newNotes }
     fun onTransactionTypeChange(isExpenseType: Boolean) {
         Log.d("ViewModel", "onTransactionTypeChange called with: $isExpenseType")
@@ -250,7 +329,22 @@ class MainViewModel : ViewModel() {
     fun dismissAddCategoryDialog() { showAddCategoryDialog = false }
     fun openDatePicker() { showDatePicker = true }
     fun dismissDatePicker() { showDatePicker = false }
+    fun openDateRangePicker() { showDateRangePicker = true }
+    fun closeDateRangePicker() { showDateRangePicker = false }
     fun onSaveStatusConsumed() { saveStatus = null }
+
+    // 日期篩選相關方法
+    fun onFilterChange(
+        filterType: FilterType,
+        startDate: Date? = null,
+        endDate: Date? = null
+    ) {
+        dateFilterState = DateFilterState(
+            type = filterType,
+            startDate = startDate,
+            endDate = endDate
+        )
+    }
 
     // 修正新增分類功能
     fun onNewCategoryAdded(categoryName: String) {
