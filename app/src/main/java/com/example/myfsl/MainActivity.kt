@@ -3,67 +3,64 @@ package com.example.myfsl
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.padding
+import androidx.activity.viewModels
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Settings // 【新增】
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavHostController
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.myfsl.ui.theme.MyFSLTheme
 
-sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
-    object Dashboard : Screen("dashboard", "儀表板", Icons.Default.Home)
-    object Entry : Screen("entry", "記帳", Icons.Default.Edit)
-    object List : Screen("list", "列表", Icons.Default.List)
-    object Settings : Screen("settings", "設定", Icons.Default.Settings) // 【新增】
-}
-
 class MainActivity : ComponentActivity() {
+    private val viewModel: MainViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MyFSLTheme {
-                MainApp()
+                MainContent(viewModel = viewModel)
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainApp() {
+fun MainContent(viewModel: MainViewModel) {
     val navController = rememberNavController()
-    val screens = listOf( // 【修改】
-        Screen.Dashboard,
-        Screen.Entry,
-        Screen.List,
-        Screen.Settings
-    )
 
     Scaffold(
         bottomBar = {
             NavigationBar {
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
-                val currentRoute = navBackStackEntry?.destination?.route
+                val currentDestination = navBackStackEntry?.destination
 
-                screens.forEach { screen ->
+                val items = listOf(
+                    BottomNavItem("dashboard", "儀表板", Icons.Filled.Dashboard),
+                    BottomNavItem("entry", "記帳", Icons.Filled.Add),
+                    BottomNavItem("transactions", "交易", Icons.Filled.List),
+                    BottomNavItem("budgets", "預算", Icons.Filled.AccountBalance),
+                    BottomNavItem("settings", "設定", Icons.Filled.Settings)
+                )
+
+                items.forEach { item ->
                     NavigationBarItem(
-                        icon = { Icon(screen.icon, contentDescription = screen.label) },
-                        label = { Text(screen.label) },
-                        selected = currentRoute == screen.route,
+                        icon = { Icon(item.icon, contentDescription = item.title) },
+                        label = { Text(item.title) },
+                        selected = currentDestination?.hierarchy?.any { it.route == item.route } == true,
                         onClick = {
-                            navController.navigate(screen.route) {
-                                popUpTo(navController.graph.startDestinationId) { saveState = true }
+                            navController.navigate(item.route) {
+                                popUpTo(navController.graph.findStartDestination().id) {
+                                    saveState = true
+                                }
                                 launchSingleTop = true
                                 restoreState = true
                             }
@@ -73,22 +70,60 @@ fun MainApp() {
             }
         }
     ) { innerPadding ->
-        AppNavHost(navController = navController, modifier = Modifier.padding(innerPadding))
+        NavHost(
+            navController = navController,
+            startDestination = "dashboard",
+            modifier = Modifier.padding(innerPadding)
+        ) {
+            composable("dashboard") {
+                DashboardScreen(viewModel = viewModel)
+            }
+            composable("entry") {
+                TransactionEntryScreen(
+                    vm = viewModel,
+                    onNavigateBack = {
+                        navController.navigate("dashboard") {
+                            popUpTo("dashboard") { inclusive = true }
+                        }
+                    }
+                )
+            }
+            composable("transactions") {
+                TransactionListScreen(vm = viewModel)
+            }
+            composable("budgets") {
+                BudgetListScreen(
+                    viewModel = viewModel,
+                    onNavigateToBudgetDetail = { budgetId ->
+                        navController.navigate("budget_detail/$budgetId")
+                    }
+                )
+            }
+            composable("budget_detail/{budgetId}") { backStackEntry ->
+                val budgetId = backStackEntry.arguments?.getString("budgetId") ?: ""
+                BudgetDetailScreen(
+                    viewModel = viewModel,
+                    budgetId = budgetId,
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+            composable("settings") {
+                SettingsScreen(viewModel = viewModel)
+            }
+        }
     }
 }
 
-@Composable
-fun AppNavHost(navController: NavHostController, modifier: Modifier = Modifier) {
-    val mainViewModel: MainViewModel = viewModel()
+data class BottomNavItem(
+    val route: String,
+    val title: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector
+)
 
-    NavHost(
-        navController = navController,
-        startDestination = Screen.Dashboard.route,
-        modifier = modifier
-    ) {
-        composable(Screen.Dashboard.route) { DashboardScreen(vm = mainViewModel) }
-        composable(Screen.Entry.route) { TransactionEntryScreen(vm = mainViewModel) }
-        composable(Screen.List.route) { TransactionListScreen(vm = mainViewModel) }
-        composable(Screen.Settings.route) { SettingsScreen(vm = mainViewModel) } // 【新增】
+@Preview(showBackground = true)
+@Composable
+fun MainContentPreview() {
+    MyFSLTheme {
+        // Preview content
     }
 }

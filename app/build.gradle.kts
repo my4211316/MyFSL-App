@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace = "com.example.myfsl"
-    compileSdk = 35  // 更新到 35 以支援新的依賴
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "com.example.myfsl"
         minSdk = 24
-        targetSdk = 34  // 保持 34，不會影響運行時行為
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0"
 
@@ -24,10 +24,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
     compileOptions {
@@ -51,42 +48,44 @@ android {
 }
 
 dependencies {
-    // Core Android dependencies
+    // Android Core - 降級到相容版本
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")
 
-    // Compose BOM
-    val composeBom = platform("androidx.compose:compose-bom:2023.10.01")
-    implementation(composeBom)
+    // Compose BOM - 使用穩定版本
+    implementation(platform("androidx.compose:compose-bom:2024.02.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
 
-    // Navigation
+    // Compose Navigation
     implementation("androidx.navigation:navigation-compose:2.7.6")
+
+    // ViewModel
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
 
-    // Firebase BOM
-    val firebaseBom = platform("com.google.firebase:firebase-bom:32.7.0")
-    implementation(firebaseBom)
-    implementation("com.google.firebase:firebase-auth-ktx")
-    implementation("com.google.firebase:firebase-firestore-ktx")
+    // Firebase BOM - 使用穩定版本
+    implementation(platform("com.google.firebase:firebase-bom:32.7.0"))
+    implementation("com.google.firebase:firebase-analytics")
+    implementation("com.google.firebase:firebase-auth")
+    implementation("com.google.firebase:firebase-firestore")
 
-    // 將 Vico 版本從 2.1.0 降級到 1.14.0
-    implementation("com.patrykandpatrick.vico:compose:1.14.0")
-    implementation("com.patrykandpatrick.vico:compose-m3:1.14.0")
-    implementation("com.patrykandpatrick.vico:core:1.14.0")
+    // Vico Charts - 1.13.1 版本（穩定版）
+    implementation("com.patrykandpatrick.vico:compose:1.13.1")
+    implementation("com.patrykandpatrick.vico:compose-m3:1.13.1")
+    implementation("com.patrykandpatrick.vico:core:1.13.1")
+
+    // Material Icons Extended
+    implementation("androidx.compose.material:material-icons-extended:1.5.8")
 
     // Testing
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    androidTestImplementation(composeBom)
+    androidTestImplementation(platform("androidx.compose:compose-bom:2024.02.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
-
-    // Debug
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
