@@ -26,12 +26,12 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.*
 
-// 篩選類型枚舉 - 移到這裡避免編譯錯誤
+// 篩選類型枚舉
 enum class FilterType {
     TODAY, THIS_WEEK, THIS_MONTH, CUSTOM
 }
 
-// 日期篩選狀態 - 移到這裡避免編譯錯誤
+// 日期篩選狀態
 data class DateFilterState(
     val type: FilterType = FilterType.TODAY,
     val startDate: Date? = null,
@@ -105,7 +105,7 @@ class MainViewModel : ViewModel() {
     // Vico 1.14.0 版本的正確建構方式
     private val chartModelProducer = ChartEntryModelProducer()
 
-    // 暫時的預算資料庫，第九課會改為從Firebase讀取
+    // 暫時的預算資料庫，之後可以改為從Firebase讀取
     private val monthlyBudgets: Map<String, Double> = mapOf(
         "餐飲" to 13000.0, "交通" to 5000.0, "購物" to 11000.0,
         "娛樂" to 2000.0, "醫療" to 1000.0, "教育" to 3000.0,
@@ -225,7 +225,7 @@ class MainViewModel : ViewModel() {
         )
     }
 
-    // 載入使用者自訂分類
+    // 載入使用者自訂分類 - 簡化版本
     private fun loadCategories() {
         val userId = auth.currentUser?.uid ?: return
 
@@ -294,6 +294,66 @@ class MainViewModel : ViewModel() {
         }
     }
 
+    // --- 新增的分類管理功能 ---
+
+    // 新增分類 - 統一接口，支援從設定頁面和記帳頁面呼叫
+    fun onNewCategoryAdded(categoryName: String, isExpenseType: Boolean = isExpense) {
+        val userId = auth.currentUser?.uid ?: return
+        val collectionPath = if (isExpenseType) "expenseCategories" else "incomeCategories"
+
+        db.collection("userCategories").document(userId)
+            .collection(collectionPath).document(categoryName)
+            .set(mapOf(
+                "createdAt" to com.google.firebase.Timestamp.now(),
+                "isDefault" to false
+            ))
+            .addOnSuccessListener {
+                Log.d("ViewModel", "Category '$categoryName' added.")
+                // 如果是從記帳頁新增，則直接選中
+                if(showAddCategoryDialog) {
+                    selectedCategory = categoryName
+                    showAddCategoryDialog = false
+                }
+            }
+            .addOnFailureListener { e ->
+                saveStatus = "新增分類失敗: ${e.message}"
+            }
+    }
+
+    // 刪除分類
+    fun deleteCategory(categoryName: String, isExpenseType: Boolean) {
+        val userId = auth.currentUser?.uid ?: return
+        val collectionPath = if (isExpenseType) "expenseCategories" else "incomeCategories"
+
+        db.collection("userCategories").document(userId)
+            .collection(collectionPath).document(categoryName)
+            .delete()
+            .addOnFailureListener { e ->
+                saveStatus = "刪除分類失敗: ${e.message}"
+            }
+    }
+
+    // 更新分類名稱
+    fun updateCategory(oldName: String, newName: String, isExpenseType: Boolean) {
+        if (oldName == newName || newName.isBlank()) return
+        val userId = auth.currentUser?.uid ?: return
+        val collectionPath = if (isExpenseType) "expenseCategories" else "incomeCategories"
+        val collectionRef = db.collection("userCategories").document(userId).collection(collectionPath)
+
+        // 因為文件ID就是分類名稱，所以更新等於「刪除舊的，新增新的」
+        val batch = db.batch()
+        batch.delete(collectionRef.document(oldName))
+        batch.set(collectionRef.document(newName), mapOf(
+            "createdAt" to com.google.firebase.Timestamp.now(),
+            "isDefault" to false
+        ))
+
+        batch.commit()
+            .addOnFailureListener { e ->
+                saveStatus = "更新分類失敗: ${e.message}"
+            }
+    }
+
     // 錯誤訊息清除方法
     fun clearErrorMessage() {
         _errorMessage.value = null
@@ -344,54 +404,6 @@ class MainViewModel : ViewModel() {
             startDate = startDate,
             endDate = endDate
         )
-    }
-
-    // 修正新增分類功能
-    fun onNewCategoryAdded(categoryName: String) {
-        val userId = auth.currentUser?.uid ?: return
-
-        if (isExpense) {
-            // 先添加到本地列表（樂觀更新）
-            expenseCategories.add(categoryName)
-
-            // 儲存到 Firebase
-            db.collection("userCategories")
-                .document(userId)
-                .collection("expenseCategories")
-                .document(categoryName)
-                .set(mapOf(
-                    "createdAt" to com.google.firebase.Timestamp.now(),
-                    "isDefault" to false
-                ))
-                .addOnFailureListener { e ->
-                    Log.w("ViewModel", "Failed to save expense category", e)
-                    // 如果儲存失敗，從本地列表移除
-                    expenseCategories.remove(categoryName)
-                    saveStatus = "新增分類失敗: ${e.message}"
-                }
-        } else {
-            // 先添加到本地列表（樂觀更新）
-            incomeCategories.add(categoryName)
-
-            // 儲存到 Firebase
-            db.collection("userCategories")
-                .document(userId)
-                .collection("incomeCategories")
-                .document(categoryName)
-                .set(mapOf(
-                    "createdAt" to com.google.firebase.Timestamp.now(),
-                    "isDefault" to false
-                ))
-                .addOnFailureListener { e ->
-                    Log.w("ViewModel", "Failed to save income category", e)
-                    // 如果儲存失敗，從本地列表移除
-                    incomeCategories.remove(categoryName)
-                    saveStatus = "新增分類失敗: ${e.message}"
-                }
-        }
-
-        selectedCategory = categoryName
-        showAddCategoryDialog = false
     }
 
     fun saveTransaction() {
