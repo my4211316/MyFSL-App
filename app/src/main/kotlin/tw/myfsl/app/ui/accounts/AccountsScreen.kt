@@ -1,0 +1,391 @@
+package tw.myfsl.app.ui.accounts
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import tw.myfsl.app.core.domain.AccountDraft
+import tw.myfsl.app.core.domain.AccountForm.Field
+import tw.myfsl.app.core.domain.CardView
+import tw.myfsl.app.core.domain.LoanView
+import tw.myfsl.app.core.model.Account
+import tw.myfsl.app.core.model.AccountKind
+import tw.myfsl.app.core.model.CardPayMode
+import tw.myfsl.app.core.model.MoneyFormat
+import tw.myfsl.app.core.model.RepaymentMethod
+import tw.myfsl.app.ui.theme.StatusColors
+
+/** 帳戶：清單與新增／編輯。細節都是選填。 */
+@Composable
+fun AccountsScreen(
+    state: AccountsUiState,
+    onAdd: () -> Unit,
+    onEdit: (Account) -> Unit,
+    onChange: ((AccountDraft) -> AccountDraft) -> Unit,
+    onToggleAdvanced: () -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
+    onArchive: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (state.loading) {
+        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        return
+    }
+    val editor = state.editor
+    if (editor != null) {
+        AccountEditorForm(editor, state.payAccounts, onChange, onToggleAdvanced, onSave, onCancel, onArchive, modifier)
+        return
+    }
+    val overview = state.overview ?: return
+
+    Box(modifier.fillMaxSize()) {
+        LazyColumn(
+            Modifier.fillMaxSize().padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                Text("帳戶", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 12.dp))
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SummaryTile("可動用現金", MoneyFormat.currency(overview.liquid), Modifier.weight(1f))
+                    SummaryTile("負債合計", MoneyFormat.currency(overview.totalDebt), Modifier.weight(1f))
+                }
+            }
+
+            if (overview.liquidAccounts.isNotEmpty()) {
+                item { SectionTitle("現金與存款") }
+                items(overview.liquidAccounts, key = { "liquid-${it.id}" }) { account ->
+                    AccountRow(account.name, account.kind.label, MoneyFormat.currency(account.balance), emptyList(), false) { onEdit(account) }
+                }
+            }
+
+            if (overview.cards.isNotEmpty()) {
+                item { SectionTitle("信用卡") }
+                items(overview.cards, key = { "card-${it.account.id}" }) { card ->
+                    AccountRow(
+                        title = card.account.name,
+                        subtitle = listOf(card.account.kind.label, card.account.issuer).filter { it.isNotBlank() }.joinToString(" · "),
+                        amount = "欠 " + MoneyFormat.currency(card.account.balance),
+                        details = cardDetails(card),
+                        warn = (card.utilizationPercent ?: 0) >= 50,
+                    ) { onEdit(card.account) }
+                }
+            }
+
+            if (overview.loans.isNotEmpty()) {
+                item { SectionTitle("貸款") }
+                items(overview.loans, key = { "loan-${it.account.id}" }) { loan ->
+                    AccountRow(loan.account.name, loan.account.kind.label, "欠 " + MoneyFormat.currency(loan.account.balance), loanDetails(loan), false) {
+                        onEdit(loan.account)
+                    }
+                }
+            }
+
+            if (overview.liquidAccounts.isEmpty() && overview.cards.isEmpty() && overview.loans.isEmpty()) {
+                item {
+                    Text(
+                        "還沒有帳戶。先新增錢包、銀行和信用卡，記帳時才有地方扣款。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            item { Spacer(Modifier.height(88.dp)) }
+        }
+
+        ExtendedFloatingActionButton(
+            onClick = onAdd,
+            icon = { Icon(Icons.Default.Add, contentDescription = null) },
+            text = { Text("新增帳戶") },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+        )
+    }
+}
+
+private fun cardDetails(card: CardView): List<String> = buildList {
+    card.account.creditLimit?.let { limit ->
+        add("額度 ${MoneyFormat.currency(limit)} · 已佔用 ${MoneyFormat.currency(card.usedCredit)}" + (card.utilizationPercent?.let { " · 使用率 $it%" } ?: ""))
+    }
+    if (card.installmentCount > 0) {
+        add("分期 ${card.installmentCount} 筆 · 未入帳 ${MoneyFormat.currency(card.pendingInstallmentPrincipal)} · 下期 ${MoneyFormat.currency(card.nextInstallmentAmount)}")
+    }
+    card.account.card?.let { terms ->
+        add("循環年利率 ${trim(terms.revolvingRatePercent)}% · 當期利息 ${MoneyFormat.currency(card.interest)} · 最低應繳 ${MoneyFormat.currency(card.minimumPayment ?: 0)}")
+        terms.revolvingBalance?.let { add("既有卡循 ${MoneyFormat.currency(it)}") }
+    }
+    val days = listOfNotNull(card.account.statementDay?.let { "結帳日 $it 日" }, card.account.paymentDueDay?.let { "繳款日 $it 日" })
+    if (days.isNotEmpty()) add(days.joinToString(" · "))
+    if (card.monthSpending > 0) add("本月已刷 ${MoneyFormat.currency(card.monthSpending)}")
+}
+
+private fun loanDetails(loan: LoanView): List<String> = buildList {
+    loan.account.loan?.let { terms ->
+        add("${terms.method.label} · 年利率 ${trim(terms.annualRatePercent)}% · 剩 ${terms.remainingMonths} 期")
+    }
+    if (loan.monthlyPayment > 0) add("每月約繳 ${MoneyFormat.currency(loan.monthlyPayment)}")
+    loan.repaidPercent?.let { add("已還 $it%") }
+}
+
+private fun trim(value: Double): String =
+    if (value == value.toLong().toDouble()) value.toLong().toString() else value.toString()
+
+@Composable
+private fun SummaryTile(label: String, value: String, modifier: Modifier = Modifier) {
+    Card(modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+        Column(Modifier.padding(12.dp)) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.titleMedium)
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(text, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+}
+
+@Composable
+private fun AccountRow(
+    title: String,
+    subtitle: String,
+    amount: String,
+    details: List<String>,
+    warn: Boolean,
+    onClick: () -> Unit,
+) {
+    Card(
+        onClick = onClick,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleSmall)
+                    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(amount, style = MaterialTheme.typography.titleSmall)
+            }
+            details.forEach {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (warn && it.contains("使用率")) StatusColors.warningText else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+// ---------------- 編輯表單 ----------------
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AccountEditorForm(
+    editor: AccountEditor,
+    payAccounts: List<Account>,
+    onChange: ((AccountDraft) -> AccountDraft) -> Unit,
+    onToggleAdvanced: () -> Unit,
+    onSave: () -> Unit,
+    onCancel: () -> Unit,
+    onArchive: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val draft = editor.draft
+    val errors = editor.errors
+
+    Column(
+        modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(if (editor.isNew) "新增帳戶" else "編輯帳戶", style = MaterialTheme.typography.titleLarge)
+
+        Text("種類", style = MaterialTheme.typography.labelLarge)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AccountKind.entries.forEach { kind ->
+                FilterChip(
+                    selected = draft.kind == kind,
+                    onClick = { onChange { it.copy(kind = kind) } },
+                    label = { Text(kind.label) },
+                    enabled = editor.isNew || draft.kind == kind,
+                )
+            }
+        }
+
+        TextInput("名稱", draft.name, errors[Field.NAME]) { value -> onChange { it.copy(name = value) } }
+        TextInput(draft.balanceLabel, draft.balance, errors[Field.BALANCE], number = true) { value -> onChange { it.copy(balance = value) } }
+
+        if (draft.isCard || draft.isLoan) {
+            TextButton(onClick = onToggleAdvanced) {
+                Icon(if (editor.showAdvanced) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
+                Text(if (editor.showAdvanced) "收起進階（選填）" else "進階（選填）")
+            }
+        }
+
+        if (draft.isCard && editor.showAdvanced) {
+            HorizontalDivider()
+            Text("這些都可以不填；不填的話卡片只記欠款，不計算利息。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextInput("發卡銀行", draft.issuer, null) { value -> onChange { it.copy(issuer = value) } }
+            TextInput("額度", draft.creditLimit, errors[Field.LIMIT], number = true) { value -> onChange { it.copy(creditLimit = value) } }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextInput("結帳日", draft.statementDay, errors[Field.STATEMENT_DAY], number = true, modifier = Modifier.weight(1f)) { value ->
+                    onChange { it.copy(statementDay = value) }
+                }
+                TextInput("繳款日", draft.payDay, errors[Field.PAY_DAY], number = true, modifier = Modifier.weight(1f)) { value ->
+                    onChange { it.copy(payDay = value) }
+                }
+            }
+            SwitchRow("計算循環利息", draft.revolvingEnabled) { checked -> onChange { it.copy(revolvingEnabled = checked) } }
+            if (draft.revolvingEnabled) {
+                TextInput("循環年利率（%）", draft.revolvingRate, errors[Field.RATE], number = true) { value -> onChange { it.copy(revolvingRate = value) } }
+                TextInput("既有卡循（選填）", draft.revolvingBalance, errors[Field.REVOLVING_BALANCE], number = true) { value -> onChange { it.copy(revolvingBalance = value) } }
+                Text(
+                    "帳單上前期沒繳清、已經在計息的金額。不填就當作整筆欠款都在計息。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextInput("最低應繳比例（%）", draft.minPercent, errors[Field.MIN_PERCENT], number = true, modifier = Modifier.weight(1f)) { value ->
+                        onChange { it.copy(minPercent = value) }
+                    }
+                    TextInput("最低應繳下限", draft.minFloor, errors[Field.MIN_FLOOR], number = true, modifier = Modifier.weight(1f)) { value ->
+                        onChange { it.copy(minFloor = value) }
+                    }
+                }
+                Text("繳款方式", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CardPayMode.entries.forEach { mode ->
+                        FilterChip(selected = draft.payMode == mode, onClick = { onChange { it.copy(payMode = mode) } }, label = { Text(mode.label) })
+                    }
+                }
+                if (draft.payMode == CardPayMode.FIXED) {
+                    TextInput("每月繳款金額", draft.fixedPayment, errors[Field.FIXED], number = true) { value -> onChange { it.copy(fixedPayment = value) } }
+                }
+                PayAccountPicker(draft.payAccountId, payAccounts, null) { id -> onChange { it.copy(payAccountId = id) } }
+            }
+        }
+
+        if (draft.isLoan && editor.showAdvanced) {
+            HorizontalDivider()
+            SwitchRow("設定攤還條件（自動產生每月繳款）", draft.loanEnabled) { checked -> onChange { it.copy(loanEnabled = checked) } }
+            if (draft.loanEnabled) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextInput("年利率（%）", draft.loanRate, errors[Field.LOAN_RATE], number = true, modifier = Modifier.weight(1f)) { value ->
+                        onChange { it.copy(loanRate = value) }
+                    }
+                    TextInput("剩餘期數", draft.loanMonths, errors[Field.LOAN_MONTHS], number = true, modifier = Modifier.weight(1f)) { value ->
+                        onChange { it.copy(loanMonths = value) }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextInput("繳款日", draft.payDay, errors[Field.PAY_DAY], number = true, modifier = Modifier.weight(1f)) { value ->
+                        onChange { it.copy(payDay = value) }
+                    }
+                    TextInput("原貸金額（選填）", draft.loanOriginal, errors[Field.LOAN_ORIGINAL], number = true, modifier = Modifier.weight(1f)) { value ->
+                        onChange { it.copy(loanOriginal = value) }
+                    }
+                }
+                Text("攤還方式", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RepaymentMethod.entries.forEach { method ->
+                        FilterChip(selected = draft.loanMethod == method, onClick = { onChange { it.copy(loanMethod = method) } }, label = { Text(method.label) })
+                    }
+                }
+                PayAccountPicker(draft.payAccountId, payAccounts, errors[Field.PAY_ACCOUNT]) { id -> onChange { it.copy(payAccountId = id) } }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("取消") }
+            Button(onClick = onSave, modifier = Modifier.weight(1f)) { Text("儲存") }
+        }
+        if (!editor.isNew) {
+            TextButton(onClick = onArchive, modifier = Modifier.fillMaxWidth()) {
+                Text("封存這個帳戶", color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TextInput(
+    label: String,
+    value: String,
+    error: String?,
+    number: Boolean = false,
+    modifier: Modifier = Modifier.fillMaxWidth(),
+    onValueChange: (String) -> Unit,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        isError = error != null,
+        supportingText = error?.let { { Text(it) } },
+        singleLine = true,
+        keyboardOptions = if (number) KeyboardOptions(keyboardType = KeyboardType.Decimal) else KeyboardOptions.Default,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onChecked)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PayAccountPicker(selected: Long?, accounts: List<Account>, error: String?, onSelect: (Long?) -> Unit) {
+    Text("扣款帳戶", style = MaterialTheme.typography.labelLarge)
+    if (accounts.isEmpty()) {
+        Text("先新增銀行或現金帳戶，才能選扣款帳戶", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        accounts.forEach { account ->
+            FilterChip(selected = selected == account.id, onClick = { onSelect(account.id) }, label = { Text(account.name) })
+        }
+    }
+    error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+}

@@ -1,19 +1,16 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12 以上的系統備份（Google 帳號雲端備份、換手機時的裝置轉移）。
+  資料庫與設定都要一起帶走，否則換手機後帳戶與記帳對不起來。
+  App 內「匯出完整備份」是另外一份、由使用者自己保管的備份。
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <include domain="database" path="." />
+        <include domain="file" path="datastore/" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <include domain="database" path="." />
+        <include domain="file" path="datastore/" />
     </device-transfer>
-    -->
 </data-extraction-rules>

@@ -1,0 +1,151 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&amp;family=Roboto+Flex:opsz,wght@8..144,400..700&amp;display=swap">
+  <style>
+    :root { --primary:#1B6B61; --on-primary:#FFFFFF; --primary-container:#A6F2E4; --on-primary-container:#00201C; --secondary-container:#CCE8E2; --on-secondary-container:#05201C; --surface:#F5FAF8; --sc-lowest:#FFFFFF; --sc-low:#EFF5F2; --sc:#E9EFEC; --sc-high:#E3EAE7; --sc-highest:#DDE4E1; --on-surface:#171D1B; --on-surface-variant:#3F4946; --outline:#6F7976; --outline-variant:#BEC9C5; --warn-container:#FFDF9E; --on-warn-container:#261A00; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--surface); color: var(--on-surface); font-family: "Roboto Flex", "Noto Sans TC", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    a { color: var(--primary); } a:hover { color: #0F4F47; }
+    .num { font-variant-numeric: tabular-nums; }
+    .tl { font-size: 22px; line-height: 28px; font-weight: 500; }
+    .tm { font-size: 16px; line-height: 24px; font-weight: 500; }
+    .ts { font-size: 14px; line-height: 20px; font-weight: 500; }
+    .bm { font-size: 14px; line-height: 20px; }
+    .bs { font-size: 12px; line-height: 16px; }
+    .lm { font-size: 12px; line-height: 16px; font-weight: 500; }
+    .muted { color: var(--on-surface-variant); }
+    svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    svg.i16 { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    .day { display: flex; justify-content: space-between; align-items: center; height: 40px; padding: 0 20px; }
+    .entry { display: flex; align-items: center; gap: 12px; padding: 10px 16px; min-height: 64px; border-bottom: 1px solid var(--outline-variant); background: var(--sc-lowest); }
+    .ico { width: 40px; height: 40px; border-radius: 20px; background: var(--secondary-container); color: var(--on-secondary-container); display: flex; align-items: center; justify-content: center; flex: none; }
+    .chip { height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--outline-variant); display: flex; align-items: center; gap: 6px; font-size: 14px; line-height: 20px; flex: none; }
+  </style>
+</helmet>
+<div style="position: relative; width: 390px; min-height: 1060px; display: flex; flex-direction: column; background: var(--surface);">
+
+  <header style="height: 64px; display: flex; align-items: center; gap: 4px; padding: 0 4px; flex: none;">
+    <div style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;" aria-label="返回記帳"><svg class="i" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"></path></svg></div>
+    <span class="tl" style="flex: 1;">紀錄</span>
+    <div style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; color: var(--on-surface-variant);" aria-label="搜尋"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg></div>
+  </header>
+
+  <div style="padding: 0 16px 8px; display: flex; flex-direction: column; gap: 12px; flex: none;">
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+      <div style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;" aria-label="上個月"><svg class="i" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"></path></svg></div>
+      <span class="tm num">2026 年 9 月</span>
+      <div style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; color: var(--outline-variant);" aria-label="下個月"><svg class="i" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"></path></svg></div>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
+      <div style="padding: 12px; border-radius: 12px; background: var(--sc-low); display: flex; flex-direction: column; gap: 2px;"><span class="lm muted">本月至今支出</span><span class="tm num">$16,800</span></div>
+      <div style="padding: 12px; border-radius: 12px; background: var(--sc-low); display: flex; flex-direction: column; gap: 2px;"><span class="lm muted">本月至今收入</span><span class="tm num">$0</span></div>
+    </div>
+    <div style="display: flex; gap: 8px; overflow: hidden;">
+      <span class="chip" style="background: var(--secondary-container); color: var(--on-secondary-container); border-color: var(--secondary-container);"><svg class="i16" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"></path></svg>全部</span>
+      <span class="chip">可調項目</span>
+      <span class="chip">信用卡</span>
+      <span class="chip">現金</span>
+      <span class="chip">計畫外</span>
+    </div>
+    <span class="bs muted">點一下修改 · 左滑刪除</span>
+  </div>
+
+  <section>
+    <div class="day"><span class="ts">今天 9/14（一）</span><span class="bs muted num">支出 $655</span></div>
+    <div class="entry">
+      <div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"></rect><circle cx="12" cy="12" r="2.5"></circle></svg></div>
+      <div style="flex: 1; display: flex; flex-direction: column;"><span class="bm" style="font-weight: 500;">買菜</span><span class="bs muted">生活費 · 現金</span></div>
+      <span class="bm num">−$420</span>
+    </div>
+    <div class="entry">
+      <div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 10h18M7 15h4"></path></svg></div>
+      <div style="flex: 1; display: flex; flex-direction: column;"><span class="bm" style="font-weight: 500;">午餐</span><span class="bs muted">生活費 · 信用卡 A</span></div>
+      <span class="bm num">−$150</span>
+    </div>
+    <div class="entry">
+      <div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"></rect><circle cx="12" cy="12" r="2.5"></circle></svg></div>
+      <div style="flex: 1; display: flex; flex-direction: column;"><span class="bm" style="font-weight: 500;">早餐</span><span class="bs muted">生活費 · 現金</span></div>
+      <span class="bm num">−$85</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="day"><span class="ts">9/13（日）</span><span class="bs muted num">支出 $1,100</span></div>
+    <div class="entry">
+      <div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 10h18M7 15h4"></path></svg></div>
+      <div style="flex: 1; display: flex; flex-direction: column;"><span class="bm" style="font-weight: 500;">加油</span><span class="bs muted">交通油資 · 信用卡（未指定卡片）</span></div>
+      <span class="bm num">−$800</span>
+    </div>
+    <div class="entry">
+      <div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"></rect><circle cx="12" cy="12" r="2.5"></circle></svg></div>
+      <div style="flex: 1; display: flex; flex-direction: column;"><span class="bm" style="font-weight: 500;">清潔用品</span><span class="bs muted">家用 · 現金</span></div>
+      <span class="bm num">−$300</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="day"><span class="ts">9/12（六）</span><span class="bs muted num">支出 $14,925</span></div>
+    <div class="entry">
+      <div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="10" rx="2"></rect><circle cx="12" cy="12" r="2.5"></circle></svg></div>
+      <div style="flex: 1; display: flex; flex-direction: column;"><span class="bm" style="font-weight: 500;">9/1–9/12 現金支出</span><span class="bs muted">生活費 · 現金</span></div>
+      <span class="bm num">−$3,775</span>
+    </div>
+    <div class="entry">
+      <div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 10h18M7 15h4"></path></svg></div>
+      <div style="flex: 1; display: flex; flex-direction: column;"><span class="bm" style="font-weight: 500;">9/1–9/12 刷卡</span><span class="bs muted">生活費 · 信用卡 A</span></div>
+      <span class="bm num">−$9,650</span>
+    </div>
+    <div class="entry">
+      <div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 10h18M7 15h4"></path></svg></div>
+      <div style="flex: 1; display: flex; flex-direction: column;"><span class="bm" style="font-weight: 500;">加油</span><span class="bs muted">交通油資 · 信用卡 B</span></div>
+      <span class="bm num">−$1,500</span>
+    </div>
+  </section>
+
+  <section>
+    <div class="day"><span class="ts">9/7（一）· 本週檢查</span><span class="bs muted num">校正 1 筆</span></div>
+    <div class="entry">
+      <div class="ico" style="background: var(--warn-container); color: var(--on-warn-container);"><svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4"></path></svg></div>
+      <div style="flex: 1; display: flex; flex-direction: column;"><span class="bm" style="font-weight: 500;">漏記差額</span><span class="bs muted">生活費 · 現金 · 錢包比記帳少了</span></div>
+      <span class="bm num">−$120</span>
+    </div>
+  </section>
+
+  <div style="flex: 1; min-height: 24px;"></div>
+
+  <nav style="display: flex; height: 80px; background: var(--sc); padding: 12px 0 16px; flex: none;">
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+      <div style="width: 64px; height: 32px; border-radius: 16px; background: var(--secondary-container); color: var(--on-secondary-container); display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"></path><path d="M13.5 6.5l4 4"></path></svg></div>
+      <span class="lm">記帳</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"></path></svg></div>
+      <span class="lm">本期</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18M9 9v11"></path></svg></div>
+      <span class="lm">計畫</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><path d="M3 17l5-5 4 3 8-8"></path><path d="M3 21h18"></path></svg></div>
+      <span class="lm">試算</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"></rect><path d="M3 10h18M16 15h2"></path></svg></div>
+      <span class="lm">帳戶</span>
+    </div>
+  </nav>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":390,"height":1060}}'>
+class Component extends DCLogic {}
+</script>
+</body>
+</html>

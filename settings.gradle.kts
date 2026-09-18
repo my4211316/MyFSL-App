@@ -1,16 +1,17 @@
 pluginManagement {
     repositories {
-        google()
+        google {
+            content {
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("com\\.google.*")
+                includeGroupByRegex("androidx.*")
+            }
+        }
         mavenCentral()
         gradlePluginPortal()
     }
-    plugins {
-        kotlin("jvm") version "2.0.21"
-    }
 }
-plugins {
-    id("org.gradle.toolchains.foojay-resolver-convention") version "0.8.0"
-}
+
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
@@ -18,5 +19,10 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
+
 rootProject.name = "MyFSL"
-include(":app")
+
+// :app          畫面、導覽、Hilt 進入點（Android application）
+// :core:data    Room 資料庫、DataStore 設定、Repository、備份（Android library）
+// :core:domain  資料模型與所有計算規則，純 Kotlin，不能碰 Android（可在 JVM 直接測試）
+include(":app", ":core:data", ":core:domain")

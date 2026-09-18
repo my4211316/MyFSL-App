@@ -1,0 +1,168 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&amp;family=Roboto+Flex:opsz,wght@8..144,400..700&amp;display=swap">
+  <style>
+    :root { --primary:#1B6B61; --on-primary:#FFFFFF; --primary-container:#A6F2E4; --on-primary-container:#00201C; --secondary-container:#CCE8E2; --on-secondary-container:#05201C; --surface:#F5FAF8; --sc-lowest:#FFFFFF; --sc-low:#EFF5F2; --sc:#E9EFEC; --sc-high:#E3EAE7; --sc-highest:#DDE4E1; --on-surface:#171D1B; --on-surface-variant:#3F4946; --outline:#6F7976; --outline-variant:#BEC9C5; --error:#BA1A1A; --warn-container:#FFDF9E; --on-warn-container:#261A00; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--surface); color: var(--on-surface); font-family: "Roboto Flex", "Noto Sans TC", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    a { color: var(--primary); } a:hover { color: #0F4F47; }
+    .num { font-variant-numeric: tabular-nums; }
+    .tl { font-size: 22px; line-height: 28px; font-weight: 500; }
+    .tm { font-size: 16px; line-height: 24px; font-weight: 500; }
+    .ts { font-size: 14px; line-height: 20px; font-weight: 500; }
+    .bm { font-size: 14px; line-height: 20px; }
+    .bs { font-size: 12px; line-height: 16px; }
+    .lm { font-size: 12px; line-height: 16px; font-weight: 500; }
+    .muted { color: var(--on-surface-variant); }
+    svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    svg.i16 { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    .row { display: grid; grid-template-columns: 136px repeat(4, 63px); align-items: center; border-bottom: 1px solid var(--outline-variant); min-height: 52px; }
+    .name { padding: 6px 4px 6px 16px; display: flex; flex-direction: column; min-width: 0; }
+    .cell { text-align: right; padding-right: 8px; font-size: 13px; line-height: 20px; font-variant-numeric: tabular-nums; }
+    .now { background: rgba(166, 242, 228, 0.28); align-self: stretch; display: flex; align-items: center; justify-content: flex-end; }
+    .dash { color: var(--outline-variant); }
+    .group { display: flex; align-items: center; justify-content: space-between; height: 36px; padding: 0 16px; background: var(--sc); }
+    .flex-chip { display: inline-flex; align-items: center; height: 16px; padding: 0 4px; border-radius: 4px; background: var(--secondary-container); color: var(--on-secondary-container); font-size: 10px; line-height: 16px; font-weight: 500; }
+    .tile { padding: 12px; border-radius: 12px; background: var(--sc-low); display: flex; flex-direction: column; gap: 2px; }
+  </style>
+</helmet>
+<div style="position: relative; width: 390px; min-height: 2360px; display: flex; flex-direction: column; background: var(--surface);">
+
+  <header style="height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 4px 0 20px; flex: none;">
+    <span class="tl">計畫</span>
+    <div style="display: flex; align-items: center;">
+      <div style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;" aria-label="上一年"><svg class="i" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"></path></svg></div>
+      <span class="tm num">2026 年</span>
+      <div style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;" aria-label="下一年"><svg class="i" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"></path></svg></div>
+    </div>
+  </header>
+
+  <div style="padding: 0 16px 16px; display: flex; flex-direction: column; gap: 12px; flex: none;">
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); height: 48px; border: 1px solid var(--outline); border-radius: 24px; overflow: hidden;">
+      <div class="ts" style="display: flex; align-items: center; justify-content: center; gap: 6px; background: var(--secondary-container); color: var(--on-secondary-container); border-right: 1px solid var(--outline);"><svg class="i16" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"></path></svg>年度表格</div>
+      <div class="ts" style="display: flex; align-items: center; justify-content: center;">依群組清單</div>
+    </div>
+
+    <div style="display: flex; gap: 8px;">
+      <span class="ts" style="flex: 1; height: 40px; border: 1px solid var(--outline); border-radius: 20px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--primary);"><svg class="i16" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 19h16"></path></svg>匯入 CSV</span>
+      <span class="ts" style="flex: 1; height: 40px; border: 1px solid var(--outline); border-radius: 20px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--primary);"><svg class="i16" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5M4 19h16"></path></svg>匯出目前計畫</span>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
+      <div class="tile"><span class="lm muted">全年收入</span><span class="tm num">$940,000</span></div>
+      <div class="tile"><span class="lm muted">全年支出</span><span class="tm num">$840,000</span></div>
+      <div class="tile"><span class="lm muted">結構缺口（含貸款與利息）</span><span class="tm num">−$89,156</span></div>
+      <div class="tile"><span class="lm muted">卡債全年增加</span><span class="tm num">+$30,052</span></div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 12px; padding: 4px 4px 4px 16px; border-radius: 12px; background: var(--warn-container); color: var(--on-warn-container);">
+      <svg class="i" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19z"></path><path d="M12 10v4M12 17v.5"></path></svg>
+      <span class="bm" style="flex: 1; padding: 8px 0;">每月刷 $28,248、利息 $1,256，繳 $27,000 不夠；每月要多繳 $2,504 卡債才會開始下降</span>
+      <span class="ts" style="height: 48px; display: flex; align-items: center; padding: 0 12px;">查看</span>
+    </div>
+
+    <span class="bs muted" style="display: flex; align-items: center; gap: 6px;"><svg class="i16" viewBox="0 0 24 24"><path d="M8 8 4 12l4 4M16 8l4 4-4 4M4 12h16"></path></svg>左右滑動看其他月份 · 單位：元</span>
+  </div>
+
+  <div style="position: relative; flex: none; background: var(--sc-lowest); border-top: 1px solid var(--outline-variant);">
+    <div class="row" style="min-height: 40px;">
+      <span class="lm muted" style="padding-left: 16px;">項目</span>
+      <span class="cell now lm" style="color: var(--on-primary-container); background: var(--primary-container); font-size: 12px;">9月 本月</span>
+      <span class="cell lm muted" style="font-size: 12px;">10月</span>
+      <span class="cell lm muted" style="font-size: 12px;">11月</span>
+      <span class="cell lm muted" style="font-size: 12px;">12月</span>
+    </div>
+
+    <div class="group"><span class="ts">收入</span><span class="bs muted num">年 $940,000</span></div>
+    <div class="row"><div class="name"><span class="bm">薪資</span><span class="bs muted">薪轉 · 上半月</span></div><span class="cell now">65,000</span><span class="cell">65,000</span><span class="cell">65,000</span><span class="cell">65,000</span></div>
+    <div class="row"><div class="name"><span class="bm">年終獎金</span><span class="bs muted">薪轉 · 2月</span></div><span class="cell now"><span class="dash">—</span></span><span class="cell dash">—</span><span class="cell dash">—</span><span class="cell dash">—</span></div>
+    <div class="row"><div class="name"><span class="bm">教育補助</span><span class="bs muted">薪轉 · 3、9月</span></div><span class="cell now">5,000</span><span class="cell dash">—</span><span class="cell dash">—</span><span class="cell dash">—</span></div>
+
+    <div class="group"><span class="ts">稅費與保險</span><span class="bs muted num">年 $146,920</span></div>
+    <div class="row"><div class="name"><span class="bm">所得稅</span><span class="bs muted">轉帳 · 5月</span></div><span class="cell now"><span class="dash">—</span></span><span class="cell dash">—</span><span class="cell dash">—</span><span class="cell dash">—</span></div>
+    <div class="row"><div class="name"><span class="bm">牌照燃料稅</span><span class="bs muted">轉帳 · 4、7月</span></div><span class="cell now"><span class="dash">—</span></span><span class="cell dash">—</span><span class="cell dash">—</span><span class="cell dash">—</span></div>
+    <div class="row"><div class="name"><span class="bm">保險費</span><span class="bs muted">轉帳 · 1、7月</span></div><span class="cell now"><span class="dash">—</span></span><span class="cell dash">—</span><span class="cell dash">—</span><span class="cell dash">—</span></div>
+
+    <div class="group"><span class="ts">生活繳費</span><span class="bs muted num">年 $11,100</span></div>
+    <div class="row"><div class="name"><span class="bm">電費</span><span class="bs muted">轉帳 · 雙月</span></div><span class="cell now">1,500</span><span class="cell dash">—</span><span class="cell">900</span><span class="cell dash">—</span></div>
+    <div class="row"><div class="name"><span class="bm">瓦斯</span><span class="bs muted">轉帳 · 雙月</span></div><span class="cell now"><span class="dash">—</span></span><span class="cell">700</span><span class="cell dash">—</span><span class="cell">700</span></div>
+
+    <div class="group"><span class="ts">固定支出</span><span class="bs muted num">年 $84,000</span></div>
+    <div class="row"><div class="name"><span class="bm">停車費</span><span class="bs muted">轉帳 · 每月</span></div><span class="cell now">2,000</span><span class="cell">2,000</span><span class="cell">2,000</span><span class="cell">2,000</span></div>
+    <div class="row"><div class="name"><span class="bm">保單借款利息</span><span class="bs muted">轉帳 · 6、12月</span></div><span class="cell now"><span class="dash">—</span></span><span class="cell dash">—</span><span class="cell dash">—</span><span class="cell">30,000</span></div>
+
+    <div class="group"><span class="ts">生活</span><span class="bs muted num">年 $382,800</span></div>
+    <div class="row"><div class="name"><span class="bm">生活費</span><span class="bs muted" style="display: flex; gap: 4px; align-items: center;">現金 <span class="flex-chip">可調</span></span></div><span class="cell now">9,000</span><span class="cell">9,000</span><span class="cell">9,000</span><span class="cell">9,000</span></div>
+    <div class="row"><div class="name"><span class="bm">家用</span><span class="bs muted" style="display: flex; gap: 4px; align-items: center;">現金 <span class="flex-chip">可調</span></span></div><span class="cell now">1,000</span><span class="cell">1,000</span><span class="cell">1,000</span><span class="cell">1,000</span></div>
+    <div class="row"><div class="name"><span class="bm">生活費</span><span class="bs muted" style="display: flex; gap: 4px; align-items: center;">信用卡 <span class="flex-chip">可調</span></span></div><span class="cell now">16,000</span><span class="cell">16,000</span><span class="cell">16,000</span><span class="cell">16,000</span></div>
+    <div class="row"><div class="name"><span class="bm">交通油資</span><span class="bs muted" style="display: flex; gap: 4px; align-items: center;">信用卡 <span class="flex-chip">可調</span></span></div><span class="cell now">3,500</span><span class="cell">3,500</span><span class="cell">3,500</span><span class="cell">3,500</span></div>
+    <div class="row"><div class="name"><span class="bm">手機網路</span><span class="bs muted">信用卡 · 每月</span></div><span class="cell now">2,400</span><span class="cell">2,400</span><span class="cell">2,400</span><span class="cell">2,400</span></div>
+
+    <div class="group"><span class="ts">小孩活動</span><span class="bs muted num">年 $84,000</span></div>
+    <div class="row"><div class="name"><span class="bm">才藝課</span><span class="bs muted" style="display: flex; gap: 4px; align-items: center;">轉帳 <span class="flex-chip">可調</span></span></div><span class="cell now">6,000</span><span class="cell">6,000</span><span class="cell">6,000</span><span class="cell">6,000</span></div>
+    <div class="row"><div class="name"><span class="bm">比賽報名</span><span class="bs muted" style="display: flex; gap: 4px; align-items: center;">現金 <span class="flex-chip">可調</span></span></div><span class="cell now"><span class="dash">—</span></span><span class="cell">6,000</span><span class="cell dash">—</span><span class="cell dash">—</span></div>
+
+    <div class="group"><span class="ts">年度</span><span class="bs muted num">年 $131,180</span></div>
+    <div class="row"><div class="name"><span class="bm">紅包</span><span class="bs muted" style="display: flex; gap: 4px; align-items: center;">現金 · 2月 <span class="flex-chip">可調</span></span></div><span class="cell now"><span class="dash">—</span></span><span class="cell dash">—</span><span class="cell dash">—</span><span class="cell dash">—</span></div>
+    <div class="row"><div class="name"><span class="bm">生日</span><span class="bs muted" style="display: flex; gap: 4px; align-items: center;">現金 <span class="flex-chip">可調</span></span></div><span class="cell now"><span class="dash">—</span></span><span class="cell dash">—</span><span class="cell">5,000</span><span class="cell dash">—</span></div>
+    <div class="row"><div class="name"><span class="bm">汽車保養</span><span class="bs muted">信用卡 · 到期確認</span></div><span class="cell now">12,000</span><span class="cell dash">—</span><span class="cell dash">—</span><span class="cell dash">—</span></div>
+    <div class="row"><div class="name"><span class="bm">家族旅遊</span><span class="bs muted" style="display: flex; gap: 4px; align-items: center;">信用卡 · 8月 <span class="flex-chip">可調</span></span></div><span class="cell now"><span class="dash">—</span></span><span class="cell dash">—</span><span class="cell dash">—</span><span class="cell dash">—</span></div>
+
+    <div class="group"><span class="ts">繳卡費與貸款</span><span class="bs muted">轉帳，不算消費</span></div>
+    <div class="row"><div class="name"><span class="bm">繳信用卡 A</span><span class="bs muted">由薪轉繳 · 15日</span></div><span class="cell now">18,000</span><span class="cell">18,000</span><span class="cell">18,000</span><span class="cell">18,000</span></div>
+    <div class="row"><div class="name"><span class="bm">繳信用卡 B</span><span class="bs muted">由薪轉繳 · 25日</span></div><span class="cell now">9,000</span><span class="cell">9,000</span><span class="cell">9,000</span><span class="cell">9,000</span></div>
+    <div class="row"><div class="name"><span class="bm muted">信貸還款</span><span class="bs muted">自動扣款 · 20日</span></div><span class="cell now muted">14,507</span><span class="cell muted">14,507</span><span class="cell muted">14,507</span><span class="cell muted">14,507</span></div>
+
+    <div style="background: var(--sc-low); border-top: 2px solid var(--outline-variant);">
+      <div class="row" style="min-height: 44px;"><span class="bm" style="padding-left: 16px;">刷卡（信用卡帳）</span><span class="cell now">33,900</span><span class="cell">21,900</span><span class="cell">21,900</span><span class="cell">21,900</span></div>
+      <div class="row" style="min-height: 44px;"><span class="bm" style="padding-left: 16px;">非刷卡支出</span><span class="cell now">19,500</span><span class="cell">24,700</span><span class="cell">23,900</span><span class="cell">48,700</span></div>
+      <div class="row" style="min-height: 44px;"><span class="bm" style="padding-left: 16px;">循環利息（預估）</span><span class="cell now">1,256</span><span class="cell">1,256</span><span class="cell">1,256</span><span class="cell">1,256</span></div>
+      <div class="row" style="min-height: 44px;"><span class="bm" style="padding-left: 16px;">繳卡費＋貸款</span><span class="cell now">41,507</span><span class="cell">41,507</span><span class="cell">41,507</span><span class="cell">41,507</span></div>
+      <div class="row" style="min-height: 48px; border-bottom: none;"><span class="ts" style="padding-left: 16px;">月現金流</span><span class="cell now" style="font-weight: 600;">+8,993</span><span class="cell" style="font-weight: 600; color: var(--error);">−1,207</span><span class="cell" style="font-weight: 600; color: var(--error);">−407</span><span class="cell" style="font-weight: 600; color: var(--error);">−25,207</span></div>
+    </div>
+
+    <div style="position: absolute; top: 0; right: 0; bottom: 0; width: 8px; background: linear-gradient(to right, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.7));"></div>
+  </div>
+
+  <div style="flex: 1; min-height: 96px;"></div>
+
+  <div class="ts" style="position: absolute; right: 16px; bottom: 96px; height: 56px; padding: 0 20px 0 16px; border-radius: 16px; background: var(--primary-container); color: var(--on-primary-container); display: flex; align-items: center; gap: 12px; box-shadow: 0 2px 6px rgba(23, 29, 27, 0.18);">
+    <svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg>新增項目
+  </div>
+
+  <nav style="display: flex; height: 80px; background: var(--sc); padding: 12px 0 16px; flex: none;">
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"></path><path d="M13.5 6.5l4 4"></path></svg></div>
+      <span class="lm">記帳</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"></path></svg></div>
+      <span class="lm">本期</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+      <div style="width: 64px; height: 32px; border-radius: 16px; background: var(--secondary-container); color: var(--on-secondary-container); display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18M9 9v11"></path></svg></div>
+      <span class="lm">計畫</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><path d="M3 17l5-5 4 3 8-8"></path><path d="M3 21h18"></path></svg></div>
+      <span class="lm">試算</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"></rect><path d="M3 10h18M16 15h2"></path></svg></div>
+      <span class="lm">帳戶</span>
+    </div>
+  </nav>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":390,"height":2360}}'>
+class Component extends DCLogic {}
+</script>
+</body>
+</html>

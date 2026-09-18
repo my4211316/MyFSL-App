@@ -1,16 +1,11 @@
-// Top-level build file where you can add configuration options common to all sub-projects/modules.
-buildscript {
-    extra.apply {
-        set("compose_version", "1.5.8")
-    }
-    dependencies {
-        classpath("com.google.gms:google-services:4.4.0")
-    }
-}
-
+// Top-level build file. 版本統一在 gradle/libs.versions.toml 管理。
+// 子模組用到的 com.android.library 與 org.jetbrains.kotlin.jvm 分別和
+// com.android.application、org.jetbrains.kotlin.android 在同一個 plugin 套件裡，這裡載入後子模組直接用 id 套用。
 plugins {
-    id("com.android.application") version "8.2.2" apply false
-    id("com.android.library") version "8.2.2" apply false
-    id("org.jetbrains.kotlin.android") version "1.9.22" apply false
-    id("com.google.gms.google-services") version "4.4.0" apply false
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.kotlin.android) apply false
+    alias(libs.plugins.kotlin.compose) apply false
+    alias(libs.plugins.kotlin.serialization) apply false
+    alias(libs.plugins.ksp) apply false
+    alias(libs.plugins.hilt) apply false
 }

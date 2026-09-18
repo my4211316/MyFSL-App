@@ -1,0 +1,232 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&amp;family=Roboto+Flex:opsz,wght@8..144,400..700&amp;display=swap">
+  <style>
+    :root { --primary:#1B6B61; --on-primary:#FFFFFF; --primary-container:#A6F2E4; --on-primary-container:#00201C; --secondary-container:#CCE8E2; --on-secondary-container:#05201C; --surface:#F5FAF8; --sc-lowest:#FFFFFF; --sc-low:#EFF5F2; --sc:#E9EFEC; --sc-high:#E3EAE7; --sc-highest:#DDE4E1; --on-surface:#171D1B; --on-surface-variant:#3F4946; --outline:#6F7976; --outline-variant:#BEC9C5; --error:#BA1A1A; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--surface); color: var(--on-surface); font-family: "Roboto Flex", "Noto Sans TC", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    a { color: var(--primary); } a:hover { color: #0F4F47; }
+    .num { font-variant-numeric: tabular-nums; }
+    .tl { font-size: 22px; line-height: 28px; font-weight: 500; }
+    .tm { font-size: 16px; line-height: 24px; font-weight: 500; }
+    .ts { font-size: 14px; line-height: 20px; font-weight: 500; }
+    .bm { font-size: 14px; line-height: 20px; }
+    .bs { font-size: 12px; line-height: 16px; }
+    .lm { font-size: 12px; line-height: 16px; font-weight: 500; }
+    .muted { color: var(--on-surface-variant); }
+    svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    svg.i16 { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    .kpi { display: grid; grid-template-columns: 96px repeat(3, minmax(0, 1fr)); align-items: center; min-height: 44px; border-bottom: 1px solid var(--outline-variant); }
+    .kv { text-align: right; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; padding-left: 4px; }
+    .best { font-weight: 600; }
+    .chip { display: inline-flex; align-items: center; height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--outline-variant); font-size: 13px; line-height: 20px; color: var(--on-surface); background: var(--sc-lowest); }
+    .switch { width: 52px; height: 32px; border-radius: 16px; background: var(--primary); position: relative; flex: none; }
+    .switch-thumb { position: absolute; right: 4px; top: 4px; width: 24px; height: 24px; border-radius: 12px; background: var(--on-primary); color: var(--primary); display: flex; align-items: center; justify-content: center; }
+  </style>
+</helmet>
+<div style="position: relative; width: 390px; min-height: 1640px; display: flex; flex-direction: column; background: var(--surface);">
+
+  <header style="height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 4px 0 20px; flex: none;">
+    <div style="display: flex; flex-direction: column;">
+      <span class="tl">試算</span>
+      <span class="bs muted">以目前計畫與本週回報推估</span>
+    </div>
+    <div style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; color: var(--on-surface-variant);" aria-label="說明"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5M12 8v.5"></path></svg></div>
+  </header>
+
+  <main style="flex: 1; display: flex; flex-direction: column; gap: 16px; padding: 4px 16px 96px;">
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); height: 48px; border: 1px solid var(--outline); border-radius: 24px; overflow: hidden;">
+      <div class="ts" style="display: flex; align-items: center; justify-content: center; border-right: 1px solid var(--outline);">12 個月</div>
+      <div class="ts" style="display: flex; align-items: center; justify-content: center; gap: 6px; background: var(--secondary-container); color: var(--on-secondary-container); border-right: 1px solid var(--outline);"><svg class="i16" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"></path></svg>24 個月</div>
+      <div class="ts" style="display: flex; align-items: center; justify-content: center;">36 個月</div>
+    </div>
+
+    <section style="background: var(--sc-lowest); border: 1px solid var(--outline-variant); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; flex-direction: column; gap: 2px;">
+        <span class="tm">現金水位比較</span>
+        <span class="bs muted">每月最低點・保守估計：同一個半月內支出先於收入；卡債含循環利息</span>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px 16px;" class="bs">
+        <span style="display: flex; align-items: center; gap: 6px;"><svg width="16" height="4" viewBox="0 0 16 4"><line x1="0" y1="2" x2="16" y2="2" stroke="#2a78d6" stroke-width="2" stroke-linecap="round"></line></svg>現況</span>
+        <span style="display: flex; align-items: center; gap: 6px;"><svg width="16" height="4" viewBox="0 0 16 4"><line x1="0" y1="2" x2="16" y2="2" stroke="#eb6834" stroke-width="2" stroke-linecap="round"></line></svg>整合卡債</span>
+        <span style="display: flex; align-items: center; gap: 6px;"><svg width="16" height="4" viewBox="0 0 16 4"><line x1="0" y1="2" x2="16" y2="2" stroke="#1baf7a" stroke-width="2" stroke-linecap="round"></line></svg>可調支出 −20%</span>
+        <span style="display: flex; align-items: center; gap: 6px;" class="muted"><svg width="16" height="4" viewBox="0 0 16 4"><line x1="0" y1="2" x2="16" y2="2" stroke="#d03b3b" stroke-width="1.5" stroke-dasharray="4 3"></line></svg>安全線 $30,000</span>
+      </div>
+      <svg width="326" height="212" viewBox="0 0 326 212" style="display: block;">
+        <path d="{{gridPath}}" stroke="#E1E6E3" stroke-width="1" fill="none"></path>
+        <line x1="34" x2="252" y1="{{zeroY}}" y2="{{zeroY}}" stroke="#BEC9C5" stroke-width="1"></line>
+        <text x="28" y="{{tick0}}" text-anchor="end" font-size="11" fill="#6F7976">0</text>
+        <text x="28" y="{{tick1}}" text-anchor="end" font-size="11" fill="#6F7976">10萬</text>
+        <text x="28" y="{{tick2}}" text-anchor="end" font-size="11" fill="#6F7976">20萬</text>
+        <line x1="34" x2="252" y1="{{safetyY}}" y2="{{safetyY}}" stroke="#d03b3b" stroke-width="1.5" stroke-dasharray="4 3"></line>
+        <line x1="{{hx}}" x2="{{hx}}" y1="10" y2="188" stroke="#3F4946" stroke-width="1"></line>
+        <path d="{{p0}}" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>
+        <path d="{{p1}}" fill="none" stroke="#eb6834" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>
+        <path d="{{p2}}" fill="none" stroke="#1baf7a" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>
+        <circle cx="{{hx}}" cy="{{h0}}" r="4" fill="#2a78d6" stroke="#FFFFFF" stroke-width="2"></circle>
+        <circle cx="{{hx}}" cy="{{h1}}" r="4" fill="#eb6834" stroke="#FFFFFF" stroke-width="2"></circle>
+        <circle cx="{{hx}}" cy="{{h2}}" r="4" fill="#1baf7a" stroke="#FFFFFF" stroke-width="2"></circle>
+        <path d="{{leader0}}" stroke="#2a78d6" stroke-width="1" fill="none"></path>
+        <path d="{{leader1}}" stroke="#eb6834" stroke-width="1" fill="none"></path>
+        <path d="{{leader2}}" stroke="#1baf7a" stroke-width="1" fill="none"></path>
+        <text x="{{labelX}}" y="{{ly0}}" font-size="11" fill="#171D1B">{{l0}}</text>
+        <text x="{{labelX}}" y="{{ly1}}" font-size="11" fill="#171D1B">{{l1}}</text>
+        <text x="{{labelX}}" y="{{ly2}}" font-size="11" fill="#171D1B">{{l2}}</text>
+        <rect x="{{tipX}}" y="14" width="112" height="72" rx="8" fill="#2C3230"></rect>
+        <text x="{{tipTextX}}" y="31" font-size="11" font-weight="600" fill="#ECF2EF">2027年9月</text>
+        <circle cx="{{tipDotX}}" cy="44" r="3.5" fill="#2a78d6"></circle>
+        <circle cx="{{tipDotX}}" cy="58" r="3.5" fill="#eb6834"></circle>
+        <circle cx="{{tipDotX}}" cy="72" r="3.5" fill="#1baf7a"></circle>
+        <text x="{{tipRowX}}" y="48" font-size="11" fill="#ECF2EF">{{t0}}</text>
+        <text x="{{tipRowX}}" y="62" font-size="11" fill="#ECF2EF">{{t1}}</text>
+        <text x="{{tipRowX}}" y="76" font-size="11" fill="#ECF2EF">{{t2}}</text>
+        <text x="34" y="206" font-size="11" fill="#6F7976">2026/9</text>
+        <text x="{{hx}}" y="206" text-anchor="middle" font-size="11" fill="#6F7976">2027/9</text>
+        <text x="252" y="206" text-anchor="end" font-size="11" fill="#6F7976">2028/8</text>
+      </svg>
+      <span class="bs muted">點圖表任一處可看當月各情境數值</span>
+    </section>
+
+    <section style="background: var(--sc-lowest); border: 1px solid var(--outline-variant); border-radius: 12px; padding: 8px 16px; display: flex; flex-direction: column;">
+      <div class="kpi" style="min-height: 48px;">
+        <span class="ts">未來 24 個月</span>
+        <span class="lm" style="display: flex; justify-content: flex-end; align-items: center; gap: 4px;"><svg width="12" height="4" viewBox="0 0 12 4"><line x1="0" y1="2" x2="12" y2="2" stroke="#2a78d6" stroke-width="2"></line></svg>現況</span>
+        <span class="lm" style="display: flex; justify-content: flex-end; align-items: center; gap: 4px;"><svg width="12" height="4" viewBox="0 0 12 4"><line x1="0" y1="2" x2="12" y2="2" stroke="#eb6834" stroke-width="2"></line></svg>整合</span>
+        <span class="lm" style="display: flex; justify-content: flex-end; align-items: center; gap: 4px;"><svg width="12" height="4" viewBox="0 0 12 4"><line x1="0" y1="2" x2="12" y2="2" stroke="#1baf7a" stroke-width="2"></line></svg>−20%</span>
+      </div>
+      <div class="kpi"><span class="bm muted">最低水位</span><span class="kv" style="color: var(--error);">−48,639</span><span class="kv">2,880</span><span class="kv best">30,621</span></div>
+      <div class="kpi"><span class="bm muted">低於安全線</span><span class="kv">2027/2</span><span class="kv">2028/2</span><span class="kv best">不會</span></div>
+      <div class="kpi"><span class="bm muted">年結構缺口</span><span class="kv">−80,356</span><span class="kv">−109,355</span><span class="kv best">+34,416</span></div>
+      <div class="kpi"><span class="bm muted">期末卡債</span><span class="kv">152,205</span><span class="kv best">0</span><span class="kv">25,320</span></div>
+      <div class="kpi"><span class="bm muted">兩年循環利息</span><span class="kv">29,345</span><span class="kv best">1,256</span><span class="kv">14,512</span></div>
+      <div class="kpi" style="border-bottom: none;"><span class="bm muted">期末總負債</span><span class="kv">1,274,601</span><span class="kv">1,256,468</span><span class="kv best">1,147,716</span></div>
+    </section>
+
+    <section style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; height: 48px;">
+        <span class="tm">我的情境</span>
+        <span class="ts" style="height: 48px; display: flex; align-items: center; color: var(--primary); padding: 0 12px;">管理</span>
+      </div>
+
+      <div style="background: var(--sc-lowest); border: 1px solid var(--outline-variant); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <svg width="16" height="4" viewBox="0 0 16 4"><line x1="0" y1="2" x2="16" y2="2" stroke="#eb6834" stroke-width="3" stroke-linecap="round"></line></svg>
+          <div style="flex: 1; display: flex; flex-direction: column;"><span class="tm">整合卡債</span><span class="bs muted">建立於 9/10 · 3 項變動</span></div>
+          <div class="switch" aria-label="顯示於圖表"><div class="switch-thumb"><svg class="i16" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></div></div>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+          <span class="chip num">10月新增貸款 20萬 · 60期 · 6.5%</span>
+          <span class="chip">清償 2 張信用卡</span>
+          <span class="chip">刷卡消費改現金</span>
+        </div>
+      </div>
+
+      <div style="background: var(--sc-lowest); border: 1px solid var(--outline-variant); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <svg width="16" height="4" viewBox="0 0 16 4"><line x1="0" y1="2" x2="16" y2="2" stroke="#1baf7a" stroke-width="3" stroke-linecap="round"></line></svg>
+          <div style="flex: 1; display: flex; flex-direction: column;"><span class="tm">可調支出 −20%</span><span class="bs muted">建立於 9/12 · 1 項變動</span></div>
+          <div class="switch" aria-label="顯示於圖表"><div class="switch-thumb"><svg class="i16" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></div></div>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+          <span class="chip">生活、小孩活動、年度的可調項目 −20%</span>
+        </div>
+      </div>
+    </section>
+
+    <section style="background: var(--sc-high); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; gap: 12px; align-items: flex-start;">
+        <svg class="i" viewBox="0 0 24 24" style="color: var(--primary);"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="3"></circle></svg>
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <span class="tm">反推目標</span>
+          <span class="bm muted">要讓未來 24 個月的現金水位都不低於 $30,000，選定的可調項目需要減少多少？</span>
+        </div>
+      </div>
+      <div style="display: flex; justify-content: flex-end;">
+        <span class="ts" style="height: 48px; padding: 0 24px; border-radius: 24px; border: 1px solid var(--outline); color: var(--primary); display: flex; align-items: center;">開始反推</span>
+      </div>
+    </section>
+  </main>
+
+  <div class="ts" style="position: absolute; right: 16px; bottom: 96px; height: 56px; padding: 0 20px 0 16px; border-radius: 16px; background: var(--primary-container); color: var(--on-primary-container); display: flex; align-items: center; gap: 12px; box-shadow: 0 2px 6px rgba(23, 29, 27, 0.18);">
+    <svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg>新增情境
+  </div>
+
+  <nav style="display: flex; height: 80px; background: var(--sc); padding: 12px 0 16px; flex: none;">
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"></path><path d="M13.5 6.5l4 4"></path></svg></div>
+      <span class="lm">記帳</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"></path></svg></div>
+      <span class="lm">本期</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18M9 9v11"></path></svg></div>
+      <span class="lm">計畫</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+      <div style="width: 64px; height: 32px; border-radius: 16px; background: var(--secondary-container); color: var(--on-secondary-container); display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><path d="M3 17l5-5 4 3 8-8"></path><path d="M3 21h18"></path></svg></div>
+      <span class="lm">試算</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"></rect><path d="M3 10h18M16 15h2"></path></svg></div>
+      <span class="lm">帳戶</span>
+    </div>
+  </nav>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":390,"height":1640}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const series = [
+      { short: '現況', v: [106,118,116,116,46,10,160,170,152,121,46,45,50,59,57,57,-13,-49,101,111,93,62,-13,-14] },
+      { short: '整合', v: [106,222,226,227,158,124,275,274,252,223,153,132,107,105,105,106,37,3,154,153,131,102,32,11] },
+      { short: '−20%', v: [108,122,125,129,62,38,192,205,192,163,92,95,103,115,118,122,55,31,185,197,185,156,85,87] },
+    ];
+    const W = 326, H = 212, L = 34, R = 74, T = 10, B = 24, min = -60, max = 300, n = 24, hover = 12;
+    const x = (i) => L + i * (W - L - R) / (n - 1);
+    const y = (k) => T + (max - k) / (max - min) * (H - T - B);
+    const f = (v) => v.toFixed(1);
+    const fmt = (k) => (k < 0 ? '−' : '') + (Math.abs(k) / 10).toFixed(1).replace(/\.0$/, '') + '萬';
+    const paths = series.map((s) => s.v.map((k, i) => (i ? 'L' : 'M') + f(x(i)) + ' ' + f(y(k))).join(' '));
+    const endX = x(n - 1);
+    const order = series.map((s, i) => ({ i, y: y(s.v[n - 1]) })).sort((a, b) => a.y - b.y);
+    for (let k = 1; k < order.length; k++) {
+      if (order[k].y - order[k - 1].y < 15) order[k].y = order[k - 1].y + 15;
+    }
+    const labelY = [];
+    order.forEach((o) => { labelY[o.i] = o.y; });
+    const leader = (i) => 'M' + f(endX) + ' ' + f(y(series[i].v[n - 1])) + ' L' + f(endX + 6) + ' ' + f(labelY[i]);
+    const hx = x(hover);
+    const tipX = hx + 8;
+    return {
+      gridPath: [100, 200].map((k) => 'M' + L + ' ' + f(y(k)) + ' H' + (W - R)).join(' '),
+      zeroY: f(y(0)),
+      tick0: f(y(0) + 4), tick1: f(y(100) + 4), tick2: f(y(200) + 4),
+      safetyY: f(y(30)),
+      hx: f(hx),
+      p0: paths[0], p1: paths[1], p2: paths[2],
+      h0: f(y(series[0].v[hover])), h1: f(y(series[1].v[hover])), h2: f(y(series[2].v[hover])),
+      leader0: leader(0), leader1: leader(1), leader2: leader(2),
+      labelX: f(endX + 9),
+      ly0: f(labelY[0] + 4), ly1: f(labelY[1] + 4), ly2: f(labelY[2] + 4),
+      l0: series[0].short + ' ' + fmt(series[0].v[n - 1]),
+      l1: series[1].short + ' ' + fmt(series[1].v[n - 1]),
+      l2: series[2].short + ' ' + fmt(series[2].v[n - 1]),
+      tipX: f(tipX), tipTextX: f(tipX + 10), tipDotX: f(tipX + 14), tipRowX: f(tipX + 24),
+      t0: '現況 ' + fmt(series[0].v[hover]),
+      t1: '整合 ' + fmt(series[1].v[hover]),
+      t2: '−20% ' + fmt(series[2].v[hover]),
+    };
+  }
+}
+</script>
+</body>
+</html>

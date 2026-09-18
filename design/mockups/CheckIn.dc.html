@@ -1,0 +1,466 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&amp;family=Roboto+Flex:opsz,wght@8..144,400..700&amp;display=swap">
+  <style>
+    :root { --primary:#1B6B61; --on-primary:#FFFFFF; --primary-container:#A6F2E4; --on-primary-container:#00201C; --secondary-container:#CCE8E2; --on-secondary-container:#05201C; --surface:#F5FAF8; --sc-lowest:#FFFFFF; --sc-low:#EFF5F2; --sc:#E9EFEC; --sc-high:#E3EAE7; --sc-highest:#DDE4E1; --on-surface:#171D1B; --on-surface-variant:#3F4946; --outline:#6F7976; --outline-variant:#BEC9C5; --error:#BA1A1A; --warn-text:#7A5900; --warn-container:#FFDF9E; --on-warn-container:#261A00; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--surface); color: var(--on-surface); font-family: "Roboto Flex", "Noto Sans TC", system-ui, sans-serif; -webkit-font-smoothing: antialiased; user-select: none; }
+    .num { font-variant-numeric: tabular-nums; }
+    .tl { font-size: 22px; line-height: 28px; font-weight: 500; }
+    .tm { font-size: 16px; line-height: 24px; font-weight: 500; }
+    .ts { font-size: 14px; line-height: 20px; font-weight: 500; }
+    .bl { font-size: 16px; line-height: 24px; }
+    .bm { font-size: 14px; line-height: 20px; }
+    .bs { font-size: 12px; line-height: 16px; }
+    .lm { font-size: 12px; line-height: 16px; font-weight: 500; }
+    .muted { color: var(--on-surface-variant); }
+    .tap { cursor: pointer; }
+    svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    svg.i16 { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    .card { background: var(--sc-lowest); border: 1px solid var(--outline-variant); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+    .seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); height: 48px; border: 1px solid var(--outline); border-radius: 24px; overflow: hidden; }
+    .seg > div { display: flex; align-items: center; justify-content: center; gap: 4px; border-right: 1px solid var(--outline); }
+    .seg > div:last-child { border-right: 0; }
+    .chip { height: 32px; padding: 0 12px; border-radius: 8px; display: flex; align-items: center; gap: 6px; }
+  </style>
+</helmet>
+<div style="position: relative; width: 390px; min-height: 1640px; display: flex; flex-direction: column; background: var(--surface);">
+
+  <header style="height: 64px; display: flex; align-items: center; gap: 4px; padding: 0 16px 0 4px; flex: none;">
+    <div class="tap" style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center;" aria-label="關閉"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"></path></svg></div>
+    <div style="display: flex; flex-direction: column;">
+      <span class="tl">{{title}}</span>
+      <span class="bs muted">{{subtitle}}</span>
+    </div>
+  </header>
+
+  <main style="flex: 1; display: flex; flex-direction: column; gap: 16px; padding: 8px 16px 24px;">
+
+    <sc-if value="{{done}}" hint-placeholder-val="{{ false }}">
+      <div class="card">
+        <div style="display: flex; align-items: center; gap: 8px; color: var(--primary);">
+          <svg class="i" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"></path></svg>
+          <span class="tm">已完成本週檢查</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <sc-for list="{{doneLines}}" as="d" hint-placeholder-count="3">
+            <span class="bm num">{{d.text}}</span>
+          </sc-for>
+        </div>
+        <span class="bs muted">已更新本月進度，並重新推算未來現金水位</span>
+        <div class="ts tap" onClick="{{again}}" style="height: 48px; border-radius: 24px; background: var(--secondary-container); color: var(--on-secondary-container); display: flex; align-items: center; justify-content: center;">再檢查一次</div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{editing}}" hint-placeholder-val="{{ true }}">
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+
+        <section class="card">
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span class="lm" style="color: var(--primary);">1 / 3</span>
+            <span class="tm">到期確認</span>
+            <span class="bs muted">不定期項目只要點一下</span>
+          </div>
+          <sc-for list="{{confirms}}" as="c" hint-placeholder-count="2">
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                <div style="display: flex; flex-direction: column;"><span class="bl" style="font-weight: 500;">{{c.name}}</span><span class="bs muted">{{c.meta}}</span></div>
+                <span class="bm num">{{c.amount}}</span>
+              </div>
+              <div class="seg">
+                <sc-for list="{{c.choices}}" as="k" hint-placeholder-count="3">
+                  <div class="ts tap" onClick="{{k.pick}}" style="background: {{k.bg}}; color: {{k.fg}};">
+                    <sc-if value="{{k.selected}}" hint-placeholder-val="{{ false }}"><svg class="i16" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></sc-if>
+                    {{k.label}}
+                  </div>
+                </sc-for>
+              </div>
+              <sc-if value="{{c.showAmount}}" hint-placeholder-val="{{ false }}">
+                <div class="tap" onClick="{{c.field.tap}}" style="position: relative; height: 56px; border: {{c.field.border}}; border-radius: 4px; display: flex; align-items: center; padding: 0 12px;">
+                  <span class="lm" style="position: absolute; top: -9px; left: 10px; padding: 0 4px; background: var(--sc-lowest); color: {{c.field.labelColor}};">實際金額</span>
+                  <span class="bl num"><span class="muted">$ </span>{{c.field.value}}</span>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+        </section>
+
+        <section class="card">
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span class="lm" style="color: var(--primary);">2 / 3</span>
+            <span class="tm">帳戶對帳</span>
+            <span class="bs muted">數錢包、看銀行和信用卡；差額才算漏記</span>
+          </div>
+          <sc-for list="{{rows}}" as="r" hint-placeholder-count="3">
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; flex-direction: column;">
+                <span class="bl" style="font-weight: 500;">{{r.name}}</span>
+                <span class="bs muted num">{{r.hint}}</span>
+              </div>
+              <div style="display: flex; gap: 10px;">
+                <sc-for list="{{r.fields}}" as="f" hint-placeholder-count="1">
+                  <div class="tap" onClick="{{f.tap}}" style="position: relative; flex: 1; height: 56px; border: {{f.border}}; border-radius: 4px; display: flex; align-items: center; padding: 0 12px;">
+                    <span class="lm" style="position: absolute; top: -9px; left: 10px; padding: 0 4px; background: var(--sc-lowest); color: {{f.labelColor}};">{{f.label}}</span>
+                    <span class="bl num" style="color: {{f.color}};"><span class="muted">$ </span>{{f.value}}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <span class="bs num" style="display: flex; align-items: center; gap: 4px; color: {{r.messageColor}};">
+                <sc-if value="{{r.warn}}" hint-placeholder-val="{{ false }}"><svg class="i16" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19z"></path><path d="M12 10v4M12 17v.5"></path></svg></sc-if>
+                {{r.message}}
+              </span>
+              <sc-if value="{{r.showResolutions}}" hint-placeholder-val="{{ false }}">
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                  <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                    <sc-for list="{{r.resolutions}}" as="o" hint-placeholder-count="3">
+                      <span class="bm tap chip" onClick="{{o.pick}}" style="border: 1px solid {{o.border}}; background: {{o.bg}}; color: {{o.fg}};">{{o.label}}</span>
+                    </sc-for>
+                  </div>
+                  <sc-if value="{{r.showAssign}}" hint-placeholder-val="{{ false }}">
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center;">
+                      <span class="bs muted">歸到</span>
+                      <sc-for list="{{r.assignItems}}" as="a" hint-placeholder-count="2">
+                        <span class="bm tap chip" onClick="{{a.pick}}" style="border: 1px solid {{a.border}}; background: {{a.bg}}; color: {{a.fg}};">{{a.name}}</span>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+        </section>
+
+        <section class="card">
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span class="lm" style="color: var(--primary);">3 / 3</span>
+            <span class="tm">會寫入什麼</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <sc-for list="{{preview}}" as="p" hint-placeholder-count="3">
+              <span class="bm num">{{p.text}}</span>
+            </sc-for>
+          </div>
+        </section>
+      </div>
+    </sc-if>
+  </main>
+
+  <sc-if value="{{editing}}" hint-placeholder-val="{{ true }}">
+    <footer style="flex: none; background: var(--sc-low); border-top: 1px solid var(--outline-variant); padding: 12px 16px 20px; display: flex; flex-direction: column; gap: 10px;">
+      <span class="bs muted">{{footerHint}}</span>
+      <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px;">
+        <sc-for list="{{keys}}" as="k" hint-placeholder-count="12">
+          <div class="tap num" onClick="{{k.press}}" style="height: 44px; border-radius: 12px; background: {{k.bg}}; border: 1px solid var(--outline-variant); display: flex; align-items: center; justify-content: center; font-size: 18px; line-height: 24px; font-weight: 500; color: {{k.fg}};">
+            <sc-if value="{{k.isBack}}" hint-placeholder-val="{{ false }}"><svg class="i" viewBox="0 0 24 24" aria-label="刪除一位"><path d="M9 5h11a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H9l-6-7z"></path><path d="M12 9l6 6M18 9l-6 6"></path></svg></sc-if>
+            {{k.label}}
+          </div>
+        </sc-for>
+      </div>
+      <div class="ts tap num" onClick="{{save.press}}" style="height: 48px; border-radius: 24px; background: {{save.bg}}; color: {{save.fg}}; display: flex; align-items: center; justify-content: center;">{{save.label}}</div>
+    </footer>
+  </sc-if>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":390,"height":1640},"cardPostingDays":{"editor":"number","default":5,"section":"設定"}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      focus: 'cash',
+      confirms: { service: null, subsidy: null },
+      amounts: { subsidy: '' },
+      balances: { bank: '', cash: '', cardA: '', cardB: '' },
+      resolutions: { bank: null, cash: null, cards: null },
+      assign: { bank: null, cash: null, cards: null },
+      done: null,
+    };
+  }
+
+  /** 示意資料：與 app 的 SampleHousehold 相同（今天 2026/9/14）。 */
+  data() {
+    return {
+      confirms: [
+        { id: 'service', name: '汽車保養', meta: '信用卡 · 計畫 9月下', planned: 12000, type: 'EXPENSE', method: 'CARD' },
+        { id: 'subsidy', name: '教育補助（收入）', meta: '薪轉帳戶 · 計畫 9月上', planned: 5000, type: 'INCOME', method: null },
+      ],
+      rows: [
+        { id: 'bank', name: '薪轉帳戶', method: 'TRANSFER', isCard: false, base: 120000, fields: [{ id: 'bank', label: '實際餘額' }], items: ['才藝課'] },
+        { id: 'cash', name: '零用現金', method: 'CASH', isCard: false, base: 15000, fields: [{ id: 'cash', label: '錢包總額' }], items: ['生活費', '家用'] },
+        {
+          id: 'cards', name: '信用卡合計', method: 'CARD', isCard: true, base: 105000,
+          fields: [{ id: 'cardA', label: '信用卡 A' }, { id: 'cardB', label: '信用卡 B' }],
+          items: ['生活費', '交通油資'],
+          recent: 12100,
+        },
+      ],
+      // 各帳戶差額預設歸到的項目（本月該支付方式計畫最大的可調項目）
+      defaultItem: { bank: '才藝課', cash: '生活費', cards: '生活費' },
+    };
+  }
+
+  money(n) {
+    return (n < 0 ? '−$' : '$') + Math.abs(n).toLocaleString('en-US');
+  }
+
+  /** 到期確認造成的補記，會先算進帳戶推算。 */
+  pending(state) {
+    const result = { bank: 0, cash: 0, cards: 0 };
+    this.data().confirms.forEach((c) => {
+      const choice = state.confirms[c.id];
+      if (!choice || choice === 'POSTPONE') return;
+      const amount = choice === 'PAID' ? c.planned : parseInt(state.amounts[c.id] || '0', 10);
+      if (!amount) return;
+      if (c.type === 'INCOME') result.bank += amount;
+      else if (c.method === 'CARD') result.cards += amount;
+      else if (c.method === 'CASH') result.cash -= amount;
+      else result.bank -= amount;
+    });
+    return result;
+  }
+
+  computedOf(row, state) {
+    return row.base + this.pending(state)[row.id];
+  }
+
+  actualOf(row, state) {
+    const values = row.fields.map((f) => state.balances[f.id]);
+    if (values.some((v) => v === '')) return null;
+    return values.reduce((sum, v) => sum + parseInt(v || '0', 10), 0);
+  }
+
+  missedOf(row, computed, actual) {
+    return row.isCard ? actual - computed : computed - actual;
+  }
+
+  classify(missed, recent, isCard) {
+    if (missed === 0) return 'MATCHED';
+    if (missed > 0) return 'MISSED';
+    if (isCard && -missed <= recent) return 'PENDING';
+    return 'OVER_RECORDED';
+  }
+
+  defaultResolution(kind) {
+    if (kind === 'MISSED') return 'ASSIGN_ITEM';
+    if (kind === 'PENDING') return 'SKIP';
+    return 'BALANCE_ONLY';
+  }
+
+  message(kind, missed, isCard, days) {
+    const money = (n) => this.money(n);
+    if (kind === 'MATCHED') return '和推算一樣';
+    if (kind === 'MISSED') {
+      return isCard ? '銀行多 ' + money(missed) + '，可能有刷卡沒記' : '少了 ' + money(missed) + '，可能是漏記';
+    }
+    if (kind === 'PENDING') return '銀行少 ' + money(-missed) + '，可能是最近 ' + days + ' 天的刷卡還沒入帳';
+    return isCard
+      ? '銀行少 ' + money(-missed) + '，可能是記重複或有退款'
+      : '多了 ' + money(-missed) + '，可能是記重複或有收入沒記';
+  }
+
+  renderVals() {
+    const s = this.state;
+    const d = this.data();
+    const days = this.props.cardPostingDays ?? 5;
+    const money = (n) => this.money(n);
+    const on = (flag) => ({ bg: flag ? '#CCE8E2' : '#FFFFFF', fg: flag ? '#05201C' : '#171D1B', border: flag ? '#CCE8E2' : '#BEC9C5' });
+    const focused = (id) => (s.focus === id
+      ? { border: '2px solid #1B6B61', labelColor: '#1B6B61' }
+      : { border: '1px solid #6F7976', labelColor: '#3F4946' });
+
+    const CHOICES = { EXPENSE: [['PAID', '已付'], ['DIFF', '金額不同'], ['POSTPONE', '延到下月']], INCOME: [['PAID', '已入帳'], ['DIFF', '金額不同'], ['POSTPONE', '延到下月']] };
+
+    const confirms = d.confirms.map((c) => {
+      const choice = s.confirms[c.id];
+      const field = focused(c.id);
+      return {
+        name: c.name,
+        meta: c.meta,
+        amount: money(c.planned),
+        showAmount: choice === 'DIFF',
+        field: {
+          value: s.amounts[c.id] ? parseInt(s.amounts[c.id], 10).toLocaleString('en-US') : '0',
+          border: field.border,
+          labelColor: field.labelColor,
+          tap: () => this.setState({ focus: c.id }),
+        },
+        choices: CHOICES[c.type].map(([id, label]) => {
+          const st = on(choice === id);
+          return {
+            label,
+            selected: choice === id,
+            bg: st.bg,
+            fg: st.fg,
+            pick: () => this.setState({
+              confirms: { ...s.confirms, [c.id]: choice === id ? null : id },
+              focus: id === 'DIFF' ? c.id : s.focus,
+            }),
+          };
+        }),
+      };
+    });
+
+    const rows = d.rows.map((row) => {
+      const computed = this.computedOf(row, s);
+      const actual = this.actualOf(row, s);
+      const missed = actual == null ? 0 : this.missedOf(row, computed, actual);
+      const kind = actual == null ? null : this.classify(missed, row.recent || 0, row.isCard);
+      const resolution = s.resolutions[row.id] || (kind ? this.defaultResolution(kind) : null);
+      const item = s.assign[row.id] || d.defaultItem[row.id];
+      const warn = kind === 'MISSED' || kind === 'OVER_RECORDED';
+      return {
+        id: row.id,
+        name: row.name,
+        hint: (row.isCard ? '系統推算欠款 ' : '系統推算 ') + money(computed),
+        fields: row.fields.map((f) => {
+          const st = focused(f.id);
+          const value = s.balances[f.id];
+          return {
+            id: f.id,
+            label: f.label,
+            value: value === '' ? money(0).slice(1) : parseInt(value, 10).toLocaleString('en-US'),
+            filled: value !== '',
+            color: value === '' ? '#6F7976' : '#171D1B',
+            border: st.border,
+            labelColor: st.labelColor,
+            tap: () => this.setState({ focus: f.id }),
+          };
+        }),
+        kind,
+        missed,
+        message: actual == null
+          ? (row.isCard ? '兩張卡都填了才能對帳' : '填入實際金額就會比對')
+          : this.message(kind, missed, row.isCard, days),
+        messageColor: warn ? '#7A5900' : '#3F4946',
+        warn,
+        resolution,
+        showResolutions: kind === 'MISSED' || kind === 'PENDING' || kind === 'OVER_RECORDED',
+        resolutions: [['ASSIGN_ITEM', '歸到項目'], ['BALANCE_ONLY', '只校正餘額'], ['SKIP', '先不處理']].map(([id, label]) => {
+          const st = on(resolution === id);
+          return {
+            label,
+            selected: resolution === id,
+            bg: st.bg,
+            fg: st.fg,
+            border: st.border,
+            pick: () => this.setState({ resolutions: { ...s.resolutions, [row.id]: id } }),
+          };
+        }),
+        showAssign: resolution === 'ASSIGN_ITEM',
+        assignItem: item,
+        assignItems: row.items.map((name) => {
+          const st = on(item === name);
+          return { name, selected: item === name, bg: st.bg, fg: st.fg, border: st.border, pick: () => this.setState({ assign: { ...s.assign, [row.id]: name } }) };
+        }),
+      };
+    });
+
+    // 會寫入什麼
+    const missedRows = rows.filter((r) => r.resolution === 'ASSIGN_ITEM' && r.kind && r.missed !== 0);
+    const balanceRows = rows.filter((r) => r.kind && r.resolution !== 'SKIP');
+    const confirmCount = d.confirms.filter((c) => s.confirms[c.id]).length;
+    const missedTotal = missedRows.filter((r) => r.missed > 0).reduce((sum, r) => sum + r.missed, 0);
+    const missedCount = missedRows.filter((r) => r.missed > 0).length;
+
+    const preview = [];
+    if (missedCount) {
+      preview.push({ text: '漏記差額 ' + missedCount + ' 筆 · ' + money(missedTotal) + '（' + missedRows.filter((r) => r.missed > 0).map((r) => r.assignItem).join('、') + '）' });
+    }
+    missedRows.filter((r) => r.missed < 0).forEach((r) => {
+      preview.push({ text: '多記差額 ' + money(r.missed) + '（' + r.assignItem + '）' });
+    });
+    if (confirmCount) preview.push({ text: '到期確認 ' + confirmCount + ' 項' });
+    if (balanceRows.length) preview.push({ text: '校正餘額 ' + balanceRows.reduce((n, r) => n + r.fields.length, 0) + ' 個帳戶' });
+    if (!preview.length) preview.push({ text: '目前沒有要寫入的東西' });
+
+    const canSave = !!(missedCount || confirmCount || balanceRows.length || missedRows.length);
+
+    return {
+      title: '本週檢查',
+      subtitle: '9/14（一）· 約 2 分鐘 · 漏了幾天也沒關係',
+      editing: !s.done,
+      done: !!s.done,
+      doneLines: s.done || [],
+      confirms,
+      rows,
+      preview,
+      footerHint: '點欄位後用鍵盤輸入；「相符」會填入系統推算的金額',
+      keys: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '相符', '0', 'back'].map((k) => ({
+        label: k === 'back' ? '' : k,
+        isBack: k === 'back',
+        bg: k === '相符' ? '#E9EFEC' : '#FFFFFF',
+        fg: '#171D1B',
+        press: () => {
+          if (k === 'back') {
+            this.pressBack();
+            return;
+          }
+          if (k === '相符') {
+            this.pressMatch();
+            return;
+          }
+          this.pressDigit(k);
+        },
+      })),
+      save: {
+        label: canSave ? '完成檢查' : '沒有要寫入的東西',
+        enabled: canSave,
+        bg: canSave ? '#1B6B61' : '#DDE4E1',
+        fg: canSave ? '#FFFFFF' : '#3F4946',
+        press: () => {
+          if (!canSave) return;
+          this.setState({ done: preview.map((p) => ({ text: p.text })) });
+        },
+      },
+      again: () => this.setState({ done: null }),
+    };
+  }
+
+  pressDigit(key) {
+    const s = this.state;
+    const target = s.focus;
+    const current = target in s.balances ? s.balances[target] : s.amounts[target] || '';
+    const next = (current + key).replace(/^0+/, '');
+    if (next.length > 9) return;
+    if (target in s.balances) this.setState({ balances: { ...s.balances, [target]: next } });
+    else this.setState({ amounts: { ...s.amounts, [target]: next } });
+  }
+
+  pressBack() {
+    const s = this.state;
+    const target = s.focus;
+    if (target in s.balances) {
+      this.setState({ balances: { ...s.balances, [target]: (s.balances[target] || '').slice(0, -1) } });
+    } else {
+      this.setState({ amounts: { ...s.amounts, [target]: (s.amounts[target] || '').slice(0, -1) } });
+    }
+  }
+
+  /** 「相符」：把系統推算的金額填進聚焦的欄位。 */
+  pressMatch() {
+    const s = this.state;
+    const row = this.data().rows.find((r) => r.fields.some((f) => f.id === s.focus));
+    if (!row) return;
+    const computed = this.computedOf(row, s);
+    if (row.fields.length === 1) {
+      this.setState({ balances: { ...s.balances, [s.focus]: String(computed) } });
+      return;
+    }
+    // 信用卡合計：把沒填的另一張卡補成剩下的差額
+    const other = row.fields.find((f) => f.id !== s.focus);
+    const otherValue = s.balances[other.id];
+    const rest = computed - (otherValue === '' ? 0 : parseInt(otherValue, 10));
+    const balances = { ...s.balances, [s.focus]: String(Math.max(rest, 0)) };
+    if (otherValue === '') balances[other.id] = '0';
+    this.setState({ balances });
+  }
+}
+</script>
+</body>
+</html>

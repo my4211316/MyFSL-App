@@ -1,0 +1,177 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&amp;family=Roboto+Flex:opsz,wght@8..144,400..700&amp;display=swap">
+  <style>
+    :root { --primary:#1B6B61; --on-primary:#FFFFFF; --primary-container:#A6F2E4; --on-primary-container:#00201C; --secondary-container:#CCE8E2; --on-secondary-container:#05201C; --surface:#F5FAF8; --sc-lowest:#FFFFFF; --sc-low:#EFF5F2; --sc:#E9EFEC; --sc-high:#E3EAE7; --sc-highest:#DDE4E1; --on-surface:#171D1B; --on-surface-variant:#3F4946; --outline:#6F7976; --outline-variant:#BEC9C5; --error:#BA1A1A; --warn-fill:#C69200; --warn-container:#FFDF9E; --on-warn-container:#261A00; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--surface); color: var(--on-surface); font-family: "Roboto Flex", "Noto Sans TC", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    a { color: var(--primary); } a:hover { color: #0F4F47; }
+    .num { font-variant-numeric: tabular-nums; }
+    .tl { font-size: 22px; line-height: 28px; font-weight: 500; }
+    .tm { font-size: 16px; line-height: 24px; font-weight: 500; }
+    .ts { font-size: 14px; line-height: 20px; font-weight: 500; }
+    .bm { font-size: 14px; line-height: 20px; }
+    .bs { font-size: 12px; line-height: 16px; }
+    .lm { font-size: 12px; line-height: 16px; font-weight: 500; }
+    .muted { color: var(--on-surface-variant); }
+    svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    svg.i16 { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    .avatar { width: 40px; height: 40px; border-radius: 20px; background: var(--secondary-container); color: var(--on-secondary-container); display: flex; align-items: center; justify-content: center; flex: none; }
+    .facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    .fact { display: flex; flex-direction: column; gap: 2px; }
+  </style>
+</helmet>
+<div style="position: relative; width: 390px; min-height: 1580px; display: flex; flex-direction: column; background: var(--surface);">
+
+  <header style="height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 8px 0 20px; flex: none;">
+    <span class="tl">帳戶</span>
+    <span class="ts" style="height: 48px; display: flex; align-items: center; gap: 6px; padding: 0 12px; color: var(--primary);"><svg class="i16" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4"></path></svg>校正餘額</span>
+  </header>
+
+  <main style="flex: 1; display: flex; flex-direction: column; gap: 16px; padding: 8px 16px 96px;">
+    <section style="background: var(--sc-lowest); border: 1px solid var(--outline-variant); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;">
+        <div style="display: flex; flex-direction: column; gap: 2px;"><span class="lm muted">可動用現金</span><span style="font-size: 28px; line-height: 36px; font-weight: 500;">$135,000</span></div>
+        <div style="display: flex; flex-direction: column; gap: 2px;"><span class="lm muted">負債合計</span><span style="font-size: 28px; line-height: 36px; font-weight: 500;">$1,505,000</span></div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--outline-variant);">
+        <div style="display: flex; justify-content: space-between;" class="bm"><span class="muted">卡債</span><span class="num">$105,000</span></div>
+        <div style="display: flex; justify-content: space-between;" class="bm"><span class="muted">信貸</span><span class="num">$600,000</span></div>
+        <div style="display: flex; justify-content: space-between;" class="bm"><span class="muted">保單借款</span><span class="num">$800,000</span></div>
+      </div>
+    </section>
+
+    <div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 12px; background: var(--warn-container); color: var(--on-warn-container);">
+      <svg class="i" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19z"></path><path d="M12 10v4M12 17v.5"></path></svg>
+      <div style="display: flex; flex-direction: column;"><span class="ts">本月卡債預計增加 $8,156</span><span class="bs">刷卡 $33,900 ＋ 循環利息 $1,256，固定繳款只有 $27,000</span></div>
+    </div>
+
+    <section style="display: flex; flex-direction: column; gap: 8px;">
+      <span class="ts muted" style="height: 32px; display: flex; align-items: center;">現金與存款</span>
+      <div style="background: var(--sc-lowest); border: 1px solid var(--outline-variant); border-radius: 12px; display: flex; flex-direction: column;">
+        <div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--outline-variant);">
+          <div class="avatar"><svg class="i" viewBox="0 0 24 24"><path d="M3 9l9-5 9 5M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18"></path></svg></div>
+          <div style="flex: 1; display: flex; flex-direction: column;"><span class="bm" style="font-weight: 500;">薪轉帳戶</span><span class="bs muted">9/14 校正</span></div>
+          <span class="tm num">$120,000</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px;">
+          <div class="avatar"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"></rect><circle cx="12" cy="12" r="2.5"></circle></svg></div>
+          <div style="flex: 1; display: flex; flex-direction: column;"><span class="bm" style="font-weight: 500;">零用現金</span><span class="bs muted">9/14 校正</span></div>
+          <span class="tm num">$15,000</span>
+        </div>
+      </div>
+    </section>
+
+    <section style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="height: 32px; display: flex; align-items: center; justify-content: space-between;"><span class="ts muted">信用卡</span><span class="bs muted">未指定卡片的刷卡只算進卡債合計；利息以未清餘額計算</span></div>
+
+      <div style="background: var(--sc-lowest); border: 1px solid var(--outline-variant); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div class="avatar"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 10h18M7 15h4"></path></svg></div>
+          <div style="flex: 1; display: flex; flex-direction: column;"><span class="bm" style="font-weight: 500;">信用卡 A</span><span class="bs muted">額度 $150,000</span></div>
+          <div style="display: flex; flex-direction: column; align-items: flex-end;"><span class="bs muted">欠款</span><span class="tm num">$60,000</span></div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <div style="position: relative; height: 8px; border-radius: 4px; background: var(--primary-container);"><div style="position: absolute; left: 0; top: 0; bottom: 0; width: 40%; border-radius: 4px; background: var(--primary);"></div></div>
+          <span class="bs muted">使用率 40%</span>
+        </div>
+        <div class="facts">
+          <div class="fact"><span class="bs muted">繳款日</span><span class="bm">每月 15 日</span></div>
+          <div class="fact"><span class="bs muted">固定繳款</span><span class="bm num">$18,000</span></div>
+          <div class="fact"><span class="bs muted">本月已刷</span><span class="bm num">$9,800</span></div><div class="fact"><span class="bs muted">循環年利率</span><span class="bm num">15%</span></div><div class="fact"><span class="bs muted">當期利息</span><span class="bm num">$750</span></div><div class="fact"><span class="bs muted">最低應繳</span><span class="bm num">$6,000</span></div>
+        </div>
+      </div>
+
+      <div style="background: var(--sc-lowest); border: 1px solid var(--outline-variant); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div class="avatar"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 10h18M7 15h4"></path></svg></div>
+          <div style="flex: 1; display: flex; flex-direction: column;"><span class="bm" style="font-weight: 500;">信用卡 B</span><span class="bs muted">額度 $80,000</span></div>
+          <div style="display: flex; flex-direction: column; align-items: flex-end;"><span class="bs muted">欠款</span><span class="tm num">$45,000</span></div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <div style="position: relative; height: 8px; border-radius: 4px; background: var(--warn-container);"><div style="position: absolute; left: 0; top: 0; bottom: 0; width: 56%; border-radius: 4px; background: var(--warn-fill);"></div></div>
+          <span class="bs" style="display: flex; align-items: center; gap: 4px; color: #7A5900;"><svg class="i16" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19z"></path><path d="M12 10v4M12 17v.5"></path></svg>使用率 56%，偏高</span>
+        </div>
+        <div class="facts">
+          <div class="fact"><span class="bs muted">繳款日</span><span class="bm">每月 25 日</span></div>
+          <div class="fact"><span class="bs muted">固定繳款</span><span class="bm num">$9,000</span></div>
+          <div class="fact"><span class="bs muted">本月已刷</span><span class="bm num">$1,500</span></div><div class="fact"><span class="bs muted">循環年利率</span><span class="bm num">13.5%</span></div><div class="fact"><span class="bs muted">當期利息</span><span class="bm num">$506</span></div><div class="fact"><span class="bs muted">最低應繳</span><span class="bm num">$4,500</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section style="display: flex; flex-direction: column; gap: 8px;">
+      <span class="ts muted" style="height: 32px; display: flex; align-items: center;">貸款</span>
+
+      <div style="background: var(--sc-lowest); border: 1px solid var(--outline-variant); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div class="avatar"><svg class="i" viewBox="0 0 24 24"><path d="M19 5 5 19"></path><circle cx="7" cy="7" r="2.5"></circle><circle cx="17" cy="17" r="2.5"></circle></svg></div>
+          <div style="flex: 1; display: flex; flex-direction: column;"><span class="bm" style="font-weight: 500;">信貸</span><span class="bs muted">本息平均攤還 · 20 日由薪轉扣款</span></div>
+          <div style="display: flex; flex-direction: column; align-items: flex-end;"><span class="bs muted">餘額</span><span class="tm num">$600,000</span></div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <div style="position: relative; height: 8px; border-radius: 4px; background: var(--primary-container);"><div style="position: absolute; left: 0; top: 0; bottom: 0; width: 25%; border-radius: 4px; background: var(--primary);"></div></div>
+          <span class="bs muted">已還 25%（原貸 $800,000）</span>
+        </div>
+        <div class="facts">
+          <div class="fact"><span class="bs muted">年利率</span><span class="bm num">7.5%</span></div>
+          <div class="fact"><span class="bs muted">剩餘期數</span><span class="bm num">48 期</span></div>
+          <div class="fact"><span class="bs muted">每月約繳</span><span class="bm num">$14,507</span></div>
+        </div>
+      </div>
+
+      <div style="background: var(--sc-lowest); border: 1px solid var(--outline-variant); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div class="avatar"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"></path></svg></div>
+          <div style="flex: 1; display: flex; flex-direction: column;"><span class="bm" style="font-weight: 500;">保單借款</span><span class="bs muted">無固定到期日</span></div>
+          <div style="display: flex; flex-direction: column; align-items: flex-end;"><span class="bs muted">餘額</span><span class="tm num">$800,000</span></div>
+        </div>
+        <div class="facts">
+          <div class="fact"><span class="bs muted">利息月份</span><span class="bm">6、12 月</span></div>
+          <div class="fact"><span class="bs muted">每次利息</span><span class="bm num">$30,000</span></div>
+          <div class="fact"><span class="bs muted">付款帳戶</span><span class="bm">薪轉</span></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="ts" style="position: absolute; right: 16px; bottom: 96px; height: 56px; padding: 0 20px 0 16px; border-radius: 16px; background: var(--primary-container); color: var(--on-primary-container); display: flex; align-items: center; gap: 12px; box-shadow: 0 2px 6px rgba(23, 29, 27, 0.18);">
+    <svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg>新增帳戶
+  </div>
+
+  <nav style="display: flex; height: 80px; background: var(--sc); padding: 12px 0 16px; flex: none;">
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"></path><path d="M13.5 6.5l4 4"></path></svg></div>
+      <span class="lm">記帳</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"></path></svg></div>
+      <span class="lm">本期</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18M9 9v11"></path></svg></div>
+      <span class="lm">計畫</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><path d="M3 17l5-5 4 3 8-8"></path><path d="M3 21h18"></path></svg></div>
+      <span class="lm">試算</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+      <div style="width: 64px; height: 32px; border-radius: 16px; background: var(--secondary-container); color: var(--on-secondary-container); display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"></rect><path d="M3 10h18M16 15h2"></path></svg></div>
+      <span class="lm">帳戶</span>
+    </div>
+  </nav>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":390,"height":1580}}'>
+class Component extends DCLogic {}
+</script>
+</body>
+</html>

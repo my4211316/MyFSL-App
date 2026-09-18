@@ -1,0 +1,378 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&amp;family=Roboto+Flex:opsz,wght@8..144,400..700&amp;display=swap">
+  <style>
+    :root { --primary:#1B6B61; --on-primary:#FFFFFF; --primary-container:#A6F2E4; --on-primary-container:#00201C; --secondary-container:#CCE8E2; --on-secondary-container:#05201C; --surface:#F5FAF8; --sc-lowest:#FFFFFF; --sc-low:#EFF5F2; --sc:#E9EFEC; --sc-high:#E3EAE7; --sc-highest:#DDE4E1; --on-surface:#171D1B; --on-surface-variant:#3F4946; --outline:#6F7976; --outline-variant:#BEC9C5; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--surface); color: var(--on-surface); font-family: "Roboto Flex", "Noto Sans TC", system-ui, sans-serif; -webkit-font-smoothing: antialiased; user-select: none; }
+    a { color: var(--primary); } a:hover { color: #0F4F47; }
+    .num { font-variant-numeric: tabular-nums; }
+    .tl { font-size: 22px; line-height: 28px; font-weight: 500; }
+    .ts { font-size: 14px; line-height: 20px; font-weight: 500; }
+    .bm { font-size: 14px; line-height: 20px; }
+    .bs { font-size: 12px; line-height: 16px; }
+    .lm { font-size: 12px; line-height: 16px; font-weight: 500; }
+    .muted { color: var(--on-surface-variant); }
+    svg.i { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    svg.i16 { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    .tap { cursor: pointer; }
+    .row-label { width: 32px; flex: none; }
+  </style>
+</helmet>
+<div style="position: relative; width: 390px; height: 844px; display: flex; flex-direction: column; background: var(--surface); overflow: hidden;">
+
+  <header style="height: 56px; display: flex; align-items: center; gap: 8px; padding: 0 4px 0 20px; flex: none;">
+    <span class="tl" style="flex: 1;">記一筆</span>
+    <div style="display: grid; grid-template-columns: repeat(3, 52px); gap: 1px; height: 36px; border: 1px solid var(--outline); border-radius: 18px; overflow: hidden; background: var(--outline);">
+      <sc-for list="{{types}}" as="t" hint-placeholder-count="3">
+        <div class="ts tap" onClick="{{t.pick}}" style="display: flex; align-items: center; justify-content: center; background: {{t.bg}}; color: {{t.fg}};">{{t.label}}</div>
+      </sc-for>
+    </div>
+    <div class="tap" style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; color: var(--primary);" aria-label="看紀錄">
+      <svg class="i" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.5M3.5 12h.5M3.5 18h.5"></path></svg>
+    </div>
+  </header>
+
+  <main style="flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 0 16px 8px; min-height: 0;">
+    <div style="height: 40px; border-radius: 12px; background: var(--sc-low); display: flex; align-items: center; justify-content: space-between; padding: 0 12px; margin-bottom: 4px;">
+      <span class="bm num">{{stripLeft}}</span>
+      <span class="bs muted num">生活類每日可用 $745</span>
+    </div>
+
+    <div style="display: flex; flex-direction: column; padding: 0 4px 4px;">
+      <span class="bs muted">{{selectedLine}}</span>
+      <div style="display: flex; align-items: baseline; gap: 6px;">
+        <span style="font-size: 28px; line-height: 36px; color: var(--on-surface-variant);">$</span>
+        <span class="num" style="font-size: 44px; line-height: 52px; font-weight: 500; color: {{amountColor}};">{{amountText}}</span>
+      </div>
+      <span class="bs num" style="color: {{budgetColor}};">{{budgetLine}}</span>
+    </div>
+
+    <div style="display: flex; align-items: flex-start; gap: 8px;">
+      <span class="lm muted row-label" style="line-height: 44px;">項目</span>
+      <div style="flex: 1; display: flex; flex-wrap: wrap; gap: 0 8px;">
+        <sc-for list="{{chips}}" as="c" hint-placeholder-count="6">
+          <div class="tap" onClick="{{c.pick}}" style="height: 44px; display: flex; align-items: center;">
+            <span class="ts" style="height: 36px; padding: 0 12px; border-radius: 8px; display: flex; align-items: center; gap: 6px; border: 1px solid {{c.border}}; background: {{c.bg}}; color: {{c.fg}};">
+              <sc-if value="{{c.selected}}" hint-placeholder-val="{{ false }}"><svg class="i16" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></sc-if>
+              {{c.name}}
+            </span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <sc-if value="{{showMethod}}" hint-placeholder-val="{{ true }}">
+      <div style="display: flex; align-items: center; gap: 8px; height: 44px;">
+        <span class="lm muted row-label">付款</span>
+        <div style="flex: 1; display: flex; gap: 8px;">
+          <sc-for list="{{methods}}" as="m" hint-placeholder-count="3">
+            <div class="tap" onClick="{{m.pick}}" style="height: 44px; display: flex; align-items: center;">
+              <span class="ts" style="height: 36px; padding: 0 12px; border-radius: 18px; display: flex; align-items: center; gap: 6px; border: 1px solid {{m.border}}; background: {{m.bg}}; color: {{m.fg}};">
+                <sc-if value="{{m.selected}}" hint-placeholder-val="{{ false }}"><svg class="i16" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></sc-if>
+                {{m.label}}
+              </span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{showCard}}" hint-placeholder-val="{{ false }}">
+      <div style="display: flex; align-items: center; gap: 8px; height: 44px;">
+        <span class="lm muted row-label">卡片</span>
+        <div style="flex: 1; display: flex; gap: 8px;">
+          <sc-for list="{{cards}}" as="k" hint-placeholder-count="3">
+            <div class="tap" onClick="{{k.pick}}" style="height: 44px; display: flex; align-items: center;">
+              <span class="bm" style="height: 32px; padding: 0 12px; border-radius: 8px; display: flex; align-items: center; border: 1px solid {{k.border}}; background: {{k.bg}}; color: {{k.fg}};">{{k.label}}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <div style="display: flex; align-items: center; gap: 8px; height: 44px;">
+      <span class="lm muted row-label">備註</span>
+      <div style="flex: 1; display: flex; gap: 8px; overflow: hidden;">
+        <sc-for list="{{suggestions}}" as="n" hint-placeholder-count="4">
+          <div class="tap" onClick="{{n.pick}}" style="height: 44px; display: flex; align-items: center; flex: none;">
+            <span class="bm" style="height: 32px; padding: 0 12px; border-radius: 8px; display: flex; align-items: center; border: 1px solid {{n.border}}; background: {{n.bg}};">{{n.label}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="flex: 1;"></div>
+
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;">
+      <sc-for list="{{keys}}" as="k" hint-placeholder-count="12">
+        <div class="tap num" onClick="{{k.press}}" style="height: 48px; border-radius: 12px; background: var(--sc-lowest); border: 1px solid var(--outline-variant); display: flex; align-items: center; justify-content: center; font-size: 22px; line-height: 28px; font-weight: 500;">
+          <sc-if value="{{k.isBack}}" hint-placeholder-val="{{ false }}"><svg class="i" viewBox="0 0 24 24" aria-label="刪除一位"><path d="M9 5h11a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H9l-6-7z"></path><path d="M12 9l6 6M18 9l-6 6"></path></svg></sc-if>
+          {{k.label}}
+        </div>
+      </sc-for>
+    </div>
+
+    <div class="ts tap num" onClick="{{save}}" style="height: 52px; margin-top: 4px; border-radius: 26px; display: flex; align-items: center; justify-content: center; background: {{saveBg}}; color: {{saveFg}};">{{saveLabel}}</div>
+  </main>
+
+  <sc-if value="{{hasSnack}}" hint-placeholder-val="{{ false }}">
+    <div class="bm" style="position: absolute; left: 16px; right: 16px; bottom: 92px; min-height: 48px; border-radius: 4px; background: #2C3230; color: #ECF2EF; display: flex; align-items: center; gap: 8px; padding: 6px 4px 6px 16px; box-shadow: 0 3px 8px rgba(23, 29, 27, 0.25);">
+      <span style="flex: 1;">{{snack}}</span>
+      <span class="ts tap" onClick="{{undo}}" style="color: #8BD6C9; height: 40px; display: flex; align-items: center; padding: 0 12px;">復原</span>
+    </div>
+  </sc-if>
+
+  <nav style="display: flex; height: 80px; background: var(--sc); padding: 12px 0 16px; flex: none;">
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+      <div style="width: 64px; height: 32px; border-radius: 16px; background: var(--secondary-container); color: var(--on-secondary-container); display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"></path><path d="M13.5 6.5l4 4"></path></svg></div>
+      <span class="lm">記帳</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"></path></svg></div>
+      <span class="lm">本期</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18M9 9v11"></path></svg></div>
+      <span class="lm">計畫</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><path d="M3 17l5-5 4 3 8-8"></path><path d="M3 21h18"></path></svg></div>
+      <span class="lm">試算</span>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--on-surface-variant);">
+      <div style="width: 64px; height: 32px; display: flex; align-items: center; justify-content: center;"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"></rect><path d="M3 10h18M16 15h2"></path></svg></div>
+      <span class="lm">帳戶</span>
+    </div>
+  </nav>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":390,"height":844},"pickCard":{"editor":"boolean","default":true,"section":"設定"}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    // 今天稍早的三筆記帳：本週檢查回報時已包含，所以不再扣預算（counted: false）。最新的在最前面。
+    const entries = [
+      { type: 'EXPENSE', itemId: 'life', method: 'CASH', card: null, amount: 420, counted: false },
+      { type: 'EXPENSE', itemId: 'life', method: 'CARD', card: 'A', amount: 150, counted: false },
+      { type: 'EXPENSE', itemId: 'life', method: 'CASH', card: null, amount: 85, counted: false },
+    ];
+    const first = this.catalog().EXPENSE[0];
+    this.state = {
+      type: 'EXPENSE',
+      amount: '',
+      itemId: first.id,
+      method: this.defaultMethod(first, entries),
+      card: this.defaultCard(first, entries, props.pickCard ?? true),
+      note: '',
+      entries,
+      snack: '',
+    };
+  }
+
+  componentWillUnmount() {
+    clearTimeout(this.snackTimer);
+  }
+
+  /** 示意資料：plan = 本月計畫，left = 本週檢查後本月剩下。 */
+  catalog() {
+    return {
+      EXPENSE: [
+        { id: 'life', name: '生活費', plan: { CASH: 9000, CARD: 16000 }, left: { CASH: 4600, CARD: 6200 }, notes: ['早餐', '午餐', '晚餐', '買菜'] },
+        { id: 'fuel', name: '交通油資', plan: { CARD: 3500 }, left: { CARD: 1200 }, notes: ['加油', '停車', '高鐵'] },
+        { id: 'home', name: '家用', plan: { CASH: 1000 }, left: { CASH: 700 }, notes: ['清潔用品', '衛生紙'] },
+        { id: 'service', name: '汽車保養', plan: { CARD: 12000 }, left: { CARD: 12000 }, notes: ['定期保養', '換輪胎'] },
+        { id: 'kids', name: '才藝課', plan: { TRANSFER: 6000 }, left: { TRANSFER: 6000 }, notes: ['學費', '教材'] },
+        { id: 'other', name: '其他', plan: {}, left: {}, notes: ['修繕', '禮物'] },
+      ],
+      INCOME: [
+        { id: 'salary', name: '薪資', account: '入帳：薪轉帳戶', notes: ['九月薪資'] },
+        { id: 'subsidy', name: '教育補助', account: '入帳：薪轉帳戶', notes: ['學校補助'] },
+        { id: 'otherIncome', name: '其他收入', account: '入帳：薪轉帳戶', notes: ['退款', '獎金'] },
+      ],
+      TRANSFER: [
+        { id: 'payA', name: '繳信用卡 A', account: '由薪轉帳戶付款', notes: ['本期帳單'] },
+        { id: 'payB', name: '繳信用卡 B', account: '由薪轉帳戶付款', notes: ['本期帳單'] },
+        { id: 'cashout', name: '領現', account: '由薪轉帳戶轉入零用現金', notes: ['ATM'] },
+      ],
+    };
+  }
+
+  /** 預設支付方式：這個項目上次用的 → 本月計畫金額最大的 → 第一個計畫列 → 現金。收入、轉帳沒有支付方式。 */
+  defaultMethod(item, entries) {
+    if (!item.plan) return null;
+    const last = entries.find((e) => e.type === 'EXPENSE' && e.itemId === item.id && e.method);
+    if (last) return last.method;
+    const lines = Object.keys(item.plan);
+    const positive = lines.filter((m) => item.plan[m] > 0).sort((a, b) => item.plan[b] - item.plan[a]);
+    return positive[0] || lines[0] || 'CASH';
+  }
+
+  /** 預設卡片：「指定信用卡」開啟時用這個項目上次刷的卡，否則不指定。 */
+  defaultCard(item, entries, pickCard) {
+    if (!pickCard) return 'NONE';
+    const last = entries.find((e) => e.type === 'EXPENSE' && e.itemId === item.id && e.method === 'CARD');
+    return (last && last.card) || 'NONE';
+  }
+
+  renderVals() {
+    const ITEMS = this.catalog();
+    const METHOD_LABEL = { CASH: '現金', CARD: '信用卡', TRANSFER: '轉帳' };
+    const CARD_LABEL = { NONE: '不指定', A: '信用卡 A', B: '信用卡 B' };
+    const WARN = '#7A5900';
+    const NORMAL = '#3F4946';
+
+    const s = this.state;
+    const pickCard = this.props.pickCard ?? true;
+    const money = (n) => (n < 0 ? '−$' : '$') + Math.abs(n).toLocaleString('en-US');
+    const list = ITEMS[s.type];
+    const item = list.find((i) => i.id === s.itemId) || list[0];
+    const isExpense = s.type === 'EXPENSE';
+    const amount = parseInt(s.amount || '0', 10);
+    const on = (flag) => ({ bg: flag ? '#CCE8E2' : '#FFFFFF', fg: flag ? '#05201C' : '#171D1B', border: flag ? '#CCE8E2' : '#BEC9C5' });
+
+    // 回報之後才記的帳（counted）才會再扣預算。
+    const spent = (method) => s.entries
+      .filter((e) => e.counted && e.type === 'EXPENSE' && e.itemId === item.id && e.method === method)
+      .reduce((sum, e) => sum + e.amount, 0);
+    const isPlanned = (method) => isExpense && item.plan[method] > 0;
+    const leftOf = (method) => item.left[method] - spent(method);
+
+    const hintFor = (method, value) => {
+      if (!isExpense || !method) return { text: '不影響支出進度', warn: false };
+      const name = item.name + '・' + METHOD_LABEL[method];
+      if (isPlanned(method)) {
+        const left = leftOf(method);
+        const after = left - value;
+        if (!value && left >= 0) return { text: name + ' 本月剩 ' + money(left), warn: false, after };
+        if (!value) return { text: name + ' 本月已超出 ' + money(-left), warn: true, after };
+        if (after >= 0) return { text: '記下後 ' + name + ' 剩 ' + money(after), warn: false, after };
+        return { text: '記下後超出 ' + name + ' 計畫 ' + money(-after), warn: true, after };
+      }
+      const planned = Object.keys(item.plan).filter((m) => item.plan[m] > 0);
+      if (!planned.length) return { text: '不在本月計畫內，會列入計畫外支出', warn: false };
+      const unplannedSpent = Object.keys(METHOD_LABEL).filter((m) => !isPlanned(m)).reduce((sum, m) => sum + spent(m), 0);
+      const total = planned.reduce((sum, m) => sum + leftOf(m), 0) - unplannedSpent - value;
+      return { text: item.name + '沒有規劃用' + METHOD_LABEL[method] + '，會算進' + item.name + '總額（剩 ' + money(total) + '）', warn: true };
+    };
+    const hint = hintFor(isExpense ? s.method : null, amount);
+
+    const showCard = isExpense && s.method === 'CARD' && pickCard;
+    const selectedLine = isExpense
+      ? item.name + ' · ' + METHOD_LABEL[s.method] + (showCard ? ' · ' + CARD_LABEL[s.card] : '')
+      : item.name + ' · ' + item.account;
+
+    const press = (key) => () => {
+      if (key === 'back') { this.setState({ amount: s.amount.slice(0, -1) }); return; }
+      const next = (s.amount + key).replace(/^0+/, '');
+      if (next.length <= 7) this.setState({ amount: next });
+    };
+
+    const selectItem = (type, next) => ({
+      type,
+      itemId: next.id,
+      method: this.defaultMethod(next, s.entries),
+      card: this.defaultCard(next, s.entries, pickCard),
+      note: '',
+    });
+
+    const expenses = s.entries.filter((e) => e.type === 'EXPENSE');
+    const todayTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
+
+    return {
+      stripLeft: '9/14 今天已記 ' + expenses.length + ' 筆 · ' + money(todayTotal),
+      types: [['EXPENSE', '支出'], ['INCOME', '收入'], ['TRANSFER', '轉帳']].map(([id, label]) => {
+        const st = on(s.type === id);
+        return { label, selected: s.type === id, bg: st.bg, fg: st.fg, pick: () => this.setState(selectItem(id, ITEMS[id][0])) };
+      }),
+      selectedLine,
+      amountText: amount ? amount.toLocaleString('en-US') : '0',
+      amountColor: amount ? '#171D1B' : '#6F7976',
+      budgetLine: hint.text,
+      budgetColor: hint.warn ? WARN : NORMAL,
+      chips: list.map((i) => {
+        const st = on(i.id === item.id);
+        return { name: i.name, selected: i.id === item.id, bg: st.bg, fg: st.fg, border: st.border, pick: () => this.setState(selectItem(s.type, i)) };
+      }),
+      showMethod: isExpense,
+      methods: ['CASH', 'CARD', 'TRANSFER'].map((m) => {
+        const selected = s.method === m;
+        const st = on(selected);
+        const planned = isPlanned(m);
+        return {
+          label: METHOD_LABEL[m],
+          selected,
+          planned,
+          bg: st.bg,
+          fg: selected ? st.fg : (planned ? '#171D1B' : '#6F7976'),
+          border: selected ? st.border : (planned ? '#BEC9C5' : '#DDE4E1'),
+          pick: () => {
+            if (m === s.method) return;
+            this.setState({ method: m, card: this.defaultCard(item, s.entries, pickCard) });
+          },
+        };
+      }),
+      showCard,
+      cards: ['NONE', 'A', 'B'].map((c) => {
+        const st = on(s.card === c);
+        return { label: CARD_LABEL[c], selected: s.card === c, bg: st.bg, fg: st.fg, border: st.border, pick: () => this.setState({ card: c }) };
+      }),
+      suggestions: item.notes.map((n) => {
+        const st = on(s.note === n);
+        return { label: n, selected: s.note === n, bg: st.bg, border: st.border, pick: () => this.setState({ note: s.note === n ? '' : n }) };
+      }),
+      keys: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', 'back'].map((k) => ({
+        label: k === 'back' ? '' : k,
+        isBack: k === 'back',
+        press: press(k),
+      })),
+      saveEnabled: amount > 0,
+      saveLabel: amount ? '記下 ' + money(amount) : '輸入金額後記下',
+      saveBg: amount ? '#1B6B61' : '#DDE4E1',
+      saveFg: amount ? '#FFFFFF' : '#3F4946',
+      save: () => {
+        if (!amount) return;
+        const method = isExpense ? s.method : null;
+        const entry = {
+          type: s.type,
+          itemId: item.id,
+          method,
+          card: method === 'CARD' && pickCard && s.card !== 'NONE' ? s.card : null,
+          amount,
+          note: s.note,
+          counted: true,
+        };
+        const name = s.note || item.name;
+        const tail = isExpense && isPlanned(method)
+          ? ' · ' + item.name + '・' + METHOD_LABEL[method] + '剩 ' + money(hint.after)
+          : '';
+        clearTimeout(this.snackTimer);
+        this.snackTimer = setTimeout(() => this.setState({ snack: '' }), 4000);
+        this.setState({
+          amount: '',
+          note: '',
+          entries: [entry, ...s.entries],
+          snack: '已記下 ' + name + ' ' + money(amount) + tail,
+        });
+      },
+      hasSnack: !!s.snack,
+      snack: s.snack,
+      undo: () => {
+        clearTimeout(this.snackTimer);
+        const [last, ...rest] = s.entries;
+        if (!last || !last.counted) { this.setState({ snack: '' }); return; }
+        this.setState({ entries: rest, snack: '' });
+      },
+    };
+  }
+}
+</script>
+</body>
+</html>

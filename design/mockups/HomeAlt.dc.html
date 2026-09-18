@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400;700&amp;display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #FAFAF7; color: #2B2B28; font-family: "LXGW WenKai TC", "Noto Sans TC", system-ui, sans-serif; }
+    a { color: #2B2B28; } a:hover { color: #000000; }
+    .box { border: 2px solid #2B2B28; border-radius: 10px; }
+    .soft { color: #6B6A65; }
+  </style>
+</helmet>
+<div style="width: 390px; min-height: 844px; display: flex; flex-direction: column; gap: 16px; padding: 20px 16px; background: #FAFAF7;">
+  <div style="display: flex; justify-content: space-between; align-items: baseline;">
+    <span style="font-size: 22px; font-weight: 700;">本期</span>
+    <span class="soft" style="font-size: 14px;">9月上半月</span>
+  </div>
+
+  <div class="box" style="padding: 20px 16px; display: flex; flex-direction: column; gap: 6px; background: #FFFFFF;">
+    <span class="soft" style="font-size: 15px;">今天還可以花</span>
+    <span style="font-size: 52px; line-height: 60px; font-weight: 700;">$745</span>
+    <span class="soft" style="font-size: 14px;">生活類可調項目的每日可用加總</span>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <div class="box" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; justify-content: space-between; font-size: 16px;"><span>交通油資</span><span>每日可用 $70</span></div>
+      <div style="height: 10px; border: 2px solid #2B2B28; border-radius: 6px; position: relative;"><div style="position: absolute; left: 0; top: 0; bottom: 0; width: 66%; background: #2B2B28;"></div></div>
+      <span class="soft" style="font-size: 13px; text-decoration: underline;">花太快</span>
+    </div>
+    <div class="box" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; justify-content: space-between; font-size: 16px;"><span>生活費信用卡</span><span>每日可用 $364</span></div>
+      <div style="height: 10px; border: 2px solid #2B2B28; border-radius: 6px; position: relative;"><div style="position: absolute; left: 0; top: 0; bottom: 0; width: 61%; background: #2B2B28;"></div></div>
+      <span class="soft" style="font-size: 13px; text-decoration: underline;">花太快</span>
+    </div>
+    <div class="box" style="padding: 12px 14px; display: flex; justify-content: space-between; font-size: 16px;"><span>生活費現金</span><span>每日可用 $270</span></div>
+    <div class="box" style="padding: 12px 14px; display: flex; justify-content: space-between; font-size: 16px;"><span>家用</span><span>每日可用 $41</span></div>
+  </div>
+
+  <div class="box" style="height: 52px; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 700; background: #2B2B28; color: #FAFAF7;">本週檢查</div>
+
+  <div class="box" style="padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; border-style: dashed;">
+    <span style="font-size: 16px;">現金水位（往下滑才看到）</span>
+    <div style="height: 80px; border: 2px dashed #9A9993; border-radius: 6px; display: flex; align-items: center; justify-content: center;" class="soft">折線圖</div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {}
+</script>
+</body>
+</html>

@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-
-    <style name="Theme.MyFSL" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- 啟動時（Compose 畫出來之前）的底色要和 App 背景一致，才不會閃白。 -->
+    <style name="Theme.MyFSL" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/app_background</item>
+        <item name="android:colorAccent">@color/brand</item>
+    </style>
 </resources>
