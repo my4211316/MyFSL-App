@@ -60,6 +60,8 @@ data class SeekState(
     val lowestAfter: Money? = null,
     val lowBeforeStart: Boolean = false,
     val nothingToCut: Boolean = false,
+    /** 項目勾選與反推結果所根據的資料世代（F11）：存成情境時帶著，資料換過就會被拒絕。 */
+    val generation: Long = FinanceSnapshot.NO_GENERATION,
 )
 
 data class ForecastUiState(
@@ -97,17 +99,24 @@ class ForecastViewModel @Inject constructor(
 
     private val local = MutableStateFlow(Local())
 
-    /** 畫面正在顯示的資料世代（F11）：寫入時帶著，資料換過就會被拒絕。 */
-    @Volatile private var shownGeneration = FinanceSnapshot.NO_GENERATION
-
     private data class Computed(val snapshot: FinanceSnapshot, val scenarios: List<Scenario>, val months: Int, val comparison: Comparison?)
 
+    /**
+     * 畫面正在顯示的資料（F11）：快照與情境來自同一份資料庫內容，世代一定配對。
+     * 打開編輯器、存反推結果時從這裡取世代，不在協程裡另外讀一次快照（避免舊物件配上新世代）。
+     */
+    @Volatile private var shown: Computed? = null
+
+    private val shownGeneration get() = shown?.snapshot?.generation ?: FinanceSnapshot.NO_GENERATION
+
     // 只有資料、情境或期間改變才重算，編輯表單打字時不重算。
-    private val computed = combine(repository.snapshot, repository.scenarios, local.map { it.months }.distinctUntilChanged()) { snapshot, scenarios, chosen ->
-        shownGeneration = snapshot.generation
+    private val computed = combine(repository.snapshotWithScenarios, local.map { it.months }.distinctUntilChanged()) { data, chosen ->
+        val snapshot = data.snapshot
+        val scenarios = data.scenarios
         val months = chosen ?: snapshot.settings.horizonMonths
         val empty = snapshot.activeAccounts.isEmpty() && snapshot.activeItems.isEmpty()
         Computed(snapshot, scenarios, months, if (empty) null else ForecastComparisonCalculator.compare(snapshot, scenarios, months))
+            .also { shown = it }
     }.flowOn(Dispatchers.Default)
 
     val state: StateFlow<ForecastUiState> = combine(computed, local) { c, l ->
@@ -120,7 +129,7 @@ class ForecastViewModel @Inject constructor(
             hidden = l.hidden,
             descriptions = c.scenarios.associate { s -> s.id to s.changes.map { ScenarioForm.describe(it, c.snapshot) } },
             editor = l.editor,
-            seek = l.seek ?: SeekState(itemIds = flexible.map { it.id }.toSet()),
+            seek = l.seek ?: SeekState(itemIds = flexible.map { it.id }.toSet(), generation = c.snapshot.generation),
             seekOpen = l.seekOpen,
             accounts = c.snapshot.activeAccounts,
             expenseItems = c.snapshot.activeItems.filter { it.type == FlowType.EXPENSE },
@@ -138,10 +147,18 @@ class ForecastViewModel @Inject constructor(
 
     fun startNew() = local.update { it.copy(editor = ScenarioEditor(ScenarioDraft(), generation = shownGeneration)) }
 
+    /**
+     * 打開既有情境。只有這個情境和畫面正在顯示的資料完全一樣時才打開，世代取自同一份資料；
+     * 資料剛換過（例如從備份還原）而情境不同時不打開，請使用者重新點選。
+     */
     fun edit(scenario: Scenario) {
-        viewModelScope.launch {
-            val snapshot = repository.snapshot.first()
-            local.update { it.copy(editor = ScenarioEditor(ScenarioForm.fromScenario(scenario, snapshot.today), generation = snapshot.generation)) }
+        val current = shown
+        if (current == null || scenario !in current.scenarios) {
+            local.update { it.copy(message = STALE_MESSAGE) }
+            return
+        }
+        local.update {
+            it.copy(editor = ScenarioEditor(ScenarioForm.fromScenario(scenario, current.snapshot.today), generation = current.snapshot.generation))
         }
     }
 
@@ -203,9 +220,15 @@ class ForecastViewModel @Inject constructor(
 
     fun runSeek() {
         val seek = state.value.seek
+        val current = shown
+        // 勾選的項目是舊資料的 id：資料換過就重新選，不拿新資料去算。
+        if (current == null || seek.generation != current.snapshot.generation) {
+            local.update { it.copy(seek = null, message = STALE_MESSAGE) }
+            return
+        }
         updateSeek { it.copy(running = true) }
         viewModelScope.launch {
-            val snapshot = repository.snapshot.first()
+            val snapshot = current.snapshot
             val months = state.value.months
             val target = when (seek.target) {
                 SeekTarget.SAFETY -> GoalTarget.MinLiquid(snapshot.settings.safetyLevel)
@@ -224,6 +247,7 @@ class ForecastViewModel @Inject constructor(
                     lowestAfter = result.result.lowestLiquid,
                     lowBeforeStart = result.lowBeforeStart,
                     nothingToCut = result.nothingToCut,
+                    generation = snapshot.generation,
                 )
             }
         }
@@ -233,13 +257,14 @@ class ForecastViewModel @Inject constructor(
     fun saveSeekAsScenario() {
         val seek = state.value.seek
         val percent = seek.cutPercent ?: return
-        val generation = shownGeneration
+        // 用反推結果自己的世代：結果算出來之後資料換過，存檔會被拒絕。
+        val generation = seek.generation
+        val today = shown?.snapshot?.today ?: return
         viewModelScope.launch(WriteGuard) {
-            val snapshot = repository.snapshot.first()
-            val from = ScenarioForm.indexFor(snapshot.today, 1)
+            val from = ScenarioForm.indexFor(today, 1)
             val scenario = Scenario(
                 name = "可調支出減 ${trim(percent)}%",
-                createdOn = snapshot.today,
+                createdOn = today,
                 changes = listOf(ScenarioChange.AdjustItems(seek.itemIds.sorted(), -percent, from)),
                 note = "由反推產生（${seek.target.label}）",
             )
@@ -252,4 +277,8 @@ class ForecastViewModel @Inject constructor(
 
     private fun trim(value: Double): String =
         if (value == value.toLong().toDouble()) value.toLong().toString() else String.format(java.util.Locale.US, "%.1f", value)
+
+    private companion object {
+        const val STALE_MESSAGE = "資料剛更新過，請重新選擇後再操作"
+    }
 }

@@ -202,14 +202,76 @@ class WriteGateTest {
         assertEquals(mapOf(2L to "B 的中信（改名）", 3L to "掛在 B 的國泰 底下"), s.store.rows)
     }
 
-    @Test fun `資料庫與設定的世代不一致時（放回途中），任何帶世代的寫入都拒絕`() = runBlocking {
+    @Test fun `資料庫與設定的世代不一致時，帶世代和不帶世代的一般寫入都拒絕`() = runBlocking {
         val s = setup(backup(1L to "銀行"))
         s.coordinator.recover()
         s.store.dbGeneration = 5
         s.store.settingsGeneration = 4
         assertRejected("世代不一致（舊值）") { s.gate.run(4L) { s.store.rows.clear() } }
         assertRejected("世代不一致（新值）") { s.gate.run(5L) { s.store.rows.clear() } }
+        assertRejected("世代不一致（不帶世代）") { s.gate.run(null) { s.store.rows.clear() } }
         assertEquals(1, s.store.rows.size)
+        assertEquals(List(3) { WriteGate.INCONSISTENT }, s.notices.toList())
+    }
+
+    @Test fun `世代一致時不帶世代的寫入照常；不是 READY 時先以還原狀態拒絕`() = runBlocking {
+        val s = setup(backup(1L to "銀行"))
+        // 檢查中而且世代不一致：先回報還原狀態
+        s.store.dbGeneration = 1
+        assertRejected("檢查中") { s.gate.run(null) {} }
+        assertRejected("檢查中的整份替換") { s.gate.replacingAll {} }
+        assertEquals(List(2) { WriteGate.NOT_READY }, s.notices.toList())
+        s.store.settingsGeneration = 1
+        s.coordinator.recover()
+        assertEquals("ok", s.gate.run(null) { "ok" })
+        assertEquals("ok", s.gate.run(1L) { "ok" })
+    }
+
+    /** 同 FinanceRepository.clearAllLocked：資料庫交易裡清空並加一，之後寫設定的世代（可以模擬失敗）。 */
+    private suspend fun clearAll(store: FakeStore, settingsFails: Boolean) {
+        store.rows.clear()
+        store.dbGeneration += 1
+        if (settingsFails) throw java.io.IOException("設定寫入失敗")
+        store.settingsGeneration = store.dbGeneration
+    }
+
+    @Test fun `清除資料時設定的世代沒寫進去：一般寫入全部拒絕，整份替換的維護流程可以完成對齊`() = runBlocking {
+        val s = setup(backup(1L to "銀行"))
+        s.coordinator.recover()
+        val before = s.store.current()
+        try {
+            s.gate.replacingAll { clearAll(s.store, settingsFails = true) }
+            fail()
+        } catch (_: java.io.IOException) {
+        }
+        // READY，但兩份世代不同：一般寫入（含不帶世代的開始追蹤、標記已備份、完成導覽）都不做
+        assertEquals(RestoreState.READY, s.coordinator.state.value)
+        assertEquals(FinanceSnapshot.NO_GENERATION, s.store.current())
+        assertRejected("不帶世代") { s.gate.run(null) { s.store.rows[9L] = "不該寫入" } }
+        assertRejected("舊世代") { s.gate.run(before) { s.store.rows[9L] = "不該寫入" } }
+        assertTrue(s.store.rows.isEmpty())
+
+        // 修復一：再清除一次（整份替換），結束時兩份世代一致
+        s.gate.replacingAll { clearAll(s.store, settingsFails = false) }
+        val repaired = s.store.current()
+        assertTrue(repaired != FinanceSnapshot.NO_GENERATION && repaired != before)
+        s.gate.run(null) { s.store.rows[1L] = "新帳戶" }
+        s.gate.run(repaired) { s.store.rows[2L] = "掛在新帳戶底下" }
+        assertRejected("修復後舊世代仍然拒絕") { s.gate.run(before) { s.store.rows.remove(1L) } }
+        assertEquals(mapOf(1L to "新帳戶", 2L to "掛在新帳戶底下"), s.store.rows)
+    }
+
+    @Test fun `開 App 時的世代對齊：設定對齊資料庫之後才開放一般寫入`() = runBlocking {
+        val s = setup(backup(1L to "銀行"))
+        s.store.dbGeneration = 3
+        s.store.settingsGeneration = 2
+        s.coordinator.recover()
+        assertRejected("對齊前") { s.gate.run(null) {} }
+        // 同 FinanceRepository.recoverInterruptedRestore：READY 之後以維護入口把設定對齊資料庫
+        s.gate.replacingAll { if (s.store.settingsGeneration != s.store.dbGeneration) s.store.settingsGeneration = s.store.dbGeneration }
+        assertEquals(3L, s.store.current())
+        assertEquals("ok", s.gate.run(null) { "ok" })
+        assertRejected("對齊前畫面的舊世代") { s.gate.run(2L) {} }
     }
 
     // ---------- P1-3：無效的「已完成」標記 ----------

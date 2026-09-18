@@ -116,6 +116,9 @@ class FinanceRepository @Inject constructor(
 
     private suspend fun <T> writing(expected: Long?, block: suspend () -> T): T = gate.run(expected, block)
 
+    /** 整份替換資料（清除、示意資料、世代對齊）；結束時資料庫與設定的世代一致，見 [WriteGate.replacingAll]。 */
+    private suspend fun <T> replacingAll(block: suspend () -> T): T = gate.replacingAll(block)
+
     /** 資料庫與設定裡的世代；不一致時為 [FinanceSnapshot.NO_GENERATION]。 */
     private suspend fun currentGenerationLocked(): Long {
         val inDb = db.maintenanceDao().generation() ?: 0L
@@ -176,7 +179,14 @@ class FinanceRepository @Inject constructor(
         }
         .shareIn(repositoryScope, SharingStarted.WhileSubscribed(5_000), replay = 1)
 
-    val snapshot: Flow<FinanceSnapshot> = combine(dbState, settingsRepository.settings) { d, settings ->
+    val snapshot: Flow<FinanceSnapshot> = combine(dbState, settingsRepository.settings, ::buildSnapshot)
+
+    /** 快照與情境：由同一次讀出的資料庫內容產生，情境一定屬於快照的世代（試算畫面用）。 */
+    val snapshotWithScenarios: Flow<SnapshotWithScenarios> = combine(dbState, settingsRepository.settings) { d, settings ->
+        SnapshotWithScenarios(buildSnapshot(d, settings), d.scenarios.map { it.toModel() })
+    }
+
+    private fun buildSnapshot(d: DbState, settings: AppSettings): FinanceSnapshot {
         val entries = d.ledger.map { it.toModel() }
 
         // 帳戶餘額：最近一次校正＋之後的記帳
@@ -200,7 +210,7 @@ class FinanceRepository @Inject constructor(
         }
         val fullCardReconcile = BalanceRules.fullCardReconcile(cardMarks)
 
-        FinanceSnapshot(
+        return FinanceSnapshot(
             today = time.today(),
             accounts = accounts,
             groups = d.groups.map { it.toModel() },
@@ -223,7 +233,6 @@ class FinanceRepository @Inject constructor(
         )
     }
 
-    val scenarios: Flow<List<Scenario>> = dbState.map { d -> d.scenarios.map { it.toModel() } }
 
     fun today(): LocalDate = time.today()
 
@@ -470,9 +479,9 @@ class FinanceRepository @Inject constructor(
     // ---- 維護 ----
 
     /** 載入示意資料試用（會清掉現有資料）。金額為虛構。 */
-    suspend fun installSample() = writing(null) {
+    suspend fun installSample() = replacingAll {
         clearAllLocked()
-        db.withTransaction {
+        val next = db.withTransaction {
             SampleHousehold.accounts.forEach { account ->
                 accountDao.upsert(account.toEntity())
                 accountDao.insertSnapshot(
@@ -496,8 +505,10 @@ class FinanceRepository @Inject constructor(
                 )
             }
             SampleHousehold.septemberLedger.forEach { actualDao.insertLedger(it.toEntity()) }
-            settingsRepository.setDataGeneration(bumpGenerationInTransaction())
+            bumpGenerationInTransaction()
         }
+        // 資料庫交易提交之後才寫設定的世代（交易失敗時設定不會先變）。
+        settingsRepository.setDataGeneration(next)
         settingsRepository.setCashAccount(SampleHousehold.CASH)
         settingsRepository.setTransferAccount(SampleHousehold.BANK)
         settingsRepository.setPickCard(true)
@@ -580,7 +591,7 @@ class FinanceRepository @Inject constructor(
     suspend fun recoverInterruptedRestore(): RestoreCoordinator.Recovery {
         val result = restore.recover()
         if (restore.state.value == RestoreState.READY) {
-            maintenance.withLock {
+            replacingAll {
                 val inDb = db.maintenanceDao().generation() ?: 0L
                 if (settingsRepository.settings.first().dataGeneration != inDb) settingsRepository.setDataGeneration(inDb)
             }
@@ -614,7 +625,7 @@ class FinanceRepository @Inject constructor(
         clearPostedKeys(); clearDeferrals()
     }
 
-    suspend fun clearAll() = writing(null) { clearAllLocked() }
+    suspend fun clearAll() = replacingAll { clearAllLocked() }
 
     /** 清除所有資料：世代加一，清除前畫面上的操作都會被拒絕。 */
     private suspend fun clearAllLocked() {
