@@ -126,7 +126,7 @@ fun MyFslApp() {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState, modifier = Modifier.padding(bottom = 64.dp)) },
         bottomBar = {
-            if (Tab.entries.any { it.route == currentRoute }) {
+            if (restoreState != tw.myfsl.app.core.data.RestoreState.RESTORING && Tab.entries.any { it.route == currentRoute }) {
                 NavigationBar {
                     Tab.entries.forEach { tab ->
                         NavigationBarItem(
@@ -145,6 +145,9 @@ fun MyFslApp() {
             }
         },
     ) { padding ->
+      // 還原中：畫面蓋上一層不能操作的遮罩、返回鍵無效，直到還原結束（F11）。畫面本身不移除，發起還原的設定頁不會被中斷。
+      val restoring = restoreState == tw.myfsl.app.core.data.RestoreState.RESTORING
+      androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
         NavHost(
             navController = navController,
             startDestination = Tab.ENTRY.route,
@@ -452,5 +455,11 @@ fun MyFslApp() {
                 )
             }
         }
+        if (restoring) {
+            // 放在所有頁面之後組合：比頁面自己的返回處理優先，返回鍵在還原中完全無效。
+            BackHandler {}
+            tw.myfsl.app.ui.start.RestoringOverlay()
+        }
+      }
     }
 }

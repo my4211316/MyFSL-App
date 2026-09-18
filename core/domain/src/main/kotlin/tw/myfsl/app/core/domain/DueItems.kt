@@ -41,6 +41,11 @@ data class DueItem(
     val method: PaymentMethod? = null,
     /** 相關的卡片或貸款帳戶。 */
     val relatedAccountId: Long? = null,
+    /**
+     * 這筆循環利息是用「既有卡循」算的（真正第一次計息）。同一批補記多個月時只有這一期是 true，
+     * 所以只有這一期記下時才清掉既有卡循、保存原值；刪掉後面月份不會恢復已經用掉的原值（F10）。
+     */
+    val usesRevolving: Boolean = false,
 ) {
     val amount: Money get() = entries.sumOf { it.amount }
     val isIncome: Boolean get() = item?.type == FlowType.INCOME
@@ -191,7 +196,8 @@ object DueItems {
         } else {
             null
         }
-        val terms = if (due.kind == DueKind.CARD_INTEREST) snapshot.account(due.relatedAccountId)?.card else null
+        // 只有真正用既有卡循計息的那一期才清掉並保存原值（F10）。
+        val terms = if (due.kind == DueKind.CARD_INTEREST && due.usesRevolving) snapshot.account(due.relatedAccountId)?.card else null
         val previous = terms?.revolvingBalance
         val card = if (previous != null) due.relatedAccountId!! to terms.copy(revolvingBalance = null) else null
         val marker = previous?.let { "${PostingKeys.REVOLVING}${due.key}:$it" }
@@ -358,13 +364,14 @@ object DueItems {
                     // 既有卡循只影響第一次計息。
                     val current = if (card.id in state.interestCharged) terms.copy(revolvingBalance = null) else terms
                     state.interestCharged += card.id
+                    val usesRevolving = current.revolvingBalance != null
                     val interest = CardRules.monthlyInterest(CardRules.interestBase(state.balance(card.id), current), current.revolvingRatePercent)
                     if (interest <= 0) return@Task null
                     val entry = LedgerEntry(
                         date = date, type = FlowType.EXPENSE, amount = interest, accountId = card.id,
                         note = "${card.name} 循環利息", source = EntrySource.DUE, postingKey = interestKey,
                     )
-                    DueItem(interestKey, DueKind.CARD_INTEREST, date, "${card.name} 循環利息", listOf(entry), relatedAccountId = card.id)
+                    DueItem(interestKey, DueKind.CARD_INTEREST, date, "${card.name} 循環利息", listOf(entry), relatedAccountId = card.id, usesRevolving = usesRevolving)
                 }
                 val payKey = cardPaymentKey(card.id, ym)
                 tasks += Task(date, 2, payKey) { state ->

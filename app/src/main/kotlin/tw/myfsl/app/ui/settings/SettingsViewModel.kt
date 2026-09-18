@@ -10,7 +10,6 @@ import tw.myfsl.app.core.data.BackupCodec
 import tw.myfsl.app.core.data.BackupReadResult
 import tw.myfsl.app.core.data.BackupSummary
 import tw.myfsl.app.core.data.FinanceRepository
-import tw.myfsl.app.core.data.SettingsRepository
 import tw.myfsl.app.core.domain.SettingsDraft
 import tw.myfsl.app.core.domain.SettingsForm
 import tw.myfsl.app.core.model.Account
@@ -45,7 +44,6 @@ data class SettingsUiState(
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val repository: FinanceRepository,
-    private val settingsRepository: SettingsRepository,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
@@ -103,7 +101,7 @@ class SettingsViewModel @Inject constructor(
                 local.update { it.copy(errors = result.errors) }
                 return@launch
             }
-            settingsRepository.save(result.settings!!)
+            repository.saveSettings(result.settings!!)
             local.update { Local(saved = true, message = "設定已儲存") }
         }
     }

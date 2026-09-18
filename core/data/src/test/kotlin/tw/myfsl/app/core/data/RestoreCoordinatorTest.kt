@@ -1,6 +1,8 @@
 package tw.myfsl.app.core.data
 
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.withLock
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -215,5 +217,83 @@ class RestoreCoordinatorTest {
         } catch (_: IllegalStateException) {
         }
         assertTrue(target.calls.isEmpty())
+    }
+
+    // ---------- 複審後補：已完成標記、清理失敗、寫入鎖 ----------
+
+    @Test fun `已經完成、只是紀錄沒清掉：下次開啟只清理，絕不放回（不會蓋掉還原後新記的帳）`() = runBlocking {
+        // 紀錄檔清不掉（被一個非空資料夾佔住），但「已完成」標記在
+        val journalPath = File(dir, "restore-journal.json").apply { mkdirs() }
+        File(journalPath, "blocker").writeText("x")
+        File(dir, "restore-journal.done").writeText("committed")
+        val target = target().apply { db = new.copy(settings = null) }
+        val c = coordinator(target)
+        assertEquals(RestoreCoordinator.Recovery.NONE, c.recover())
+        assertEquals("完全沒有放回", emptyList<String>(), target.calls)
+        assertEquals("新銀行", target.bankName)
+        assertEquals(RestoreState.READY, c.state.value)
+        // 清不掉的紀錄不會讓新的還原誤以為可以開始
+        try {
+            c.restore(old)
+            fail()
+        } catch (_: IllegalStateException) {
+        }
+        assertTrue(target.calls.isEmpty())
+    }
+
+    @Test fun `還原成功但「已完成」標記寫不進去：不開放操作，重試時放回還原前的資料`() = runBlocking {
+        val fake = target()
+        val blocking = object : RestoreTarget by fake {
+            override suspend fun replaceSettings(file: BackupFile, autoPostFromFallback: Long?) {
+                fake.replaceSettings(file, autoPostFromFallback)
+                // 設定寫完之後，讓「已完成」標記的位置被佔住
+                if (file.settings?.safetyLevel == 50_000L) File(dir, "restore-journal.done").apply { mkdirs() }.let { File(it, "blocker").writeText("x") }
+            }
+        }
+        val c = coordinator(blocking)
+        c.recover()
+        try {
+            c.restore(new)
+            fail()
+        } catch (_: java.io.IOException) {
+        }
+        assertEquals(RestoreState.RECOVERY_FAILED, c.state.value)
+        assertNotNull("紀錄保留", RestoreJournal(dir).pending())
+        // 使用者按重試（障礙排除後）：放回還原前的資料，狀態一致
+        File(dir, "restore-journal.done").deleteRecursively()
+        assertEquals(RestoreCoordinator.Recovery.RECOVERED, c.recover())
+        assertEquals("舊銀行", fake.bankName)
+        assertEquals(10_000L, fake.settings!!.safetyLevel)
+        assertNull(RestoreJournal(dir).pending())
+        assertEquals(RestoreState.READY, c.state.value)
+    }
+
+    @Test fun `還原期間其他帳務寫入排隊，等還原結束才寫`() = runBlocking {
+        val lock = kotlinx.coroutines.sync.Mutex()
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val order = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val fake = target()
+        val slow = object : RestoreTarget by fake {
+            override suspend fun replaceDatabase(file: BackupFile) {
+                order += "還原開始寫資料庫"
+                gate.await()
+                fake.replaceDatabase(file)
+                order += "還原寫完資料庫"
+            }
+        }
+        val c = RestoreCoordinator(RestoreJournal(dir), slow, lock) { 999L }
+        c.recover()
+        val restoring = launch(kotlinx.coroutines.Dispatchers.Default) { c.restore(new) }
+        while (order.isEmpty()) kotlinx.coroutines.delay(5)
+        assertEquals(RestoreState.RESTORING, c.state.value)
+        // 還原中有一筆記帳要寫（資料層的寫入都拿同一把鎖）
+        val write = launch(kotlinx.coroutines.Dispatchers.Default) { lock.withLock { order += "記一筆" } }
+        kotlinx.coroutines.delay(100)
+        assertEquals("還原沒結束前不能寫", listOf("還原開始寫資料庫"), order.toList())
+        gate.complete(Unit)
+        restoring.join()
+        write.join()
+        assertEquals(listOf("還原開始寫資料庫", "還原寫完資料庫", "記一筆"), order.toList())
+        assertEquals(RestoreState.READY, c.state.value)
     }
 }

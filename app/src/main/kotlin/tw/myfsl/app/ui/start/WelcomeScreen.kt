@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import tw.myfsl.app.core.data.FinanceRepository
@@ -98,6 +99,25 @@ fun CheckingDataScreen(modifier: Modifier = Modifier) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             CircularProgressIndicator()
             Text("正在檢查資料…", style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+/** 正在從備份還原：蓋住整個畫面、吃掉所有點擊，還原結束前不能記帳或切換頁面（F11）。 */
+@Composable
+fun RestoringOverlay(modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier
+            .fillMaxSize()
+            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } },
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                CircularProgressIndicator()
+                Text("正在從備份還原…", style = MaterialTheme.typography.titleMedium)
+                Text("完成前請不要關閉 App", style = MaterialTheme.typography.bodyMedium)
+            }
         }
     }
 }
