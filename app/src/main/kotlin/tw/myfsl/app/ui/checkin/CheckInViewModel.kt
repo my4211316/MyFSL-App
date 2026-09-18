@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import tw.myfsl.app.ui.WriteGuard
 
 enum class CheckInStep(val title: String) {
     CONFIRM("到期確認"),
@@ -145,7 +146,11 @@ class CheckInViewModel @Inject constructor(
         return CheckInInput(reports, confirms, reconciles, dues)
     }
 
+    /** 這次檢查開始時的資料世代（F11）：輸入的帳戶、項目都來自那時的資料。 */
+    @Volatile private var sessionGeneration = FinanceSnapshot.NO_GENERATION
+
     private fun build(snapshot: FinanceSnapshot, local: Local): CheckInUiState {
+        if (sessionGeneration == FinanceSnapshot.NO_GENERATION) sessionGeneration = snapshot.generation
         val confirmLines = CheckInRules.confirmLines(snapshot)
         val reportLines = CheckInRules.reportLines(snapshot)
         val fullInput = input(snapshot, local)
@@ -307,13 +312,25 @@ class CheckInViewModel @Inject constructor(
         if (result.isEmpty || local.value.saving) return
         val lines = state.value.summaryLines
         local.update { it.copy(saving = true) }
-        viewModelScope.launch {
-            repository.recordCheckIn(result)
+        val generation = sessionGeneration
+        viewModelScope.launch(WriteGuard) {
+            try {
+                repository.recordCheckIn(result, generation)
+            } catch (e: tw.myfsl.app.core.data.WriteRejectedException) {
+                // 資料在檢查途中換過：這次的輸入作廢，重新開始。
+                sessionGeneration = FinanceSnapshot.NO_GENERATION
+                local.update { Local() }
+                throw e
+            }
+            sessionGeneration = FinanceSnapshot.NO_GENERATION
             local.update { Local(doneLines = lines) }
         }
     }
 
-    fun again() = local.update { Local() }
+    fun again() {
+        sessionGeneration = FinanceSnapshot.NO_GENERATION
+        local.update { Local() }
+    }
 
     private fun digits(text: String): String = text.filter { it.isDigit() || it == '-' }.take(10)
 }

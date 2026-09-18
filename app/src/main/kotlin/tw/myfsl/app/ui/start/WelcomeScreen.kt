@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import tw.myfsl.app.ui.WriteGuard
 
 /** 第一次開啟：還沒看過歡迎頁，而且沒有任何帳戶與計畫。null = 還在讀取。 */
 @HiltViewModel
@@ -46,6 +47,14 @@ class StartViewModel @Inject constructor(
 
     /** 還原狀態：不是 READY 時畫面只顯示檢查中或放回失敗，不開放帳務操作（F11）。 */
     val restoreState: StateFlow<RestoreState> = repository.restoreState
+
+    /** 資料層拒絕寫入時的說明（F11），顯示在提示條。 */
+    val notices = repository.notices
+
+    /** 資料正在更新（資料庫與設定的世代還沒一致）：畫面先擋住，不讓舊畫面發出操作。 */
+    val dataUpdating: StateFlow<Boolean> = repository.snapshot
+        .map { it.generation == tw.myfsl.app.core.model.FinanceSnapshot.NO_GENERATION }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     /** 上次還原沒有完成、已經放回時的提示。 */
     val recoveryMessage = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
@@ -61,6 +70,8 @@ class StartViewModel @Inject constructor(
             if (result == RestoreCoordinator.Recovery.RECOVERED) {
                 recoveryMessage.value = "上次從備份還原沒有完成，已經放回還原前的資料；請再還原一次"
             }
+            // 可以使用之後才設定到期項目的起算日（檢查中寫入會被拒絕）。
+            if (repository.restoreState.value == RestoreState.READY) runCatching { repository.startDueTracking() }
         }
     }
 
@@ -73,23 +84,19 @@ class StartViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     fun finish(then: () -> Unit = {}) {
-        viewModelScope.launch {
+        viewModelScope.launch(WriteGuard) {
             repository.setOnboarded()
             then()
         }
     }
 
     fun useSample() {
-        viewModelScope.launch {
+        viewModelScope.launch(WriteGuard) {
             repository.installSample()
             repository.setOnboarded()
         }
     }
 
-    /** 第一次開啟時設定到期項目的起算日（R-DUE）；不會自動記任何帳。 */
-    fun startDueTracking() {
-        viewModelScope.launch { runCatching { repository.startDueTracking() } }
-    }
 }
 
 /** 開 App 時正在檢查（或放回）上次沒完成的還原：完成前不開放任何操作（F11）。 */

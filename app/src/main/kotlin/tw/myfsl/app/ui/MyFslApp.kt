@@ -84,8 +84,6 @@ fun MyFslApp() {
     val startViewModel: StartViewModel = hiltViewModel()
     val needsWelcome by startViewModel.needsWelcome.collectAsStateWithLifecycle()
     var pendingRoute by rememberSaveable { mutableStateOf<String?>(null) }
-    // 到期項目的起算日只在第一次設定；到期的款項由使用者在記帳畫面點下（R-DUE）。
-    LaunchedEffect(Unit) { startViewModel.startDueTracking() }
     // 上次還原沒完成時先放回，完成前不開放帳務操作（F11）。
     val restoreState by startViewModel.restoreState.collectAsStateWithLifecycle()
     when (restoreState) {
@@ -111,6 +109,11 @@ fun MyFslApp() {
         }
         false -> Unit
     }
+    // 資料層拒絕寫入（還原中、還原沒完成、畫面上的資料不是最新的）時顯示說明（F11）。
+    LaunchedEffect(Unit) {
+        startViewModel.notices.collect { snackbarHostState.showSnackbar(it, withDismissAction = true) }
+    }
+    val dataUpdating by startViewModel.dataUpdating.collectAsStateWithLifecycle()
     val recoveryMessage by startViewModel.recoveryMessage.collectAsStateWithLifecycle()
     LaunchedEffect(recoveryMessage) {
         val message = recoveryMessage ?: return@LaunchedEffect
@@ -146,7 +149,8 @@ fun MyFslApp() {
         },
     ) { padding ->
       // 還原中：畫面蓋上一層不能操作的遮罩、返回鍵無效，直到還原結束（F11）。畫面本身不移除，發起還原的設定頁不會被中斷。
-      val restoring = restoreState == tw.myfsl.app.core.data.RestoreState.RESTORING
+      // 還原中，或還原後資料庫與設定的世代還沒一致（新資料還沒完全讀進來）都擋住（F11）。
+      val restoring = restoreState == tw.myfsl.app.core.data.RestoreState.RESTORING || dataUpdating
       androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
         NavHost(
             navController = navController,

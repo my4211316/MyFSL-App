@@ -29,6 +29,7 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.YearMonth
 import javax.inject.Inject
+import tw.myfsl.app.ui.WriteGuard
 
 enum class RecordFilter(val label: String) {
     ALL("全部"),
@@ -78,6 +79,8 @@ data class RecordEditor(
     val draft: RecordDraft,
     val errors: Map<String, String> = emptyMap(),
     val warnings: List<String> = emptyList(),
+    /** 打開修改時畫面的資料世代（F11）。 */
+    val generation: Long = FinanceSnapshot.NO_GENERATION,
 )
 
 @HiltViewModel
@@ -91,7 +94,11 @@ class RecordsViewModel @Inject constructor(
     private val editor = MutableStateFlow<RecordEditor?>(null)
     private val message = MutableStateFlow<String?>(null)
 
+    /** 畫面正在顯示的資料世代（F11）：寫入時帶著，資料換過就會被拒絕。 */
+    @Volatile private var shownGeneration = FinanceSnapshot.NO_GENERATION
+
     val state: StateFlow<RecordsUiState> = combine(repository.snapshot, view, editor, message) { snapshot, v, e, m ->
+        shownGeneration = snapshot.generation
         build(snapshot, v).copy(
             editor = e,
             message = m,
@@ -204,15 +211,20 @@ class RecordsViewModel @Inject constructor(
 
     /** 刪除：要連動什麼由 Deletion.plan 決定（分期消費整筆取消、某一期只刪那一期，R-REC-EDIT-05/07）。 */
     fun delete(id: Long) {
-        viewModelScope.launch { repository.deleteLedgerEntry(id) }
+        val generation = shownGeneration
+        viewModelScope.launch(WriteGuard) { repository.deleteLedgerEntry(id, generation) }
     }
 
     // ---- 修改 ----
 
     fun edit(id: Long) {
+        val generation = shownGeneration
         viewModelScope.launch {
-            val entry = repository.snapshot.first().ledger.firstOrNull { it.id == id } ?: return@launch
-            editor.value = RecordEditor(RecordDraft(entry))
+            val snapshot = repository.snapshot.first()
+            // 點的那一列來自畫面上的世代；資料已經換過就不打開，避免改到別筆。
+            if (snapshot.generation != generation) return@launch
+            val entry = snapshot.ledger.firstOrNull { it.id == id } ?: return@launch
+            editor.value = RecordEditor(RecordDraft(entry), generation = generation)
         }
     }
 
@@ -224,13 +236,13 @@ class RecordsViewModel @Inject constructor(
 
     fun saveEdit() {
         val current = editor.value ?: return
-        viewModelScope.launch {
+        viewModelScope.launch(WriteGuard) {
             val result = RecordEditForm.validate(current.draft, repository.snapshot.first())
             if (!result.ok) {
                 editor.value = current.copy(errors = result.errors, warnings = result.warnings)
                 return@launch
             }
-            if (result.entry != current.draft.original) repository.updateLedgerEntry(result.entry!!)
+            if (result.entry != current.draft.original) repository.updateLedgerEntry(result.entry!!, current.generation)
             editor.value = null
             message.value = result.warnings.firstOrNull { it != "沒有修改任何東西" }?.let { "已修改。$it" } ?: "已修改"
         }

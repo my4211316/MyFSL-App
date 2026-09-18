@@ -188,6 +188,8 @@ interface MaintenanceDao {
     @Query("DELETE FROM posted_keys") suspend fun clearPostedKeys()
     @Query("DELETE FROM deferrals") suspend fun clearDeferrals()
     @Query("SELECT * FROM posted_keys") suspend fun allPostedKeys(): List<PostedKeyEntity>
+    @Query("SELECT generation FROM data_generation WHERE id = 0") suspend fun generation(): Long?
+    @Upsert suspend fun setGeneration(entity: DataGenerationEntity)
     @Query("SELECT * FROM deferrals ORDER BY id") suspend fun allDeferrals(): List<DeferralEntity>
     @Insert suspend fun insertPostedKeyRows(list: List<PostedKeyEntity>)
     @Insert suspend fun insertDeferrals(list: List<DeferralEntity>)

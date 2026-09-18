@@ -20,11 +20,14 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import tw.myfsl.app.ui.WriteGuard
 
 data class AccountEditor(
     val draft: AccountDraft,
     val errors: Map<String, String> = emptyMap(),
     val showAdvanced: Boolean = false,
+    /** 打開編輯時畫面的資料世代（F11）。 */
+    val generation: Long = FinanceSnapshot.NO_GENERATION,
 ) {
     val isNew: Boolean get() = draft.id == 0L
 }
@@ -47,6 +50,9 @@ class AccountsViewModel @Inject constructor(
 
     private val local = MutableStateFlow(Local())
 
+    /** 畫面正在顯示的資料世代（F11）：寫入時帶著，資料換過就會被拒絕。 */
+    @Volatile private var shownGeneration = FinanceSnapshot.NO_GENERATION
+
     val state: StateFlow<AccountsUiState> = combine(repository.snapshot, local, ::build)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AccountsUiState())
 
@@ -56,15 +62,21 @@ class AccountsViewModel @Inject constructor(
         payAccounts = snapshot.activeAccounts.filter { it.kind.isLiquid },
         editor = local.editor,
         message = local.message,
-    )
+    ).also { shownGeneration = snapshot.generation }
 
     fun startNew(kind: AccountKind = AccountKind.CASH) = local.update {
-        it.copy(editor = AccountEditor(AccountDraft(kind = kind)))
+        it.copy(editor = AccountEditor(AccountDraft(kind = kind), generation = shownGeneration))
     }
 
     fun edit(account: Account) = local.update {
         val draft = AccountForm.fromAccount(account)
-        it.copy(editor = AccountEditor(draft, showAdvanced = draft.revolvingEnabled || draft.loanEnabled || draft.creditLimit.isNotBlank()))
+        it.copy(
+            editor = AccountEditor(
+                draft,
+                showAdvanced = draft.revolvingEnabled || draft.loanEnabled || draft.creditLimit.isNotBlank(),
+                generation = shownGeneration,
+            ),
+        )
     }
 
     fun update(transform: (AccountDraft) -> AccountDraft) = local.update { current ->
@@ -81,7 +93,7 @@ class AccountsViewModel @Inject constructor(
 
     fun save() {
         val editor = local.value.editor ?: return
-        viewModelScope.launch {
+        viewModelScope.launch(WriteGuard) {
             val accounts = repository.snapshot.first().accounts
             val result = AccountForm.validate(editor.draft, accounts)
             if (!result.ok) {
@@ -90,7 +102,7 @@ class AccountsViewModel @Inject constructor(
             }
             val account = result.account!!
             val sortOrder = if (editor.isNew) (accounts.maxOfOrNull { it.sortOrder } ?: 0) + 1 else account.sortOrder
-            repository.saveAccount(account.copy(sortOrder = sortOrder), result.balance)
+            repository.saveAccount(account.copy(sortOrder = sortOrder), result.balance, editor.generation)
             local.update { it.copy(editor = null, message = if (editor.isNew) "已新增「${account.name}」" else "已更新「${account.name}」") }
         }
     }
@@ -98,8 +110,8 @@ class AccountsViewModel @Inject constructor(
     fun archive() {
         val editor = local.value.editor ?: return
         if (editor.isNew) return
-        viewModelScope.launch {
-            repository.setAccountArchived(editor.draft.id, true)
+        viewModelScope.launch(WriteGuard) {
+            repository.setAccountArchived(editor.draft.id, true, editor.generation)
             local.update { it.copy(editor = null, message = "已封存「${editor.draft.name}」") }
         }
     }

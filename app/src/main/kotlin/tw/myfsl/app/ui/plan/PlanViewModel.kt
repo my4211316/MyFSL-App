@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import tw.myfsl.app.ui.WriteGuard
 
 /** 計畫表的一列（項目 × 支付方式）。 */
 data class PlanRow(
@@ -48,6 +49,8 @@ data class ImportState(
     val fileName: String,
     val encoding: String,
     val preview: ImportPreview,
+    /** 讀檔（對應帳戶與群組）時的資料世代（F11）。 */
+    val generation: Long = FinanceSnapshot.NO_GENERATION,
     val mode: ImportMode = ImportMode.REPLACE_YEAR,
     val importing: Boolean = false,
 )
@@ -61,6 +64,8 @@ data class ItemEditor(
     val expandedLine: Int? = 0,
     /** 已經有記帳，類型不能改（R-EDT-11）。 */
     val typeLocked: Boolean = false,
+    /** 打開編輯時的資料世代（F11）。 */
+    val generation: Long = FinanceSnapshot.NO_GENERATION,
 ) {
     val isNew: Boolean get() = draft.id == 0L
 }
@@ -145,7 +150,7 @@ class PlanViewModel @Inject constructor(
         viewModelScope.launch {
             val snapshot = repository.snapshot.first()
             val draft = PlanItemForm.newDraft(FlowType.EXPENSE, snapshot.groups.minByOrNull { it.sortOrder }?.id, snapshot)
-            local.update { it.copy(editor = ItemEditor(draft)) }
+            local.update { it.copy(editor = ItemEditor(draft, generation = snapshot.generation)) }
         }
     }
 
@@ -154,7 +159,7 @@ class PlanViewModel @Inject constructor(
             val snapshot = repository.snapshot.first()
             val item = snapshot.item(itemId) ?: return@launch
             val draft = PlanItemForm.fromItem(item, snapshot, state.value.year)
-            local.update { it.copy(editor = ItemEditor(draft, typeLocked = PlanItemForm.typeLocked(draft, snapshot))) }
+            local.update { it.copy(editor = ItemEditor(draft, typeLocked = PlanItemForm.typeLocked(draft, snapshot), generation = snapshot.generation)) }
         }
     }
 
@@ -200,7 +205,7 @@ class PlanViewModel @Inject constructor(
 
     fun saveItem() {
         val editor = local.value.editor ?: return
-        viewModelScope.launch {
+        viewModelScope.launch(WriteGuard) {
             val snapshot = repository.snapshot.first()
             val result = PlanItemForm.validate(editor.draft, snapshot)
             if (!result.ok) {
@@ -209,14 +214,14 @@ class PlanViewModel @Inject constructor(
             }
             var item = result.item!!
             result.newGroupName?.let { name ->
-                val groupId = repository.saveGroup(PlanGroup(name = name, sortOrder = (snapshot.groups.maxOfOrNull { it.sortOrder } ?: 0) + 1))
+                val groupId = repository.saveGroup(PlanGroup(name = name, sortOrder = (snapshot.groups.maxOfOrNull { it.sortOrder } ?: 0) + 1), editor.generation)
                 item = item.copy(groupId = groupId)
             }
             if (editor.isNew) {
                 item = item.copy(sortOrder = (snapshot.items.filter { it.groupId == item.groupId }.maxOfOrNull { it.sortOrder } ?: 0) + 1)
             }
             val year = state.value.year
-            repository.saveItem(item, mapOf(year to result.amounts))
+            repository.saveItem(item, mapOf(year to result.amounts), editor.generation)
             val suffix = result.warnings.firstOrNull()?.let { "（$it）" }.orEmpty()
             local.update {
                 it.copy(editor = null, message = (if (editor.isNew) "已新增「${item.name}」" else "已更新「${item.name}」") + " 到 $year 年$suffix")
@@ -227,8 +232,8 @@ class PlanViewModel @Inject constructor(
     fun archiveItem() {
         val editor = local.value.editor ?: return
         if (editor.isNew) return
-        viewModelScope.launch {
-            repository.setItemArchived(editor.draft.id, true)
+        viewModelScope.launch(WriteGuard) {
+            repository.setItemArchived(editor.draft.id, true, editor.generation)
             local.update { it.copy(editor = null, message = "已封存「${editor.draft.name}」") }
         }
     }
@@ -242,7 +247,7 @@ class PlanViewModel @Inject constructor(
             val decoded = TextDecoding.decode(bytes)
             val year = state.value.year.takeIf { it > 0 } ?: snapshot.today.year
             val preview = PlanImport.parse(decoded.text, year, snapshot.accounts, snapshot.groups)
-            local.update { it.copy(import = ImportState(fileName, decoded.encoding.label, preview)) }
+            local.update { it.copy(import = ImportState(fileName, decoded.encoding.label, preview, generation = snapshot.generation)) }
         }
     }
 
@@ -256,8 +261,12 @@ class PlanViewModel @Inject constructor(
         val import = local.value.import ?: return
         if (!import.preview.canImport) return
         local.update { it.copy(import = import.copy(importing = true)) }
-        viewModelScope.launch {
-            val written = repository.importPlan(import.preview, import.mode)
+        viewModelScope.launch(WriteGuard) {
+            val written = try {
+                repository.importPlan(import.preview, import.generation, import.mode)
+            } finally {
+                local.update { current -> current.copy(import = current.import?.copy(importing = false)) }
+            }
             local.update { it.copy(import = null, year = import.preview.year, message = "已匯入 $written 個項目到 ${import.preview.year} 年") }
         }
     }

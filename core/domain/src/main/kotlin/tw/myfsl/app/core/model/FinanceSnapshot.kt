@@ -26,6 +26,11 @@ data class AppSettings(
      * 第一次開啟時設為當天；null 表示還沒開始（視為今天）。
      */
     val autoPostFrom: Long? = null,
+    /**
+     * 資料世代：整份替換資料（還原、放回、清除、載入示意資料）時加一，資料庫裡存一份相同的值。
+     * 不會進備份，也不會被設定畫面改到。
+     */
+    val dataGeneration: Long = 0,
 )
 
 /** 某個時間點的完整財務資料，供純計算函式使用。 */
@@ -48,6 +53,11 @@ data class FinanceSnapshot(
     val postedKeys: Set<String> = emptySet(),
     /** 延期款項（含已付清的）。 */
     val deferrals: List<Deferral> = emptyList(),
+    /**
+     * 這份快照的資料世代：資料庫與設定兩邊一致時才有效，否則為 [NO_GENERATION]（資料正在更新）。
+     * 畫面發出的寫入要帶著它，資料層確認還是同一個世代才會寫（避免還原後用舊的 id 改到別筆資料）。
+     */
+    val generation: Long = NO_GENERATION,
 ) {
     val activeAccounts: List<Account> get() = accounts.filter { !it.archived }
 
@@ -121,6 +131,9 @@ data class FinanceSnapshot(
     }
 
     companion object {
+        /** 資料正在更新、世代還沒一致；帶這個值的寫入一律拒絕。 */
+        const val NO_GENERATION = -1L
+
         fun empty(today: LocalDate) = FinanceSnapshot(
             today = today,
             accounts = emptyList(),

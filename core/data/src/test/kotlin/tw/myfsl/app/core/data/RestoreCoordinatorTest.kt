@@ -222,22 +222,27 @@ class RestoreCoordinatorTest {
     // ---------- 複審後補：已完成標記、清理失敗、寫入鎖 ----------
 
     @Test fun `已經完成、只是紀錄沒清掉：下次開啟只清理，絕不放回（不會蓋掉還原後新記的帳）`() = runBlocking {
-        // 紀錄檔清不掉（被一個非空資料夾佔住），但「已完成」標記在
-        val journalPath = File(dir, "restore-journal.json").apply { mkdirs() }
-        File(journalPath, "blocker").writeText("x")
-        File(dir, "restore-journal.done").writeText("committed")
+        // 上一次還原真的完成了：紀錄與屬於它的有效標記都在，但紀錄刪不掉
+        RestoreJournal(dir).apply { begin(BackupCodec.encode(old)); markCommitted() }
         val target = target().apply { db = new.copy(settings = null) }
-        val c = coordinator(target)
+        val stuck = RestoreJournal(dir, delete = { false })
+        val c = RestoreCoordinator(stuck, target) { 999L }
         assertEquals(RestoreCoordinator.Recovery.NONE, c.recover())
         assertEquals("完全沒有放回", emptyList<String>(), target.calls)
         assertEquals("新銀行", target.bankName)
         assertEquals(RestoreState.READY, c.state.value)
+        assertNotNull("紀錄還在（清不掉）", stuck.pending())
         // 清不掉的紀錄不會讓新的還原誤以為可以開始
         try {
             c.restore(old)
             fail()
         } catch (_: IllegalStateException) {
         }
+        assertTrue(target.calls.isEmpty())
+        // 之後清得掉時，下次開啟就清乾淨
+        assertEquals(RestoreCoordinator.Recovery.NONE, coordinator(target).recover())
+        assertNull(RestoreJournal(dir).pending())
+        assertEquals(RestoreJournal.Commit.NONE, RestoreJournal(dir).commitState())
         assertTrue(target.calls.isEmpty())
     }
 
@@ -259,6 +264,12 @@ class RestoreCoordinatorTest {
         }
         assertEquals(RestoreState.RECOVERY_FAILED, c.state.value)
         assertNotNull("紀錄保留", RestoreJournal(dir).pending())
+        // 障礙還在就按重試：標記無效，不當成完成、不清紀錄、不動資料
+        val callsBefore = fake.calls.toList()
+        assertEquals(RestoreCoordinator.Recovery.FAILED, c.recover())
+        assertEquals(RestoreState.RECOVERY_FAILED, c.state.value)
+        assertNotNull(RestoreJournal(dir).pending())
+        assertEquals(callsBefore, fake.calls)
         // 使用者按重試（障礙排除後）：放回還原前的資料，狀態一致
         File(dir, "restore-journal.done").deleteRecursively()
         assertEquals(RestoreCoordinator.Recovery.RECOVERED, c.recover())

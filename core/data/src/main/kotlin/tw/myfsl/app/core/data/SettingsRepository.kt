@@ -32,6 +32,7 @@ class SettingsRepository @Inject constructor(
             lastBackupEpochDay = prefs[LAST_BACKUP_DAY],
             defaultCardId = prefs[DEFAULT_CARD],
             autoPostFrom = prefs[AUTO_POST_FROM],
+            dataGeneration = prefs[DATA_GENERATION] ?: 0L,
         )
     }
 
@@ -78,6 +79,11 @@ class SettingsRepository @Inject constructor(
         dataStore.edit { if (it[AUTO_POST_FROM] == null) it[AUTO_POST_FROM] = epochDay }
     }
 
+    /** 資料世代（和資料庫裡的一致時快照才有效）；只由資料層在整份替換資料時寫。 */
+    suspend fun setDataGeneration(generation: Long) {
+        dataStore.edit { it[DATA_GENERATION] = generation }
+    }
+
     suspend fun setAutoPostFrom(epochDay: Long?) {
         dataStore.edit { if (epochDay == null) it.remove(AUTO_POST_FROM) else it[AUTO_POST_FROM] = epochDay }
     }
@@ -111,5 +117,6 @@ class SettingsRepository @Inject constructor(
         val LAST_BACKUP_DAY = longPreferencesKey("last_backup_epoch_day")
         val DEFAULT_CARD = longPreferencesKey("default_card_id")
         val AUTO_POST_FROM = longPreferencesKey("auto_post_from_epoch_day")
+        val DATA_GENERATION = longPreferencesKey("data_generation")
     }
 }

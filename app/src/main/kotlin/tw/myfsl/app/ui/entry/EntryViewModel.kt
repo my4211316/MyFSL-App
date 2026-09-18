@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import tw.myfsl.app.ui.WriteGuard
 
 /** 本月到期清單的一列（R-DUE）。 */
 data class DueRow(
@@ -155,10 +156,16 @@ class EntryViewModel @Inject constructor(
         val pendingMissed: Triple<LedgerEntry, LedgerEntry, String>? = null,
         /** 打開中的到期項目；欄位為 null 時用預設值。 */
         val due: DueSelection? = null,
+        /** 使用者選項目、付款方式、卡片時畫面顯示的資料世代；還沒選過為 NO_GENERATION（F11）。 */
+        val generation: Long = FinanceSnapshot.NO_GENERATION,
+        /** 上一筆記下時的資料世代（復原、補登提示用）。 */
+        val lastGeneration: Long = FinanceSnapshot.NO_GENERATION,
     )
 
     private data class DueSelection(
         val key: String,
+        /** 打開這個到期項目時畫面的資料世代。 */
+        val generation: Long,
         val amount: String? = null,
         val method: PaymentMethod? = null,
         val cardId: Long? = null,
@@ -170,10 +177,18 @@ class EntryViewModel @Inject constructor(
 
     private val selection = MutableStateFlow(Selection())
 
+    /** 畫面正在顯示的資料世代（F11）：選擇時記下，寫入時帶著，資料換過就會被拒絕。 */
+    @Volatile private var shownGeneration = FinanceSnapshot.NO_GENERATION
+
+    /** 寫入要帶的世代：使用者選過東西就用選的時候的世代，否則用這次讀到的快照。 */
+    private fun generationFor(sel: Selection, snapshot: FinanceSnapshot) =
+        if (sel.generation != FinanceSnapshot.NO_GENERATION) sel.generation else snapshot.generation
+
     val state: StateFlow<EntryUiState> = combine(repository.snapshot, selection, ::build)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EntryUiState())
 
     private fun build(snapshot: FinanceSnapshot, sel: Selection): EntryUiState {
+        shownGeneration = snapshot.generation
         val all = snapshot.activeItems.filter { it.type == sel.type }.sortedBy { it.sortOrder }
         if (snapshot.activeItems.isEmpty()) {
             return EntryUiState(loading = false, empty = true, message = sel.message)
@@ -340,7 +355,7 @@ class EntryViewModel @Inject constructor(
         )
     }
 
-    fun openDue(key: String) = selection.update { it.copy(due = DueSelection(key)) }
+    fun openDue(key: String) = selection.update { it.copy(due = DueSelection(key, shownGeneration)) }
 
     fun closeDue() = selection.update { it.copy(due = null) }
 
@@ -357,7 +372,7 @@ class EntryViewModel @Inject constructor(
     /** 記下打開中的到期項目。 */
     fun recordDue() {
         val sel = selection.value.due ?: return
-        viewModelScope.launch {
+        viewModelScope.launch(WriteGuard) {
             val snapshot = repository.snapshot.first()
             val due = DueItems.list(snapshot).firstOrNull { it.key == sel.key }
             if (due == null) {
@@ -370,10 +385,11 @@ class EntryViewModel @Inject constructor(
                 selection.update { s -> s.copy(due = s.due?.copy(error = error)) }
                 return@launch
             }
-            val id = repository.recordDue(DueItems.record(snapshot, due, choice))
+            val id = repository.recordDue(DueItems.record(snapshot, due, choice), sel.generation)
             selection.update {
                 it.copy(
                     due = null,
+                    lastGeneration = sel.generation,
                     message = if (id != null) "已記下 ${due.title} ${MoneyFormat.currency(choice.amount)}" else "這筆已經記過了",
                     lastSavedId = id,
                     lastInstallmentId = null,
@@ -385,8 +401,8 @@ class EntryViewModel @Inject constructor(
     /** 這個月沒有這筆：不記帳，之後不再列出。 */
     fun skipDue() {
         val sel = selection.value.due ?: return
-        viewModelScope.launch {
-            repository.skipDue(sel.key)
+        viewModelScope.launch(WriteGuard) {
+            repository.skipDue(sel.key, sel.generation)
             selection.update { it.copy(due = null, message = "已略過，這個月不再列出", lastSavedId = null, lastInstallmentId = null) }
         }
     }
@@ -450,19 +466,23 @@ class EntryViewModel @Inject constructor(
     fun selectType(type: FlowType) = selection.update {
         it.copy(
             type = type, itemId = null, method = null, methodTouched = false,
-            cardId = null, cardTouched = false, note = "", showAll = false,
+            cardId = null, cardTouched = false, note = "", showAll = false, generation = shownGeneration,
         )
     }
 
     fun selectItem(id: Long) = selection.update {
-        it.copy(itemId = id, method = null, methodTouched = false, cardId = null, cardTouched = false, note = "")
+        it.copy(itemId = id, method = null, methodTouched = false, cardId = null, cardTouched = false, note = "", generation = shownGeneration)
     }
 
     fun selectMethod(method: PaymentMethod) = selection.update {
-        if (it.methodTouched && it.method == method) it else it.copy(method = method, methodTouched = true, cardId = null, cardTouched = false)
+        if (it.methodTouched && it.method == method) {
+            it
+        } else {
+            it.copy(method = method, methodTouched = true, cardId = null, cardTouched = false, generation = shownGeneration)
+        }
     }
 
-    fun selectCard(id: Long?) = selection.update { it.copy(cardId = id, cardTouched = true) }
+    fun selectCard(id: Long?) = selection.update { it.copy(cardId = id, cardTouched = true, generation = shownGeneration) }
 
     fun press(key: String) = selection.update { it.copy(amount = AmountInput.press(it.amount, key)) }
 
@@ -472,8 +492,9 @@ class EntryViewModel @Inject constructor(
 
     fun save() {
         val sel = selection.value
-        viewModelScope.launch {
+        viewModelScope.launch(WriteGuard) {
             val snapshot = repository.snapshot.first()
+            val generation = generationFor(sel, snapshot)
             val items = snapshot.activeItems.filter { it.type == sel.type }.sortedBy { it.sortOrder }
             val item = items.firstOrNull { it.id == sel.itemId } ?: items.firstOrNull() ?: return@launch
             val method = if (sel.methodTouched) sel.method else EntryRules.defaultMethod(snapshot, item)
@@ -490,15 +511,16 @@ class EntryViewModel @Inject constructor(
                 RecordRules.missedMatch(snapshot, item.id, entry.method, snapshot.today)?.let { missed ->
                     val prompt = "${missed.date.monthValue}/${missed.date.dayOfMonth} 對帳時補過「${item.name}・${entry.method?.label.orEmpty()}」" +
                         "漏記 ${MoneyFormat.currency(missed.amount)}。這筆是不是那時漏記的？"
-                    selection.update { it.copy(pendingMissed = Triple(missed, entry, prompt)) }
+                    selection.update { it.copy(pendingMissed = Triple(missed, entry, prompt), lastGeneration = generation) }
                     return@launch
                 }
             }
             if (sel.installmentOn && method == PaymentMethod.CREDIT_CARD && item.type == FlowType.EXPENSE) {
                 val installment = draftInstallment(snapshot, item, cardId, sel)
-                val installmentId = repository.addInstallmentPurchase(entry, installment)
+                val installmentId = repository.addInstallmentPurchase(entry, installment, generation)
                 selection.update {
                     it.copy(
+                        lastGeneration = generation,
                         amount = "", note = "", installmentOn = false,
                         message = message + InstallmentRules.savedSuffix(installment),
                         lastSavedId = null, lastInstallmentId = installmentId,
@@ -506,23 +528,26 @@ class EntryViewModel @Inject constructor(
                 }
                 return@launch
             }
-            val id = repository.addLedgerEntry(entry)
-            selection.update { it.copy(amount = "", note = "", refund = false, message = message, lastSavedId = id, lastInstallmentId = null) }
+            val id = repository.addLedgerEntry(entry, generation)
+            selection.update {
+                it.copy(amount = "", note = "", refund = false, message = message, lastSavedId = id, lastInstallmentId = null, lastGeneration = generation)
+            }
         }
     }
 
     /** 回答補登提示：是 → 用這筆明細取代漏記差額；不是 → 當成新的一筆。 */
     fun answerMissed(replace: Boolean) {
         val (missed, entry, _) = selection.value.pendingMissed ?: return
-        viewModelScope.launch {
+        val generation = selection.value.lastGeneration
+        viewModelScope.launch(WriteGuard) {
             if (replace) {
-                repository.replaceMissed(missed.id, entry)
+                repository.replaceMissed(missed.id, entry, generation)
                 selection.update {
                     it.copy(amount = "", note = "", pendingMissed = null, lastSavedId = null, lastInstallmentId = null,
                         message = "已用這筆明細取代漏記差額，餘額不會重複扣")
                 }
             } else {
-                val id = repository.addLedgerEntry(entry)
+                val id = repository.addLedgerEntry(entry, generation)
                 selection.update {
                     it.copy(amount = "", note = "", pendingMissed = null, lastSavedId = id, lastInstallmentId = null,
                         message = "已記下 ${MoneyFormat.currency(entry.amount)}（另外一筆，不影響之前的漏記差額）")
@@ -535,9 +560,9 @@ class EntryViewModel @Inject constructor(
 
     fun undo() {
         val sel = selection.value
-        viewModelScope.launch {
-            sel.lastSavedId?.let { repository.deleteLedgerEntry(it) }
-            sel.lastInstallmentId?.let { repository.deleteInstallment(it) }
+        viewModelScope.launch(WriteGuard) {
+            sel.lastSavedId?.let { repository.deleteLedgerEntry(it, sel.lastGeneration) }
+            sel.lastInstallmentId?.let { repository.deleteInstallment(it, sel.lastGeneration) }
             selection.update { it.copy(message = null, lastSavedId = null, lastInstallmentId = null) }
         }
     }
@@ -546,7 +571,7 @@ class EntryViewModel @Inject constructor(
 
     /** 還沒有任何資料時，載入示意資料試用。 */
     fun loadSample() {
-        viewModelScope.launch {
+        viewModelScope.launch(WriteGuard) {
             repository.installSample()
             selection.value = Selection(message = "已載入示意資料")
         }

@@ -1,6 +1,23 @@
 package tw.myfsl.app.core.data
 
 import androidx.room.withTransaction
+import tw.myfsl.app.core.data.db.ScenarioEntity
+import tw.myfsl.app.core.data.db.PlanItemEntity
+import tw.myfsl.app.core.data.db.PlanGroupEntity
+import tw.myfsl.app.core.data.db.LedgerEntryEntity
+import tw.myfsl.app.core.data.db.ItemActualEntity
+import tw.myfsl.app.core.data.db.DeferralEntity
+import tw.myfsl.app.core.data.db.DataGenerationEntity
+import tw.myfsl.app.core.data.db.CardInstallmentEntity
+import tw.myfsl.app.core.data.db.AccountEntity
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import androidx.room.InvalidationTracker
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.StateFlow
@@ -10,10 +27,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import tw.myfsl.app.core.model.AppSettings
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.currentCoroutineContext
-import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -82,141 +95,148 @@ class FinanceRepository @Inject constructor(
     private val actualDao = db.actualDao()
     private val scenarioDao = db.scenarioDao()
 
-    /**
-     * 所有帳務寫入與還原共用的鎖（F11）：還原或放回期間，其他寫入排隊到結束才做，
-     * 不會寫進一半新一半舊的資料，也不會被整份覆蓋掉。同一個寫入裡呼叫其他寫入不會卡住（可重入）。
-     */
+    /** 所有帳務寫入與還原共用的鎖（F11）。不可重入：內部組合寫入時呼叫 *Locked 的私有方法。 */
     private val maintenance = Mutex()
 
-    private class WriteLockHeld : AbstractCoroutineContextElement(Key) {
-        companion object Key : CoroutineContext.Key<WriteLockHeld>
+    /** 資料層自己的工作（共用快照、還原）跑在這裡，不跟著某個畫面結束。 */
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private val _notices = MutableSharedFlow<String>(extraBufferCapacity = 8)
+
+    /** 寫入被拒絕時給畫面顯示的說明。 */
+    val notices: SharedFlow<String> = _notices
+
+    /** 帳務寫入的共同入口（F11）：拿鎖、確認 READY、比對世代，見 [WriteGate]。 */
+    private val gate = WriteGate(
+        maintenance = maintenance,
+        state = { restore.state.value },
+        currentGeneration = { currentGenerationLocked() },
+        onRejected = { _notices.tryEmit(it) },
+    )
+
+    private suspend fun <T> writing(expected: Long?, block: suspend () -> T): T = gate.run(expected, block)
+
+    /** 資料庫與設定裡的世代；不一致時為 [FinanceSnapshot.NO_GENERATION]。 */
+    private suspend fun currentGenerationLocked(): Long {
+        val inDb = db.maintenanceDao().generation() ?: 0L
+        val inSettings = settingsRepository.settings.first().dataGeneration
+        return if (inDb == inSettings) inDb else FinanceSnapshot.NO_GENERATION
     }
 
-    private suspend fun <T> writing(block: suspend () -> T): T =
-        if (currentCoroutineContext()[WriteLockHeld] != null) {
-            block()
-        } else {
-            maintenance.withLock { withContext(WriteLockHeld()) { block() } }
+    /** 整份替換資料時呼叫（在資料庫交易裡）：世代加一，回傳新世代。設定要另外用 [SettingsRepository.setDataGeneration] 寫同一個值。 */
+    private suspend fun bumpGenerationInTransaction(): Long {
+        val next = (db.maintenanceDao().generation() ?: 0L) + 1
+        db.maintenanceDao().setGeneration(DataGenerationEntity(generation = next))
+        return next
+    }
+
+    /** 資料庫一次讀完的內容（同一個交易，不會一半新一半舊）。 */
+    private class DbState(
+        val accounts: List<AccountEntity>,
+        val snapshots: List<BalanceSnapshotEntity>,
+        val groups: List<PlanGroupEntity>,
+        val items: List<PlanItemEntity>,
+        val amounts: List<PlanAmountEntity>,
+        val actuals: List<ItemActualEntity>,
+        val ledger: List<LedgerEntryEntity>,
+        val installments: List<CardInstallmentEntity>,
+        val scenarios: List<ScenarioEntity>,
+        val checkIns: List<CheckInEntity>,
+        val postedKeys: List<PostedKeyEntity>,
+        val deferrals: List<DeferralEntity>,
+        val generation: Long,
+    )
+
+    /** 任何一張表變動就通知一次（開始時也先通知一次）。 */
+    private val tablesChanged: Flow<Unit> = callbackFlow {
+        val observer = object : InvalidationTracker.Observer(TABLES) {
+            override fun onInvalidated(tables: Set<String>) {
+                trySend(Unit)
+            }
         }
+        db.invalidationTracker.addObserver(observer)
+        trySend(Unit)
+        awaitClose { db.invalidationTracker.removeObserver(observer) }
+    }.conflate()
 
-    private data class PlanPart(
-        val groups: List<PlanGroup>,
-        val items: List<PlanItem>,
-        val amounts: Map<Int, MonthlyAmounts>,
-    )
-
-    private data class ActualPart(
-        val actuals: List<ItemActual>,
-        val ledger: List<LedgerEntry>,
-        val installments: List<CardInstallment>,
-        val postedKeys: Set<String>,
-        val deferrals: List<Deferral>,
-    )
-
-    private data class AccountPart(
-        val accounts: List<Account>,
-        /** 最近一次「全部卡片一起對帳」的時點。 */
-        val fullCardReconcile: RecordMark?,
-    )
-
-    private val planPart: Flow<PlanPart> = combine(
-        planDao.observeGroups(),
-        planDao.observeItems(),
-        planDao.observeAmounts(),
-    ) { groups, items, amounts ->
-        PlanPart(
-            groups = groups.map { it.toModel() },
-            items = items.map { it.toModel() },
-            amounts = amounts.groupBy { it.year }.mapValues { (_, rows) ->
-                rows.groupBy { PlanLine(it.itemId, it.method.toPaymentMethod()) }.mapValues { (_, lineRows) ->
-                    List(12) { m -> lineRows.firstOrNull { it.month == m + 1 }?.amount ?: 0L }
+    /**
+     * 資料庫的一致快照：每次有表變動，就在同一個交易裡把所有表讀一遍（F11 第 2 點）。
+     * 以前是每張表各自觀察再組合，還原後可能短暫出現「世代是新的、記帳還是舊的」的組合。
+     */
+    private val dbState: Flow<DbState> = tablesChanged
+        .map {
+            with(db.maintenanceDao()) {
+                db.withTransaction {
+                    DbState(
+                        allAccounts(), allSnapshots(), allGroups(), allItems(), allAmounts(), allActuals(), allLedger(),
+                        allInstallments(), allScenarios(), allCheckIns(), allPostedKeys(), allDeferrals(), generation() ?: 0L,
+                    )
                 }
-            },
-        )
-    }
+            }
+        }
+        .shareIn(repositoryScope, SharingStarted.WhileSubscribed(5_000), replay = 1)
 
-    private val actualPart: Flow<ActualPart> = combine(
-        actualDao.observeAll(),
-        actualDao.observeLedger(),
-        actualDao.observeInstallments(),
-        actualDao.observePostedKeys(),
-        actualDao.observeDeferrals(),
-    ) { actuals, ledger, installments, keys, deferrals ->
-        val entries = ledger.map { it.toModel() }
-        ActualPart(
-            actuals = actuals.map { it.toModel() },
-            ledger = entries,
-            installments = installments.map { it.toModel() },
-            postedKeys = keys.toSet() + entries.mapNotNull { it.postingKey },
-            deferrals = deferrals.map { it.toModel() },
-        )
-    }
+    val snapshot: Flow<FinanceSnapshot> = combine(dbState, settingsRepository.settings) { d, settings ->
+        val entries = d.ledger.map { it.toModel() }
 
-    private val accountPart: Flow<AccountPart> = combine(
-        accountDao.observeAll(),
-        accountDao.observeSnapshots(),
-        actualDao.observeLedger(),
-    ) { accounts, snapshots, ledger ->
-        val byAccount = snapshots.groupBy { it.accountId }
+        // 帳戶餘額：最近一次校正＋之後的記帳
+        val byAccount = d.snapshots.groupBy { it.accountId }
         val latest = byAccount.mapValues { (_, list) -> list.maxWith(compareBy({ it.epochDay }, { it.recordedAtMillis }, { it.id })) }
-        val entries = ledger.map { it.toModel() }
-        val models = accounts.map { entity ->
+        val accounts = d.accounts.map { entity ->
             val model = entity.toModel()
-            val snapshot = latest[entity.id]
-            val mark = snapshot?.let { RecordMark(LocalDate.ofEpochDay(it.epochDay), it.recordedAtMillis) }
+            val snap = latest[entity.id]
+            val mark = snap?.let { RecordMark(LocalDate.ofEpochDay(it.epochDay), it.recordedAtMillis) }
             val delta = entries
                 .filter { mark == null || it.isAfter(mark) }
                 .sumOf { BalanceRules.effect(it, model.id, model.kind) }
             model.copy(
-                balance = (snapshot?.balance ?: 0L) + delta,
+                balance = (snap?.balance ?: 0L) + delta,
                 balanceAsOf = mark?.date,
                 balanceRecordedAt = mark?.recordedAt ?: 0L,
             )
         }
-        val cardMarks = models.filter { it.kind == AccountKind.CREDIT_CARD && !it.archived }.associate { card ->
+        val cardMarks = accounts.filter { it.kind == AccountKind.CREDIT_CARD && !it.archived }.associate { card ->
             card.id to byAccount[card.id].orEmpty().map { RecordMark(LocalDate.ofEpochDay(it.epochDay), it.recordedAtMillis) }
         }
-        AccountPart(models, BalanceRules.fullCardReconcile(cardMarks))
-    }
+        val fullCardReconcile = BalanceRules.fullCardReconcile(cardMarks)
 
-    val snapshot: Flow<FinanceSnapshot> = combine(
-        accountPart,
-        planPart,
-        actualPart,
-        settingsRepository.settings,
-        actualDao.observeLatestCheckIn(),
-    ) { accountPart, plan, actual, settings, checkIn ->
         FinanceSnapshot(
             today = time.today(),
-            accounts = accountPart.accounts,
-            groups = plan.groups,
-            items = plan.items,
-            amountsByYear = plan.amounts,
-            actuals = actual.actuals,
-            ledger = actual.ledger,
-            installments = actual.installments,
+            accounts = accounts,
+            groups = d.groups.map { it.toModel() },
+            items = d.items.map { it.toModel() },
+            amountsByYear = d.amounts.groupBy { it.year }.mapValues { (_, rows) ->
+                rows.groupBy { PlanLine(it.itemId, it.method.toPaymentMethod()) }.mapValues { (_, lineRows) ->
+                    List(12) { m -> lineRows.firstOrNull { it.month == m + 1 }?.amount ?: 0L }
+                }
+            },
+            actuals = d.actuals.map { it.toModel() },
+            ledger = entries,
+            installments = d.installments.map { it.toModel() },
             settings = settings,
-            lastCheckIn = checkIn?.toModel(),
-            unassignedCardSpending = BalanceRules.unassignedCardSpending(actual.ledger, accountPart.fullCardReconcile),
-            postedKeys = actual.postedKeys,
-            deferrals = actual.deferrals,
+            lastCheckIn = d.checkIns.maxWithOrNull(compareBy({ it.epochDay }, { it.id }))?.toModel(),
+            unassignedCardSpending = BalanceRules.unassignedCardSpending(entries, fullCardReconcile),
+            postedKeys = d.postedKeys.map { it.key }.toSet() + entries.mapNotNull { it.postingKey },
+            deferrals = d.deferrals.map { it.toModel() },
+            // 資料庫與設定的世代一致才有效；不一致表示資料正在更新，寫入會被拒絕。
+            generation = if (d.generation == settings.dataGeneration) d.generation else FinanceSnapshot.NO_GENERATION,
         )
     }
 
-    val scenarios: Flow<List<Scenario>> = scenarioDao.observeAll().map { list -> list.map { it.toModel() } }
+    val scenarios: Flow<List<Scenario>> = dbState.map { d -> d.scenarios.map { it.toModel() } }
 
     fun today(): LocalDate = time.today()
 
     // ---- 到期項目（R-DUE）：不會自動寫入，使用者點了才記下 ----
 
     /** 第一次開 App 時把到期項目的起算日設成今天：之前到期的款項視為已包含在輸入的餘額裡。 */
-    suspend fun startDueTracking() = writing { settingsRepository.startAutoPostingIfNeeded(time.today().toEpochDay()) }
+    suspend fun startDueTracking() = writing(null) { settingsRepository.startAutoPostingIfNeeded(time.today().toEpochDay()) }
 
     /**
      * 記下一個到期項目（同一個交易內寫入記帳、貸款剩餘期數與清掉的既有卡循）。
      * 回傳第一筆記帳的 id（復原用）；已經記過（識別碼重複，例如連點兩下）時不寫入，回傳 null。
      */
-    suspend fun recordDue(record: DueRecord): Long? = writing {
+    suspend fun recordDue(record: DueRecord, generation: Long): Long? = writing(generation) {
         val keys = record.entries.mapNotNull { it.postingKey }
         val existing = actualDao.observeLedger().first().mapNotNull { it.postingKey }.toSet()
         if (keys.isEmpty() || keys.any { it in existing }) return@writing null
@@ -231,11 +251,11 @@ class FinanceRepository @Inject constructor(
     }
 
     /** 這個月沒有這筆：不記帳，只記下已經處理過，之後不再列出。 */
-    suspend fun skipDue(key: String) = writing { actualDao.insertPostedKeys(listOf(PostedKeyEntity(key, time.today().toEpochDay()))) }
+    suspend fun skipDue(key: String, generation: Long) = writing(generation) { actualDao.insertPostedKeys(listOf(PostedKeyEntity(key, time.today().toEpochDay()))) }
 
     // ---- 帳戶 ----
 
-    suspend fun saveAccount(account: Account, balance: Money?, asOf: LocalDate = time.today()): Long = writing {
+    suspend fun saveAccount(account: Account, balance: Money?, generation: Long, asOf: LocalDate = time.today()): Long = writing(generation) {
         db.withTransaction {
             val entity = account.toEntity()
             val result = accountDao.upsert(entity)
@@ -249,10 +269,10 @@ class FinanceRepository @Inject constructor(
         }
     }
 
-    suspend fun setAccountArchived(id: Long, archived: Boolean) = writing { accountDao.setArchived(id, archived) }
+    suspend fun setAccountArchived(id: Long, archived: Boolean, generation: Long) = writing(generation) { accountDao.setArchived(id, archived) }
 
     /** 校正帳戶餘額：寫入快照，不修改歷史紀錄。 */
-    suspend fun recordBalances(balances: Map<Long, Money>, date: LocalDate = time.today()) = writing { db.withTransaction {
+    suspend fun recordBalances(balances: Map<Long, Money>, generation: Long, date: LocalDate = time.today()) = writing(generation) { db.withTransaction {
         val now = time.nowMillis()
         balances.forEach { (id, value) ->
             accountDao.insertSnapshot(BalanceSnapshotEntity(accountId = id, epochDay = date.toEpochDay(), balance = value, recordedAtMillis = now))
@@ -261,14 +281,19 @@ class FinanceRepository @Inject constructor(
 
     // ---- 計畫 ----
 
-    suspend fun saveGroup(group: PlanGroup): Long = writing {
+    suspend fun saveGroup(group: PlanGroup, generation: Long): Long = writing(generation) { saveGroupLocked(group) }
+
+    private suspend fun saveGroupLocked(group: PlanGroup): Long {
         val entity = group.toEntity()
         val result = planDao.upsertGroup(entity)
-        if (entity.id == 0L) result else entity.id
+        return if (entity.id == 0L) result else entity.id
     }
 
     /** 儲存項目與各年度、各支付方式的 12 個月金額（收入與轉帳的支付方式為 null）。 */
-    suspend fun saveItem(item: PlanItem, amountsByYear: Map<Int, Map<PaymentMethod?, List<Money>>>): Long = writing {
+    suspend fun saveItem(item: PlanItem, amountsByYear: Map<Int, Map<PaymentMethod?, List<Money>>>, generation: Long): Long =
+        writing(generation) { saveItemLocked(item, amountsByYear) }
+
+    private suspend fun saveItemLocked(item: PlanItem, amountsByYear: Map<Int, Map<PaymentMethod?, List<Money>>>): Long =
         db.withTransaction {
             val entity = item.toEntity()
             val result = planDao.upsertItem(entity)
@@ -285,10 +310,9 @@ class FinanceRepository @Inject constructor(
             }
             id
         }
-    }
 
     /** 封存從本月起生效；之前月份的計畫與紀錄仍算在歷史報表裡（R-EDT-10）。 */
-    suspend fun setItemArchived(id: Long, archived: Boolean) = writing {
+    suspend fun setItemArchived(id: Long, archived: Boolean, generation: Long) = writing(generation) {
         val today = time.today()
         planDao.setItemArchived(id, archived, if (archived) today.year * 12 + today.monthValue - 1 else null)
     }
@@ -298,7 +322,7 @@ class FinanceRepository @Inject constructor(
      * 檔案裡沒有的項目保持不動；[ImportMode.ADD_ONLY] 只新增還不存在的項目。
      * 回傳實際寫入的項目數。
      */
-    suspend fun importPlan(preview: ImportPreview, mode: ImportMode = ImportMode.REPLACE_YEAR): Int = writing {
+    suspend fun importPlan(preview: ImportPreview, generation: Long, mode: ImportMode = ImportMode.REPLACE_YEAR): Int = writing(generation) {
         db.withTransaction {
             val existingGroups = planDao.observeGroups().first().map { it.toModel() }.toMutableList()
             val existingItems = planDao.observeItems().first().map { it.toModel() }
@@ -306,13 +330,13 @@ class FinanceRepository @Inject constructor(
             preview.items.forEach { entry ->
                 val key = PlanImport.normalize(entry.groupName)
                 val groupId = existingGroups.firstOrNull { PlanImport.normalize(it.name) == key }?.id
-                    ?: saveGroup(PlanGroup(name = entry.groupName, sortOrder = existingGroups.size + 1))
+                    ?: saveGroupLocked(PlanGroup(name = entry.groupName, sortOrder = existingGroups.size + 1))
                         .also { id -> existingGroups += PlanGroup(id, entry.groupName, existingGroups.size + 1) }
                 val existing = existingItems.firstOrNull {
                     PlanImport.normalize(it.name) == PlanImport.normalize(entry.item.name) && it.groupId == groupId
                 }
                 if (mode == ImportMode.ADD_ONLY && existing != null) return@forEach
-                saveItem(
+                saveItemLocked(
                     entry.item.copy(
                         id = existing?.id ?: 0,
                         groupId = groupId,
@@ -330,7 +354,7 @@ class FinanceRepository @Inject constructor(
     // ---- 記帳與執行控管 ----
 
     /** 新增記帳並蓋上寫入時間。 */
-    suspend fun addLedgerEntry(entry: LedgerEntry): Long = writing {
+    suspend fun addLedgerEntry(entry: LedgerEntry, generation: Long): Long = writing(generation) {
         actualDao.insertLedger(entry.copy(createdAt = time.nowMillis()).toEntity())
     }
 
@@ -340,7 +364,7 @@ class FinanceRepository @Inject constructor(
      * 分期消費本身整筆取消；某一期分期只刪那一期；到期記下的同一組一起刪並回到清單、
      * 貸款期數加回、第一次利息恢復既有卡循；到期確認撤銷「已完成」；延期款改回未付。
      */
-    suspend fun deleteLedgerEntry(id: Long) = writing {
+    suspend fun deleteLedgerEntry(id: Long, generation: Long) = writing(generation) {
         val snapshot = snapshot.first()
         val entry = snapshot.ledger.firstOrNull { it.id == id } ?: return@writing
         val plan = Deletion.plan(snapshot, entry)
@@ -362,13 +386,13 @@ class FinanceRepository @Inject constructor(
     }
 
     /** 修改記帳；保留原本的寫入時間，讓它和餘額校正的先後關係不變。 */
-    suspend fun updateLedgerEntry(entry: LedgerEntry) = writing { actualDao.updateLedger(entry.toEntity()) }
+    suspend fun updateLedgerEntry(entry: LedgerEntry, generation: Long) = writing(generation) { actualDao.updateLedger(entry.toEntity()) }
 
     /**
      * 補登找回的單據，取代之前對帳補的漏記差額（R-REC-03）：同一個交易內
      * 更新（或刪掉）差額、寫入沿用差額時間的明細，超過的部分照今天記。
      */
-    suspend fun replaceMissed(missedId: Long, entry: LedgerEntry) = writing { db.withTransaction {
+    suspend fun replaceMissed(missedId: Long, entry: LedgerEntry, generation: Long) = writing(generation) { db.withTransaction {
         val missed = actualDao.ledgerById(missedId)?.toModel() ?: run {
             actualDao.insertLedger(entry.copy(createdAt = time.nowMillis()).toEntity())
             return@withTransaction
@@ -383,7 +407,7 @@ class FinanceRepository @Inject constructor(
      * 分期消費：一筆記帳（全額，用來算預算）＋一筆分期（各期入帳，用來算卡債與額度）。
      * 第一期預設落在下個月的繳款日所在半月。
      */
-    suspend fun addInstallmentPurchase(entry: LedgerEntry, installment: CardInstallment): Long = writing {
+    suspend fun addInstallmentPurchase(entry: LedgerEntry, installment: CardInstallment, generation: Long): Long = writing(generation) {
         db.withTransaction {
             val now = time.nowMillis()
             val installmentId = actualDao.upsertInstallment(installment.copy(id = 0).toEntity())
@@ -392,10 +416,10 @@ class FinanceRepository @Inject constructor(
         }
     }
 
-    suspend fun settleInstallment(id: Long) = writing { actualDao.setInstallmentSettled(id, true) }
+    suspend fun settleInstallment(id: Long, generation: Long) = writing(generation) { actualDao.setInstallmentSettled(id, true) }
 
     /** 整筆取消分期（記帳畫面的復原用）：消費、已入帳的各期本金與手續費、選過「這個月沒有」的標記一起刪。 */
-    suspend fun deleteInstallment(id: Long) = writing { db.withTransaction {
+    suspend fun deleteInstallment(id: Long, generation: Long) = writing(generation) { db.withTransaction {
         actualDao.deleteLedgerOfInstallment(id)
         actualDao.deletePostedKeysWithPrefix("${PostingKeys.INSTALLMENT_PRINCIPAL}$id:")
         actualDao.deletePostedKeysWithPrefix("${PostingKeys.INSTALLMENT_FEE}$id:")
@@ -408,9 +432,10 @@ class FinanceRepository @Inject constructor(
      */
     suspend fun recordCheckIn(
         result: CheckInResult,
+        generation: Long,
         date: LocalDate = time.today(),
         note: String = "",
-    ) = writing { db.withTransaction {
+    ) = writing(generation) { db.withTransaction {
         val now = time.nowMillis()
         result.entries.forEach { entry ->
             actualDao.insertLedger(entry.copy(createdAt = now).toEntity())
@@ -430,23 +455,23 @@ class FinanceRepository @Inject constructor(
         actualDao.insertCheckIn(CheckInEntity(epochDay = date.toEpochDay(), note = note))
     } }
 
-    suspend fun saveActual(actual: ItemActual) = writing { actualDao.upsert(listOf(actual.toEntity())) }
+    suspend fun saveActual(actual: ItemActual, generation: Long) = writing(generation) { actualDao.upsert(listOf(actual.toEntity())) }
 
     // ---- 試算情境 ----
 
-    suspend fun saveScenario(scenario: Scenario): Long = writing {
+    suspend fun saveScenario(scenario: Scenario, generation: Long): Long = writing(generation) {
         val entity = scenario.toEntity()
         val result = scenarioDao.upsert(entity)
         if (entity.id == 0L) result else entity.id
     }
 
-    suspend fun deleteScenario(id: Long) = writing { scenarioDao.delete(id) }
+    suspend fun deleteScenario(id: Long, generation: Long) = writing(generation) { scenarioDao.delete(id) }
 
     // ---- 維護 ----
 
     /** 載入示意資料試用（會清掉現有資料）。金額為虛構。 */
-    suspend fun installSample() = writing {
-        clearAll()
+    suspend fun installSample() = writing(null) {
+        clearAllLocked()
         db.withTransaction {
             SampleHousehold.accounts.forEach { account ->
                 accountDao.upsert(account.toEntity())
@@ -471,6 +496,7 @@ class FinanceRepository @Inject constructor(
                 )
             }
             SampleHousehold.septemberLedger.forEach { actualDao.insertLedger(it.toEntity()) }
+            settingsRepository.setDataGeneration(bumpGenerationInTransaction())
         }
         settingsRepository.setCashAccount(SampleHousehold.CASH)
         settingsRepository.setTransferAccount(SampleHousehold.BANK)
@@ -481,12 +507,12 @@ class FinanceRepository @Inject constructor(
     }
 
     /** 備份檔已經寫出去之後才呼叫，用來提醒「多久沒備份」。 */
-    suspend fun markBackedUp() = writing { settingsRepository.setLastBackup(time.today().toEpochDay()) }
+    suspend fun markBackedUp() = writing(null) { settingsRepository.setLastBackup(time.today().toEpochDay()) }
 
-    suspend fun setOnboarded() = writing { settingsRepository.setOnboarded(true) }
+    suspend fun setOnboarded() = writing(null) { settingsRepository.setOnboarded(true) }
 
     /** 儲存設定畫面的所有欄位（和帳務寫入共用鎖，還原期間排隊）。 */
-    suspend fun saveSettings(settings: AppSettings) = writing { settingsRepository.save(settings) }
+    suspend fun saveSettings(settings: AppSettings, generation: Long) = writing(generation) { settingsRepository.save(settings) }
 
     /** 完整備份：所有資料表與設定。 */
     suspend fun exportBackup(): BackupFile = with(db.maintenanceDao()) {
@@ -510,16 +536,30 @@ class FinanceRepository @Inject constructor(
         }
     }
 
+    private companion object {
+        /** 快照要觀察的所有資料表（任何一張變動就整份重讀）。 */
+        val TABLES = arrayOf(
+            "accounts", "balance_snapshots", "plan_groups", "plan_items", "plan_amounts", "item_actuals", "ledger_entries",
+            "card_installments", "scenarios", "check_ins", "posted_keys", "deferrals", "data_generation",
+        )
+    }
+
     // ---- 從備份還原（R-DATA-06，F11）：流程在 RestoreCoordinator，可以單獨測試中斷與失敗 ----
+
+    /** 還原時資料庫換掉後的新世代；設定寫同一個值。 */
+    private var pendingGeneration: Long? = null
 
     private val restore = RestoreCoordinator(
         journal = restoreJournal,
         target = object : RestoreTarget {
             override suspend fun export(): BackupFile = exportBackup()
-            override suspend fun replaceDatabase(file: BackupFile) = this@FinanceRepository.replaceDatabase(file)
+            override suspend fun replaceDatabase(file: BackupFile) {
+                pendingGeneration = this@FinanceRepository.replaceDatabase(file)
+            }
             override suspend fun replaceSettings(file: BackupFile, autoPostFromFallback: Long?) {
                 file.settings?.let { settingsRepository.save(it.toSettings(settingsRepository.settings.first())) }
                 settingsRepository.setAutoPostFrom(file.settings?.autoPostFrom ?: autoPostFromFallback)
+                pendingGeneration?.let { settingsRepository.setDataGeneration(it) }
             }
         },
         maintenance = maintenance,
@@ -529,16 +569,27 @@ class FinanceRepository @Inject constructor(
     /** 還原狀態；不是 READY 時畫面不開放帳務操作。 */
     val restoreState: StateFlow<RestoreState> = restore.state
 
-    /** 還原在 App 層級執行：發起的畫面離開或被清掉，還原仍會做完（F11）。 */
-    private val restoreScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** 用備份取代目前所有資料（先寫復原紀錄，資料庫與設定都成功才標記完成、清紀錄）。在 App 層級執行，發起的畫面離開也會做完。 */
+    suspend fun restoreBackup(file: BackupFile) = repositoryScope.async { restore.restore(file) }.await()
 
-    /** 用備份取代目前所有資料（先寫復原紀錄，資料庫與設定都成功才標記完成、清紀錄）。 */
-    suspend fun restoreBackup(file: BackupFile) = restoreScope.async { restore.restore(file) }.await()
+    /**
+     * 開 App 時先呼叫：上次還原沒完成就放回還原前的資料。放回失敗時可以再呼叫重試。
+     * 可以使用之後，把設定裡的世代對齊資料庫（清除資料或載入示意資料途中被關掉時兩邊可能不同；
+     * 剛開 App 沒有任何舊畫面，對齊是安全的）。
+     */
+    suspend fun recoverInterruptedRestore(): RestoreCoordinator.Recovery {
+        val result = restore.recover()
+        if (restore.state.value == RestoreState.READY) {
+            maintenance.withLock {
+                val inDb = db.maintenanceDao().generation() ?: 0L
+                if (settingsRepository.settings.first().dataGeneration != inDb) settingsRepository.setDataGeneration(inDb)
+            }
+        }
+        return result
+    }
 
-    /** 開 App 時先呼叫：上次還原沒完成就放回還原前的資料。放回失敗時可以再呼叫重試。 */
-    suspend fun recoverInterruptedRestore(): RestoreCoordinator.Recovery = restore.recover()
-
-    private suspend fun replaceDatabase(file: BackupFile) = with(db.maintenanceDao()) {
+    /** 資料庫整份換成備份的內容（同一個交易），世代加一；回傳新世代。 */
+    private suspend fun replaceDatabase(file: BackupFile): Long = with(db.maintenanceDao()) {
         db.withTransaction {
             clearEverything()
             insertAccounts(file.accounts)
@@ -553,6 +604,7 @@ class FinanceRepository @Inject constructor(
             insertCheckIns(file.checkIns)
             insertPostedKeyRows(file.postedKeys)
             insertDeferrals(file.deferrals)
+            bumpGenerationInTransaction()
         }
     }
 
@@ -562,8 +614,15 @@ class FinanceRepository @Inject constructor(
         clearPostedKeys(); clearDeferrals()
     }
 
-    suspend fun clearAll() = writing {
-        db.withTransaction { clearEverything() }
+    suspend fun clearAll() = writing(null) { clearAllLocked() }
+
+    /** 清除所有資料：世代加一，清除前畫面上的操作都會被拒絕。 */
+    private suspend fun clearAllLocked() {
+        val next = db.withTransaction {
+            clearEverything()
+            bumpGenerationInTransaction()
+        }
+        settingsRepository.setDataGeneration(next)
         settingsRepository.setAutoPostFrom(null)
     }
 }

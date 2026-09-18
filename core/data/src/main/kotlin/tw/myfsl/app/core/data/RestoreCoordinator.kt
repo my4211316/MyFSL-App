@@ -38,8 +38,9 @@ interface RestoreTarget {
  * 從備份還原的流程（R-DATA-06，F11）。
  *
  * 1. 先把目前資料寫進 [RestoreJournal]（同步到磁碟、讀回確認），才開始改資料庫。
- * 2. 資料庫與設定都成功後寫「已完成」標記，再清紀錄。標記寫好之後，留下的紀錄只是待清理，下次開啟只清理、不放回；
- *    清理失敗不影響資料（標記保證不會被放回），下次開啟再清。
+ * 2. 資料庫與設定都成功後寫「已完成」標記（綁定這一次紀錄的識別碼），再清紀錄。有效標記在時，留下的紀錄只是待清理，
+ *    下次開啟只清理、不放回；清理失敗不影響資料，下次開啟再清。標記無效（資料夾、空白、截斷、內容錯誤、識別碼不符、讀不到）時
+ *    不當成完成、不清紀錄，停在 [RestoreState.RECOVERY_FAILED]。
  * 3. 途中出錯：馬上放回；放回成功一樣寫「已完成」標記再清。放回或標記失敗時進入 [RestoreState.RECOVERY_FAILED]，紀錄保留。
  * 4. 途中程式被關掉：紀錄在、標記不在；下次開 App 先呼叫 [recover] 放回，放回完成前是 [RestoreState.CHECKING]。
  * 5. 讀紀錄、解析、放回、寫標記任何一步失敗都進入 [RestoreState.RECOVERY_FAILED]（畫面提供重試），不會卡在檢查中。
@@ -64,16 +65,25 @@ class RestoreCoordinator(
         maintenance.withLock {
             _state.value = RestoreState.CHECKING
             try {
-                if (journal.isCommitted()) {
-                    // 上次已經完成，只差清理：清不掉也沒關係，資料是一致的，下次再清。
-                    runCatching { journal.finish() }
+                // 紀錄讀不到或格式不對會丟例外 → 放回失敗、可重試（不會卡在檢查中）。
+                val text = journal.pending()
+                val commit = journal.commitState()
+                if (text == null) {
+                    // 沒有紀錄：沒有要保護的舊資料，留下的標記（不管有效與否）清掉即可。
+                    if (commit != RestoreJournal.Commit.NONE) runCatching { journal.finish() }
                     _state.value = RestoreState.READY
                     return@withLock Recovery.NONE
                 }
-                val text = journal.pending()
-                if (text == null) {
-                    _state.value = RestoreState.READY
-                    return@withLock Recovery.NONE
+                when (commit) {
+                    RestoreJournal.Commit.VALID -> {
+                        // 上次已經完成，只差清理：清不掉也沒關係，有效標記保證不會放回，下次再清。
+                        runCatching { journal.finish() }
+                        _state.value = RestoreState.READY
+                        return@withLock Recovery.NONE
+                    }
+                    // 標記無效：不知道上次到底完成沒有，不動資料、不清紀錄，停在可重試的狀態。
+                    RestoreJournal.Commit.INVALID -> throw IllegalStateException("還原完成標記無效")
+                    RestoreJournal.Commit.NONE -> Unit
                 }
                 val previous = (BackupCodec.decode(text) as? BackupReadResult.Ok)?.file
                     ?: throw IllegalStateException("還原紀錄無法讀取")
@@ -97,7 +107,7 @@ class RestoreCoordinator(
             check(_state.value == RestoreState.READY) { "資料還在檢查中，請稍候再還原" }
             // 有留下的紀錄或標記（連讀都讀不到也算）：先整理完才能再還原。
             val leftover = try {
-                journal.pending() != null || journal.isCommitted()
+                journal.pending() != null || journal.commitState() != RestoreJournal.Commit.NONE
             } catch (e: Exception) {
                 true
             }

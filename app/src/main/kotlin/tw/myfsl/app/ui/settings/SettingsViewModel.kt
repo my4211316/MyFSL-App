@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import tw.myfsl.app.core.model.FinanceSnapshot
+import tw.myfsl.app.ui.WriteGuard
 
 data class SettingsUiState(
     val loading: Boolean = true,
@@ -56,6 +58,8 @@ class SettingsViewModel @Inject constructor(
 
     private data class Local(
         val draft: SettingsDraft? = null,
+        /** 開始改設定時的資料世代（F11）：設定裡有帳戶 id。 */
+        val draftGeneration: Long? = null,
         val errors: Map<String, String> = emptyMap(),
         val saved: Boolean = false,
         val message: String? = null,
@@ -65,7 +69,11 @@ class SettingsViewModel @Inject constructor(
 
     private val local = MutableStateFlow(Local())
 
+    /** 畫面正在顯示的資料世代（F11）：寫入時帶著，資料換過就會被拒絕。 */
+    @Volatile private var shownGeneration = FinanceSnapshot.NO_GENERATION
+
     val state: StateFlow<SettingsUiState> = combine(repository.snapshot, local, crash) { snapshot, l, crashLog ->
+        shownGeneration = snapshot.generation
         val accounts = snapshot.activeAccounts
         SettingsUiState(
             loading = false,
@@ -89,26 +97,27 @@ class SettingsViewModel @Inject constructor(
 
     fun change(transform: (SettingsDraft) -> SettingsDraft) = local.update { current ->
         val draft = current.draft ?: state.value.draft ?: return@update current
-        current.copy(draft = transform(draft), saved = false)
+        current.copy(draft = transform(draft), saved = false, draftGeneration = current.draftGeneration ?: shownGeneration)
     }
 
     fun save() {
         val draft = state.value.draft ?: return
-        viewModelScope.launch {
+        val generation = local.value.draftGeneration ?: shownGeneration
+        viewModelScope.launch(WriteGuard) {
             val snapshot = repository.snapshot.first()
             val result = SettingsForm.validate(draft, snapshot.settings, snapshot.accounts)
             if (!result.ok) {
                 local.update { it.copy(errors = result.errors) }
                 return@launch
             }
-            repository.saveSettings(result.settings!!)
+            repository.saveSettings(result.settings!!, generation)
             local.update { Local(saved = true, message = "設定已儲存") }
         }
     }
 
     fun loadSample() {
         local.update { it.copy(busy = true) }
-        viewModelScope.launch {
+        viewModelScope.launch(WriteGuard) {
             repository.installSample()
             local.update { Local(message = "已載入示意資料") }
         }
@@ -116,7 +125,7 @@ class SettingsViewModel @Inject constructor(
 
     fun clearAll() {
         local.update { it.copy(busy = true) }
-        viewModelScope.launch {
+        viewModelScope.launch(WriteGuard) {
             repository.clearAll()
             local.update { Local(message = "已清除所有資料") }
         }
@@ -127,7 +136,7 @@ class SettingsViewModel @Inject constructor(
     suspend fun backupBytes(): ByteArray = BackupCodec.encode(repository.exportBackup()).toByteArray(Charsets.UTF_8)
 
     fun backupSaved() {
-        viewModelScope.launch { repository.markBackedUp() }
+        viewModelScope.launch(WriteGuard) { repository.markBackedUp() }
         local.update { it.copy(message = "已匯出完整備份") }
     }
 

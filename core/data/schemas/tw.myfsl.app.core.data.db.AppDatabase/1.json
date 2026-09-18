@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "bb115360fac430d7784e1d2d485d82d3",
+    "identityHash": "173b33aaca5a3897cd96f6b50775a3db",
     "entities": [
       {
         "tableName": "accounts",
@@ -806,11 +806,35 @@
             "createSql": "CREATE INDEX IF NOT EXISTS `index_deferrals_itemId` ON `${TABLE_NAME}` (`itemId`)"
           }
         ]
+      },
+      {
+        "tableName": "data_generation",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `generation` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'bb115360fac430d7784e1d2d485d82d3')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '173b33aaca5a3897cd96f6b50775a3db')"
     ]
   }
 }

@@ -34,10 +34,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import javax.inject.Inject
+import tw.myfsl.app.ui.WriteGuard
 
 data class ScenarioEditor(
     val draft: ScenarioDraft,
     val errors: Map<String, String> = emptyMap(),
+    /** 打開編輯時的資料世代（F11）：情境裡有帳戶與項目的 id。 */
+    val generation: Long = FinanceSnapshot.NO_GENERATION,
 ) {
     val isNew: Boolean get() = draft.id == 0L
 }
@@ -94,10 +97,14 @@ class ForecastViewModel @Inject constructor(
 
     private val local = MutableStateFlow(Local())
 
+    /** 畫面正在顯示的資料世代（F11）：寫入時帶著，資料換過就會被拒絕。 */
+    @Volatile private var shownGeneration = FinanceSnapshot.NO_GENERATION
+
     private data class Computed(val snapshot: FinanceSnapshot, val scenarios: List<Scenario>, val months: Int, val comparison: Comparison?)
 
     // 只有資料、情境或期間改變才重算，編輯表單打字時不重算。
     private val computed = combine(repository.snapshot, repository.scenarios, local.map { it.months }.distinctUntilChanged()) { snapshot, scenarios, chosen ->
+        shownGeneration = snapshot.generation
         val months = chosen ?: snapshot.settings.horizonMonths
         val empty = snapshot.activeAccounts.isEmpty() && snapshot.activeItems.isEmpty()
         Computed(snapshot, scenarios, months, if (empty) null else ForecastComparisonCalculator.compare(snapshot, scenarios, months))
@@ -129,12 +136,12 @@ class ForecastViewModel @Inject constructor(
 
     // ---- 情境編輯 ----
 
-    fun startNew() = local.update { it.copy(editor = ScenarioEditor(ScenarioDraft())) }
+    fun startNew() = local.update { it.copy(editor = ScenarioEditor(ScenarioDraft(), generation = shownGeneration)) }
 
     fun edit(scenario: Scenario) {
         viewModelScope.launch {
-            val today = repository.snapshot.first().today
-            local.update { it.copy(editor = ScenarioEditor(ScenarioForm.fromScenario(scenario, today))) }
+            val snapshot = repository.snapshot.first()
+            local.update { it.copy(editor = ScenarioEditor(ScenarioForm.fromScenario(scenario, snapshot.today), generation = snapshot.generation)) }
         }
     }
 
@@ -160,7 +167,7 @@ class ForecastViewModel @Inject constructor(
 
     fun saveScenario() {
         val editor = local.value.editor ?: return
-        viewModelScope.launch {
+        viewModelScope.launch(WriteGuard) {
             val snapshot = repository.snapshot.first()
             val result = ScenarioForm.validate(editor.draft, snapshot)
             if (!result.ok) {
@@ -168,7 +175,7 @@ class ForecastViewModel @Inject constructor(
                 return@launch
             }
             val scenario = result.scenario!!
-            repository.saveScenario(scenario)
+            repository.saveScenario(scenario, editor.generation)
             local.update { it.copy(editor = null, message = "已儲存情境「${scenario.name}」") }
         }
     }
@@ -176,8 +183,8 @@ class ForecastViewModel @Inject constructor(
     fun deleteScenario() {
         val editor = local.value.editor ?: return
         if (editor.isNew) return
-        viewModelScope.launch {
-            repository.deleteScenario(editor.draft.id)
+        viewModelScope.launch(WriteGuard) {
+            repository.deleteScenario(editor.draft.id, editor.generation)
             local.update { it.copy(editor = null, message = "已刪除情境「${editor.draft.name}」") }
         }
     }
@@ -226,7 +233,8 @@ class ForecastViewModel @Inject constructor(
     fun saveSeekAsScenario() {
         val seek = state.value.seek
         val percent = seek.cutPercent ?: return
-        viewModelScope.launch {
+        val generation = shownGeneration
+        viewModelScope.launch(WriteGuard) {
             val snapshot = repository.snapshot.first()
             val from = ScenarioForm.indexFor(snapshot.today, 1)
             val scenario = Scenario(
@@ -235,7 +243,7 @@ class ForecastViewModel @Inject constructor(
                 changes = listOf(ScenarioChange.AdjustItems(seek.itemIds.sorted(), -percent, from)),
                 note = "由反推產生（${seek.target.label}）",
             )
-            repository.saveScenario(scenario)
+            repository.saveScenario(scenario, generation)
             local.update { it.copy(message = "已存成情境「${scenario.name}」") }
         }
     }

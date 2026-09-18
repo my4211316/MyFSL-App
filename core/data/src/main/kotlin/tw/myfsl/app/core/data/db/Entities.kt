@@ -122,6 +122,13 @@ data class PostedKeyEntity(
     val epochDay: Long,
 )
 
+/** 資料世代（只有一列，id = 0）：整份替換資料時加一，和設定裡的值一致時快照才有效。不進備份。 */
+@Entity(tableName = "data_generation")
+data class DataGenerationEntity(
+    @PrimaryKey val id: Int = 0,
+    val generation: Long,
+)
+
 @Serializable
 @Entity(tableName = "deferrals", indices = [Index("itemId")])
 data class DeferralEntity(
