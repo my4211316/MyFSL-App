@@ -56,6 +56,17 @@ class StartViewModel @Inject constructor(
         .map { it.generation == tw.myfsl.app.core.model.FinanceSnapshot.NO_GENERATION }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    /** 清除或載入示意資料沒有完成、資料庫與設定不一致：只顯示維護失敗畫面與「重試」（R-DATA-06 ⑪）。 */
+    val maintenanceFailed: StateFlow<Boolean> = repository.maintenanceFailed
+
+    /** 維護失敗畫面的「重試」：把設定的世代對齊資料庫；成功才解除阻擋，失敗時畫面維持。 */
+    fun retryMaintenance() {
+        viewModelScope.launch(WriteGuard) {
+            repository.repairDataGeneration()
+            runCatching { repository.startDueTracking() }
+        }
+    }
+
     /** 上次還原沒有完成、已經放回時的提示。 */
     val recoveryMessage = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 
@@ -140,6 +151,23 @@ fun RecoveryFailedScreen(onRetry: () -> Unit, modifier: Modifier = Modifier) {
         Text(
             "還原前的資料已經另外保存在手機裡，但這次放回沒有成功。為了避免帳務不一致，先不開放記帳與其他操作。" +
                 "請按「重試」；仍不行時請重新開機後再開 App。資料不會被刪除。",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) { Text("重試") }
+    }
+}
+
+/** 清除全部資料或載入示意資料沒有完成（R-DATA-06 ⑪）：不開放任何帳務操作，只能重試。 */
+@Composable
+fun MaintenanceFailedScreen(onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    Column(
+        modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+    ) {
+        Text("資料更新沒有完成", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "剛才清除資料或載入示意資料時，手機沒能把設定一起存好。為了避免帳務不一致，先不開放記帳與其他操作。" +
+                "請按「重試」；仍不行時請確認手機儲存空間，再重新開啟 App。",
             style = MaterialTheme.typography.bodyMedium,
         )
         Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) { Text("重試") }

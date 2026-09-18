@@ -118,16 +118,26 @@ class SettingsViewModel @Inject constructor(
     fun loadSample() {
         local.update { it.copy(busy = true) }
         viewModelScope.launch(WriteGuard) {
-            repository.installSample()
-            local.update { Local(message = "已載入示意資料") }
+            try {
+                repository.installSample()
+                local.update { Local(message = "已載入示意資料") }
+            } finally {
+                // 失敗時（被拒絕或維護沒完成）也要解除「處理中」，說明由提示條或維護失敗畫面顯示。
+                local.update { it.copy(busy = false) }
+            }
         }
     }
 
     fun clearAll() {
         local.update { it.copy(busy = true) }
         viewModelScope.launch(WriteGuard) {
-            repository.clearAll()
-            local.update { Local(message = "已清除所有資料") }
+            try {
+                repository.clearAll()
+                local.update { Local(message = "已清除所有資料") }
+            } finally {
+                // 失敗時（被拒絕或維護沒完成）也要解除「處理中」，說明由提示條或維護失敗畫面顯示。
+                local.update { it.copy(busy = false) }
+            }
         }
     }
 

@@ -97,6 +97,12 @@ fun MyFslApp() {
         }
         else -> Unit
     }
+    // 清除或載入示意資料沒有完成：資料庫與設定不一致，只能重試（R-DATA-06 ⑪）。
+    val maintenanceFailed by startViewModel.maintenanceFailed.collectAsStateWithLifecycle()
+    if (maintenanceFailed) {
+        tw.myfsl.app.ui.start.MaintenanceFailedScreen(onRetry = startViewModel::retryMaintenance)
+        return
+    }
     when (needsWelcome) {
         null -> return
         true -> {

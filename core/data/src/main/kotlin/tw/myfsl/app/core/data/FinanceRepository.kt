@@ -585,18 +585,26 @@ class FinanceRepository @Inject constructor(
 
     /**
      * 開 App 時先呼叫：上次還原沒完成就放回還原前的資料。放回失敗時可以再呼叫重試。
-     * 可以使用之後，把設定裡的世代對齊資料庫（清除資料或載入示意資料途中被關掉時兩邊可能不同；
-     * 剛開 App 沒有任何舊畫面，對齊是安全的）。
+     * 可以使用之後，把設定裡的世代對齊資料庫（見 [repairDataGeneration]）。
      */
     suspend fun recoverInterruptedRestore(): RestoreCoordinator.Recovery {
         val result = restore.recover()
-        if (restore.state.value == RestoreState.READY) {
-            replacingAll {
-                val inDb = db.maintenanceDao().generation() ?: 0L
-                if (settingsRepository.settings.first().dataGeneration != inDb) settingsRepository.setDataGeneration(inDb)
-            }
-        }
+        if (restore.state.value == RestoreState.READY) repairDataGeneration()
         return result
+    }
+
+    /** 整份替換沒有完成（例如設定寫不進去）時為 true：一般寫入全部擋住，畫面只提供「重試」（R-DATA-06 ⑪）。 */
+    val maintenanceFailed: StateFlow<Boolean> = gate.maintenanceFailed
+
+    /**
+     * 把設定裡的世代對齊資料庫（開 App 時、維護失敗後按「重試」）。
+     * 資料庫的世代只會在整份替換的交易裡加一，所以它才是資料真正的版本；對齊後，
+     * 之前畫面帶著的舊世代或「沒有世代」仍然不符，照樣被拒絕，App 使用中對齊也安全。
+     * 失敗時丟 [MaintenanceFailedException]，阻擋維持。
+     */
+    suspend fun repairDataGeneration() = replacingAll {
+        val inDb = db.maintenanceDao().generation() ?: 0L
+        if (settingsRepository.settings.first().dataGeneration != inDb) settingsRepository.setDataGeneration(inDb)
     }
 
     /** 資料庫整份換成備份的內容（同一個交易），世代加一；回傳新世代。 */

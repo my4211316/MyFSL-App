@@ -242,10 +242,13 @@ class WriteGateTest {
         try {
             s.gate.replacingAll { clearAll(s.store, settingsFails = true) }
             fail()
-        } catch (_: java.io.IOException) {
+        } catch (e: MaintenanceFailedException) {
+            // 協程的例外還原可能再包一層，沿著原因找原本的 I/O 錯誤
+            assertTrue(generateSequence<Throwable>(e) { it.cause }.any { it is java.io.IOException })
         }
-        // READY，但兩份世代不同：一般寫入（含不帶世代的開始追蹤、標記已備份、完成導覽）都不做
+        // READY，但兩份世代不同：進入維護失敗，一般寫入（含不帶世代的開始追蹤、標記已備份、完成導覽）都不做
         assertEquals(RestoreState.READY, s.coordinator.state.value)
+        assertTrue(s.gate.maintenanceFailed.value)
         assertEquals(FinanceSnapshot.NO_GENERATION, s.store.current())
         assertRejected("不帶世代") { s.gate.run(null) { s.store.rows[9L] = "不該寫入" } }
         assertRejected("舊世代") { s.gate.run(before) { s.store.rows[9L] = "不該寫入" } }
@@ -255,10 +258,72 @@ class WriteGateTest {
         s.gate.replacingAll { clearAll(s.store, settingsFails = false) }
         val repaired = s.store.current()
         assertTrue(repaired != FinanceSnapshot.NO_GENERATION && repaired != before)
+        assertTrue(!s.gate.maintenanceFailed.value)
         s.gate.run(null) { s.store.rows[1L] = "新帳戶" }
         s.gate.run(repaired) { s.store.rows[2L] = "掛在新帳戶底下" }
         assertRejected("修復後舊世代仍然拒絕") { s.gate.run(before) { s.store.rows.remove(1L) } }
         assertEquals(mapOf(1L to "新帳戶", 2L to "掛在新帳戶底下"), s.store.rows)
+    }
+
+    /** 同 FinanceRepository.repairDataGeneration：設定對齊資料庫（可以模擬失敗）。 */
+    private fun align(store: FakeStore, fails: Boolean = false) {
+        if (fails) throw java.io.IOException("設定寫入失敗")
+        store.settingsGeneration = store.dbGeneration
+    }
+
+    @Test fun `維護失敗：I-O 錯誤轉成維護失敗狀態而不是閃退；重試失敗維持阻擋，對齊成功才解除`() = runBlocking {
+        val s = setup(backup(1L to "銀行"))
+        s.coordinator.recover()
+        val before = s.store.current()
+        val error = runCatching { s.gate.replacingAll { clearAll(s.store, settingsFails = true) } }.exceptionOrNull()
+        assertTrue("維護的 I/O 錯誤包成可預期的例外（畫面接住後顯示重試，不交給當機處理）", error is MaintenanceFailedException)
+        assertTrue(s.gate.maintenanceFailed.value)
+        assertTrue(WriteGate.MAINTENANCE_FAILED in s.notices)
+
+        // 按「重試」但設定還是寫不進去：維持阻擋
+        assertTrue(runCatching { s.gate.replacingAll { align(s.store, fails = true) } }.exceptionOrNull() is MaintenanceFailedException)
+        assertTrue(s.gate.maintenanceFailed.value)
+        assertRejected("重試失敗後") { s.gate.run(null) {} }
+
+        // 兩份世代「看起來」一致（例如別的路徑寫進去了）也不解除：只有整份替換成功才解除
+        s.store.settingsGeneration = s.store.dbGeneration
+        assertRejected("沒有經過重試") { s.gate.run(null) {} }
+
+        // 再按一次「重試」成功：解除，舊世代仍然拒絕
+        s.store.settingsGeneration = before
+        s.gate.replacingAll { align(s.store) }
+        assertTrue(!s.gate.maintenanceFailed.value)
+        assertEquals("ok", s.gate.run(null) { "ok" })
+        assertRejected("清除前畫面的舊世代") { s.gate.run(before) {} }
+    }
+
+    @Test fun `維護在動資料前就失敗、世代仍一致：回報失敗但不進入阻擋`() = runBlocking {
+        val s = setup(backup(1L to "銀行"))
+        s.coordinator.recover()
+        val error = runCatching { s.gate.replacingAll<Unit> { throw java.io.IOException("資料庫交易失敗") } }.exceptionOrNull()
+        assertTrue(error is MaintenanceFailedException)
+        assertTrue(!s.gate.maintenanceFailed.value)
+        assertEquals(mapOf(1L to "銀行"), s.store.rows)
+        assertEquals("ok", s.gate.run(0L) { "ok" })
+    }
+
+    @Test fun `維護開始後發起的畫面被關掉（取消）：照樣做完，不會留下半套`() = runBlocking {
+        val s = setup(backup(1L to "銀行"))
+        s.coordinator.recover()
+        val started = CompletableDeferred<Unit>()
+        val job = launch(Dispatchers.Default) {
+            s.gate.replacingAll {
+                started.complete(Unit)
+                delay(100)
+                clearAll(s.store, settingsFails = false)
+            }
+        }
+        started.await()
+        job.cancel()
+        job.join()
+        assertTrue(s.store.rows.isEmpty())
+        assertEquals(1L, s.store.current())
+        assertTrue(!s.gate.maintenanceFailed.value)
     }
 
     @Test fun `開 App 時的世代對齊：設定對齊資料庫之後才開放一般寫入`() = runBlocking {
