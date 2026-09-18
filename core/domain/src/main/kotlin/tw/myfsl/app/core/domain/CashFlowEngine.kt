@@ -202,7 +202,7 @@ object CashFlowEngine {
                 }
             }
 
-            // 先計息，再處理清償與最低應繳，最後才是一般收支。
+            // 依 R-ORD-01：分期入帳 → 計息 → 情境清償 → 卡片合約繳款 → 貸款 → 其他收支。
             val ordered = eventsByPeriod[period.index].orEmpty().sortedBy { priority(it) }
             for (event in ordered) {
                 val amount = when {
@@ -307,11 +307,14 @@ object CashFlowEngine {
     }
 
     /** 同一半月內的處理順序：循環利息 → 全額清償 → 最低應繳 → 其他。 */
+    /** 同一個半月內的處理順序（R-ORD-01，和本月到期相同）。 */
     private fun priority(event: FlowEvent): Int = when {
-        event.interestRatePercent != null -> 0
-        event.payFullBalance -> 1
-        event.minimumPayment != null -> 2
-        else -> 3
+        event.source == EventSource.INSTALLMENT -> 0
+        event.interestRatePercent != null -> 1
+        event.payFullBalance && event.source == EventSource.SCENARIO -> 2
+        event.source == EventSource.CARD_SCHEDULE -> 3
+        event.source == EventSource.LOAN_SCHEDULE -> 4
+        else -> 5
     }
 
     private inline fun sumOf(

@@ -73,6 +73,8 @@ data class DueChoice(
     val accountId: Long? = null,
     /** 支付方式為信用卡時刷哪張卡；null 為不指定。 */
     val cardId: Long? = null,
+    /** 實際付款日；null 為今天（R-DUE-03）。已經在到期日付過、只是現在才記時選到期日。 */
+    val date: LocalDate? = null,
 )
 
 /** 記下一個到期項目要寫入的東西。 */
@@ -82,6 +84,8 @@ data class DueRecord(
     val loanRemaining: Pair<Long, Int>? = null,
     /** 第一次記下利息後清掉「既有卡循」的卡片條件。 */
     val cardTerms: Pair<Long, CardTerms>? = null,
+    /** 清掉既有卡循時記下原本的值（`revbal:<利息識別碼>:<金額>`），刪掉這筆利息時用來恢復（F10）。 */
+    val marker: String? = null,
 )
 
 /**
@@ -92,7 +96,15 @@ data class DueRecord(
  */
 object DueItems {
 
-    fun list(snapshot: FinanceSnapshot, through: LocalDate = YearMonth.from(snapshot.today).atEndOfMonth()): List<DueItem> {
+    /**
+     * @param applied 前面的項目實際會寫入什麼（本週檢查依使用者的選擇：略過為空、金額不同為實際金額）；
+     *   null 表示假設都照建議記下。後面項目的建議金額依這個結果算（F06）。
+     */
+    fun list(
+        snapshot: FinanceSnapshot,
+        through: LocalDate = YearMonth.from(snapshot.today).atEndOfMonth(),
+        applied: ((DueItem) -> List<LedgerEntry>)? = null,
+    ): List<DueItem> {
         val from = snapshot.trackingFrom
         if (!through.isAfter(from)) return emptyList()
         val months = monthsBetween(YearMonth.from(from), YearMonth.from(through))
@@ -108,10 +120,17 @@ object DueItems {
         val state = State(snapshot)
         val result = mutableListOf<DueItem>()
         tasks.sortedWith(compareBy({ it.date }, { it.priority }, { it.key })).forEach { task ->
-            if (task.key in snapshot.recordedKeys) return@forEach
+            if (isRecorded(snapshot, task.key)) return@forEach
             val due = task.build(state) ?: return@forEach
             if (due.amount <= 0) return@forEach
-            due.entries.forEach(state::add)
+            val entries = applied?.invoke(due) ?: due.entries
+            entries.forEach(state::add)
+            if (entries.isEmpty()) {
+                // 沒有記下：貸款期數不扣、既有卡循留給下一次利息。
+                val id = due.relatedAccountId
+                if (due.kind == DueKind.LOAN && id != null) state.loanRemaining[id] = (state.loanRemaining[id] ?: 0) + 1
+                if (due.kind == DueKind.CARD_INTEREST && id != null) state.interestCharged -= id
+            }
             result += due
         }
         return result
@@ -125,9 +144,13 @@ object DueItems {
         cardId = if (due.method == PaymentMethod.CREDIT_CARD) due.entries.firstOrNull()?.accountId else null,
     )
 
+    /** 已經處理過：同一組識別碼任何一個已經記下或選了「這個月沒有」（只繳利息的貸款只有利息那一筆，F03）。 */
+    fun isRecorded(snapshot: FinanceSnapshot, key: String): Boolean = groupKeys(key).any { it in snapshot.recordedKeys }
+
     /** 檢查選擇；沒問題時回傳 null。 */
     fun validate(snapshot: FinanceSnapshot, due: DueItem, choice: DueChoice): String? {
         if (choice.amount <= 0) return "金額要大於 0"
+        if (choice.date?.isAfter(snapshot.today) == true) return "付款日不能晚於今天"
         if (due.choosesMethod && choice.method == null) return "請選支付方式"
         if (due.choosesAccount) {
             val account = snapshot.activeAccounts.firstOrNull { it.id == choice.accountId }
@@ -136,9 +159,13 @@ object DueItems {
         return null
     }
 
-    /** 依使用者的選擇產生要寫入的記帳。日期為到期日，還沒到就用今天（提早付）。 */
+    /**
+     * 依使用者的選擇產生要寫入的記帳。日期是實際付款日：預設今天（F02），
+     * 這樣校正餘額之後才付的錢一定會算進餘額；已經在到期日付過、現在才補記時選到期日。
+     * 屬於哪個月的預算看識別碼，不看付款日。
+     */
     fun record(snapshot: FinanceSnapshot, due: DueItem, choice: DueChoice): DueRecord {
-        val date = minOf(due.date, snapshot.today)
+        val date = choice.date ?: snapshot.today
         val entries = when (due.kind) {
             DueKind.PLAN -> listOf(planEntry(snapshot, due, choice))
 
@@ -164,14 +191,11 @@ object DueItems {
         } else {
             null
         }
-        val card = if (due.kind == DueKind.CARD_INTEREST) {
-            snapshot.account(due.relatedAccountId)?.let { account ->
-                account.card?.takeIf { it.revolvingBalance != null }?.let { account.id to it.copy(revolvingBalance = null) }
-            }
-        } else {
-            null
-        }
-        return DueRecord(entries, loan, card)
+        val terms = if (due.kind == DueKind.CARD_INTEREST) snapshot.account(due.relatedAccountId)?.card else null
+        val previous = terms?.revolvingBalance
+        val card = if (previous != null) due.relatedAccountId!! to terms.copy(revolvingBalance = null) else null
+        val marker = previous?.let { "${PostingKeys.REVOLVING}${due.key}:$it" }
+        return DueRecord(entries, loan, card, marker)
     }
 
     private fun planEntry(snapshot: FinanceSnapshot, due: DueItem, choice: DueChoice): LedgerEntry {
@@ -202,7 +226,10 @@ object DueItems {
         val entries = mutableListOf<LedgerEntry>()
         val loanRemaining = mutableMapOf<Long, Int>()
         val interestCharged = mutableSetOf<Long>()
-        private val balances = snapshot.accounts.associate { it.id to it.balance }.toMutableMap()
+        // 和試算相同的起始欠款：未指定卡片的刷卡算在預設卡片上（F04）。
+        private val balances = snapshot.accounts.associate { it.id to it.balance }.toMutableMap().also { map ->
+            snapshot.defaultCardId?.let { id -> map[id] = (map[id] ?: 0L) + snapshot.unassignedCardSpending }
+        }
         private val kinds = snapshot.accounts.associate { it.id to it.kind }
 
         fun balance(id: Long): Money = balances[id] ?: 0L
@@ -218,18 +245,29 @@ object DueItems {
         }
 
         /**
-         * 某計畫列某月已經有的實際金額：同一個支付方式的記帳，加上這個項目沒規劃的支付方式的記帳
-         * （例如計畫刷卡、實際付現金），以及前面已經列出的份額。延期款的付款不算。
+         * 某計畫列某月已經有的實際金額：同一個支付方式的記帳（含前面已經列出的份額），
+         * 加上分配到這一列的「沒規劃的支付方式」記帳（例如計畫刷卡、實際付現金）。
+         * 沒規劃的金額依計畫列順序分配，每一筆只抵一次（F05）。延期款的付款不算。月份看預算月份。
          */
         fun covered(item: PlanItem, line: PlanLine, ym: YearMonth): Money {
-            val planned = snapshot.linesOf(item.id).map { it.method }.toSet()
-            return (snapshot.ledger + entries)
-                .filter {
-                    it.itemId == line.itemId && YearMonth.from(it.date) == ym && it.countsForBudget &&
-                        it.postingKey?.startsWith(PostingKeys.DEFERRAL) != true &&
-                        (it.method == line.method || it.method !in planned)
-                }
-                .sumOf { it.amount }
+            val lines = if (item.type == FlowType.EXPENSE) {
+                snapshot.linesOf(item.id).filter { it.method != null }
+            } else {
+                listOf(PlanLine(item.id, null))
+            }
+            val planned = lines.map { it.method }.toSet()
+            val relevant = (snapshot.ledger + entries).filter {
+                it.itemId == item.id && it.budgetMonth == ym && it.countsForBudget &&
+                    it.postingKey?.startsWith(PostingKeys.DEFERRAL) != true
+            }
+            fun own(l: PlanLine) = relevant.filter { it.method == l.method }.sumOf { it.amount }
+            var unplanned = relevant.filter { it.method !in planned }.sumOf { it.amount }
+            for (l in lines) {
+                val take = minOf((snapshot.planAmount(l, ym.year, ym.monthValue) - own(l)).coerceAtLeast(0), unplanned.coerceAtLeast(0))
+                if (l == line) return own(l) + take
+                unplanned -= take
+            }
+            return own(line)
         }
     }
 
@@ -403,7 +441,7 @@ object DueItems {
                         period.fee.takeIf { it > 0 }?.let {
                             LedgerEntry(
                                 date = date, type = FlowType.EXPENSE, amount = it, itemId = installment.itemId,
-                                method = PaymentMethod.CREDIT_CARD, accountId = card,
+                                method = PaymentMethod.CREDIT_CARD, accountId = card, installmentId = installment.id,
                                 note = "分期手續費 ${period.number}/${installment.months}", source = EntrySource.DUE,
                                 postingKey = installmentFeeKey(installment.id, period.number),
                             )
@@ -425,6 +463,10 @@ object DueItems {
         else -> listOf(key)
     }
 
+    /** 循環利息識別碼（`cardint:3:2026-09`）裡的卡片 id。 */
+    fun cardIdOf(key: String): Long? =
+        if (key.startsWith(PostingKeys.CARD_INTEREST)) key.removePrefix(PostingKeys.CARD_INTEREST).substringBefore(':').toLongOrNull() else null
+
     /** 貸款月繳識別碼（`loan:5:2026-09`）裡的貸款帳戶 id。 */
     fun loanIdOf(key: String): Long? =
         if (key.startsWith(PostingKeys.LOAN)) key.removePrefix(PostingKeys.LOAN).substringBefore(':').toLongOrNull() else null
@@ -432,5 +474,5 @@ object DueItems {
     /** 分期的某一期還沒入帳：到期日在起算日之後，且還沒記下。 */
     fun isInstallmentPeriodPending(snapshot: FinanceSnapshot, installmentId: Long, number: Int, periodIndex: Int): Boolean =
         Period.fromIndex(periodIndex).startDate.isAfter(snapshot.trackingFrom) &&
-            installmentKey(installmentId, number) !in snapshot.recordedKeys
+            !isRecorded(snapshot, installmentKey(installmentId, number))
 }

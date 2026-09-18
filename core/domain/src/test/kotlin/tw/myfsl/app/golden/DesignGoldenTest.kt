@@ -66,15 +66,15 @@ class DesignGoldenTest {
                 ScenarioChange.ChangeMethod(listOf(LIVING, FUEL, PHONE, CAR_SERVICE, TRIP), PaymentMethod.CREDIT_CARD, PaymentMethod.CASH, oct.index),
             ),
         )
-        assertEquals(13_786L, result.lowestLiquid)
+        assertEquals("10 月上半月先計 A 卡利息 777 再清償（R-ORD-01）", 13_009L, result.lowestLiquid)
         assertEquals(Period(2028, 2, Half.FIRST), result.lowest?.period)
         assertEquals(Period(2028, 2, Half.FIRST), result.firstBelowSafety?.period)
-        assertEquals(-103_902L, result.structuralGapPerYear)
+        assertEquals(-104_290L, result.structuralGapPerYear)
         assertEquals(0L, result.endCardDebt)
-        assertEquals("清掉卡債後只剩 9 月那一次的利息 60,000 × 15% ÷ 12", 750L, result.totalCardInterest)
+        assertEquals("9 月 750 ＋ 10 月清償前 62,150 × 1.25% = 777", 1_527L, result.totalCardInterest)
         assertEquals(1_256_468L, result.endTotalDebt)
         assertEquals(
-            listOf(114L, 233, 237, 238, 169, 135, 286, 285, 263, 234, 164, 143, 118, 116, 116, 117, 48, 14, 165, 164, 142, 113, 43, 22),
+            listOf(114L, 233, 237, 237, 168, 134, 285, 284, 262, 233, 163, 142, 117, 115, 115, 116, 47, 13, 164, 163, 141, 112, 42, 21),
             thousandsSeries(result),
         )
     }

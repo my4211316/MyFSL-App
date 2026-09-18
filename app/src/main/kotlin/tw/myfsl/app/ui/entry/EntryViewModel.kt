@@ -68,6 +68,9 @@ data class DueDialog(
     val accountId: Long?,
     val error: String?,
     val recordLabel: String,
+    /** 到期日在今天以前時可以選付款日：今天，或到期日當天已經付過（F02）。 */
+    val dueDateLabel: String?,
+    val useDueDate: Boolean,
 )
 
 /** 記帳畫面的狀態；文字與預設值都來自 core.domain 的規則。 */
@@ -161,6 +164,7 @@ class EntryViewModel @Inject constructor(
         val cardId: Long? = null,
         val cardTouched: Boolean = false,
         val accountId: Long? = null,
+        val useDueDate: Boolean = false,
         val error: String? = null,
     )
 
@@ -285,7 +289,8 @@ class EntryViewModel @Inject constructor(
             sel.amount == null -> default.amount
             else -> MoneyFormat.parse(sel.amount) ?: 0L
         }
-        return DueChoice(amount = amount, method = method, accountId = sel.accountId ?: default.accountId, cardId = cardId)
+        val date = if (sel.useDueDate && due.date.isBefore(snapshot.today)) due.date else null
+        return DueChoice(amount = amount, method = method, accountId = sel.accountId ?: default.accountId, cardId = cardId, date = date)
     }
 
     private fun dueDialog(snapshot: FinanceSnapshot, due: DueItem, sel: DueSelection): DueDialog {
@@ -307,7 +312,11 @@ class EntryViewModel @Inject constructor(
                 "本月計畫 ${MoneyFormat.currency(planned)}"
             }.orEmpty()
         }
-        val whenText = if (due.isDue(snapshot.today)) "$date 到期" else "$date 到期；提早記下時日期用今天"
+        val whenText = when {
+            due.date.isBefore(snapshot.today) -> "$date 到期；付款日預設今天，若到期日當天就付了請選「到期日」"
+            due.isDue(snapshot.today) -> "$date 到期"
+            else -> "$date 到期；提早記下時日期用今天"
+        }
         return DueDialog(
             key = due.key,
             title = due.title,
@@ -326,6 +335,8 @@ class EntryViewModel @Inject constructor(
             accountId = choice.accountId,
             error = sel.error,
             recordLabel = if (choice.amount > 0) "記下 ${MoneyFormat.currency(choice.amount)}" else "記下",
+            dueDateLabel = if (due.date.isBefore(snapshot.today)) "到期日 $date" else null,
+            useDueDate = choice.date != null,
         )
     }
 
@@ -338,6 +349,8 @@ class EntryViewModel @Inject constructor(
     fun setDueMethod(method: PaymentMethod) = selection.update { s -> s.copy(due = s.due?.copy(method = method, cardTouched = false, error = null)) }
 
     fun setDueCard(id: Long?) = selection.update { s -> s.copy(due = s.due?.copy(cardId = id, cardTouched = true, error = null)) }
+
+    fun setDueUseDueDate(use: Boolean) = selection.update { s -> s.copy(due = s.due?.copy(useDueDate = use, error = null)) }
 
     fun setDueAccount(id: Long) = selection.update { s -> s.copy(due = s.due?.copy(accountId = id, error = null)) }
 

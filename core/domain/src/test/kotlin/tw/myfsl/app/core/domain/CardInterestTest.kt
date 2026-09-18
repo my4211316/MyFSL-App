@@ -139,8 +139,9 @@ class CardInterestTest {
         assertEquals("A 清掉", 0L, p1.balances[3])
         // B：利息 400（40,000 × 12% ÷ 12），最低應繳 max(1,000, 40,400 × 10% = 4,040, 400) = 4,040
         assertEquals(40_000L + 400 - 4_040, p1.balances[4])
-        // A 清償時停掉它的排程（含計息），以當時欠款 60,000 清償
-        assertEquals(60_000L, p1.debtPayoff)
+        // 同一個半月先計息再清償（R-ORD-01）：60,000 ＋ 利息 750 = 60,750；之後 A 的合約照舊，但欠款 0 不再計息
+        assertEquals(60_750L, p1.debtPayoff)
+        assertTrue(result.periods.drop(1).all { it.balances[3] == 0L })
     }
 
     @Test fun `卡債會往哪裡走：繳款先付利息，剩下才還本金`() {

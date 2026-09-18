@@ -86,6 +86,19 @@ fun MyFslApp() {
     var pendingRoute by rememberSaveable { mutableStateOf<String?>(null) }
     // 到期項目的起算日只在第一次設定；到期的款項由使用者在記帳畫面點下（R-DUE）。
     LaunchedEffect(Unit) { startViewModel.startDueTracking() }
+    // 上次還原沒完成時先放回，完成前不開放帳務操作（F11）。
+    val restoreState by startViewModel.restoreState.collectAsStateWithLifecycle()
+    when (restoreState) {
+        tw.myfsl.app.core.data.RestoreState.CHECKING -> {
+            tw.myfsl.app.ui.start.CheckingDataScreen()
+            return
+        }
+        tw.myfsl.app.core.data.RestoreState.RECOVERY_FAILED -> {
+            tw.myfsl.app.ui.start.RecoveryFailedScreen(onRetry = startViewModel::retryRecovery)
+            return
+        }
+        else -> Unit
+    }
     when (needsWelcome) {
         null -> return
         true -> {
@@ -97,6 +110,12 @@ fun MyFslApp() {
             return
         }
         false -> Unit
+    }
+    val recoveryMessage by startViewModel.recoveryMessage.collectAsStateWithLifecycle()
+    LaunchedEffect(recoveryMessage) {
+        val message = recoveryMessage ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(message, withDismissAction = true, duration = androidx.compose.material3.SnackbarDuration.Long)
+        startViewModel.dismissRecovery()
     }
     LaunchedEffect(pendingRoute) {
         val route = pendingRoute ?: return@LaunchedEffect
@@ -170,6 +189,7 @@ fun MyFslApp() {
                     onDueMethod = viewModel::setDueMethod,
                     onDueCard = viewModel::setDueCard,
                     onDueAccount = viewModel::setDueAccount,
+                    onDueUseDueDate = viewModel::setDueUseDueDate,
                     onRecordDue = viewModel::recordDue,
                     onSkipDue = viewModel::skipDue,
                 )

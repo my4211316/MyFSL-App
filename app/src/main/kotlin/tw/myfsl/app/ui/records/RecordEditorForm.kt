@@ -110,7 +110,7 @@ fun RecordEditorForm(
         }
         errors[Field.ITEM]?.let { Error(it) }
 
-        if (original.type == FlowType.EXPENSE) {
+        if (original.type == FlowType.EXPENSE && original.method != null) {
             Label("付款方式")
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PaymentMethod.entries.forEach { method ->

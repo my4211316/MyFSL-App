@@ -95,6 +95,18 @@ data class LedgerEntry(
             it.startsWith(PostingKeys.CARD_INTEREST) || it.startsWith(PostingKeys.INSTALLMENT_PRINCIPAL) || it.startsWith(PostingKeys.INSTALLMENT_FEE)
         } == true
 
+    /**
+     * 屬於哪個月的預算：每月固定的到期項目看識別碼裡的月份（逾期才付也算原本那個月），其他看日期。
+     */
+    val budgetMonth: java.time.YearMonth
+        get() {
+            val key = postingKey
+            if (key != null && key.startsWith(PostingKeys.PLAN)) {
+                key.split(':').getOrNull(3)?.let { runCatching { java.time.YearMonth.parse(it) }.getOrNull() }?.let { return it }
+            }
+            return java.time.YearMonth.from(date)
+        }
+
     /** 是否算進項目的實際花費（預算進度、紀錄合計）。 */
     val countsForBudget: Boolean get() = !isInstallmentPrincipal
 }
@@ -108,6 +120,9 @@ object PostingKeys {
     const val INSTALLMENT_PRINCIPAL = "inst:"
     const val INSTALLMENT_FEE = "instfee:"
     const val DEFERRAL = "deferral:"
+
+    /** 清掉既有卡循時記下原本的值，刪掉那筆利息時恢復：`revbal:<利息識別碼>:<金額>`。 */
+    const val REVOLVING = "revbal:"
 }
 
 /** 帳戶在某天校正後的餘額。 */

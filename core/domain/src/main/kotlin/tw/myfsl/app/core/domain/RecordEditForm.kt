@@ -62,8 +62,10 @@ object RecordEditForm {
         if (item != null && item.type != original.type) errors[Field.ITEM] = "只能改成同樣是${original.type.label}的項目"
         if (draft.itemId == null && original.itemId != null) errors[Field.ITEM] = "請選項目"
 
-        val method = if (original.type == FlowType.EXPENSE) draft.method else null
-        if (original.type == FlowType.EXPENSE && method == null) errors[Field.METHOD] = "請選付款方式"
+        // 循環利息、貸款利息這類系統算出的支出本來就沒有付款方式，不要求選（F08）。
+        val methodApplies = original.type == FlowType.EXPENSE && original.method != null
+        val method = if (methodApplies) draft.method else null
+        if (methodApplies && method == null) errors[Field.METHOD] = "請選付款方式"
 
         if (draft.isInstallment) {
             if (amount != original.amount) errors[Field.AMOUNT] = "分期消費的金額不能改；要改請刪掉重記"

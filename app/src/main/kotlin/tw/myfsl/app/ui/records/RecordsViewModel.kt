@@ -202,13 +202,9 @@ class RecordsViewModel @Inject constructor(
 
     fun setFilter(filter: RecordFilter) = view.update { it.copy(filter = filter) }
 
-    /** 刪除；分期消費連同分期一起刪。 */
+    /** 刪除：要連動什麼由 Deletion.plan 決定（分期消費整筆取消、某一期只刪那一期，R-REC-EDIT-05/07）。 */
     fun delete(id: Long) {
-        viewModelScope.launch {
-            val entry = repository.snapshot.first().ledger.firstOrNull { it.id == id } ?: return@launch
-            val installmentId = entry.installmentId
-            if (installmentId != null) repository.deleteInstallment(installmentId) else repository.deleteLedgerEntry(id)
-        }
+        viewModelScope.launch { repository.deleteLedgerEntry(id) }
     }
 
     // ---- 修改 ----

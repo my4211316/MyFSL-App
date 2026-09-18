@@ -1,6 +1,7 @@
 package tw.myfsl.app.ui.start
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -25,6 +27,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import tw.myfsl.app.core.data.FinanceRepository
+import tw.myfsl.app.core.data.RestoreCoordinator
+import tw.myfsl.app.core.data.RestoreState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -38,6 +42,30 @@ import javax.inject.Inject
 class StartViewModel @Inject constructor(
     private val repository: FinanceRepository,
 ) : ViewModel() {
+
+    /** 還原狀態：不是 READY 時畫面只顯示檢查中或放回失敗，不開放帳務操作（F11）。 */
+    val restoreState: StateFlow<RestoreState> = repository.restoreState
+
+    /** 上次還原沒有完成、已經放回時的提示。 */
+    val recoveryMessage = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+
+    init {
+        retryRecovery()
+    }
+
+    /** 開 App 時先放回上次沒完成的還原；放回失敗時由使用者按「重試」再呼叫。 */
+    fun retryRecovery() {
+        viewModelScope.launch {
+            val result = runCatching { repository.recoverInterruptedRestore() }.getOrNull()
+            if (result == RestoreCoordinator.Recovery.RECOVERED) {
+                recoveryMessage.value = "上次從備份還原沒有完成，已經放回還原前的資料；請再還原一次"
+            }
+        }
+    }
+
+    fun dismissRecovery() {
+        recoveryMessage.value = null
+    }
 
     val needsWelcome: StateFlow<Boolean?> = repository.snapshot
         .map { !it.settings.onboarded && it.accounts.isEmpty() && it.items.isEmpty() }
@@ -60,6 +88,34 @@ class StartViewModel @Inject constructor(
     /** 第一次開啟時設定到期項目的起算日（R-DUE）；不會自動記任何帳。 */
     fun startDueTracking() {
         viewModelScope.launch { runCatching { repository.startDueTracking() } }
+    }
+}
+
+/** 開 App 時正在檢查（或放回）上次沒完成的還原：完成前不開放任何操作（F11）。 */
+@Composable
+fun CheckingDataScreen(modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            CircularProgressIndicator()
+            Text("正在檢查資料…", style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+/** 上次還原沒有完成，而且放回失敗：資料可能不一致，只能重試（紀錄檔保留，不會刪資料）。 */
+@Composable
+fun RecoveryFailedScreen(onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    Column(
+        modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+    ) {
+        Text("上次從備份還原沒有完成", style = MaterialTheme.typography.titleLarge)
+        Text(
+            "還原前的資料已經另外保存在手機裡，但這次放回沒有成功。為了避免帳務不一致，先不開放記帳與其他操作。" +
+                "請按「重試」；仍不行時請重新開機後再開 App。資料不會被刪除。",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) { Text("重試") }
     }
 }
 

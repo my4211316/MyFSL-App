@@ -87,6 +87,9 @@ object ScenarioApplier {
                             it.source != EventSource.SCENARIO &&
                                 // 分期入帳不是繳款，不在這裡停掉。
                                 it.source != EventSource.INSTALLMENT &&
+                                // 卡片的合約（計息與繳款）照舊：清償後欠款是 0 就不會有利息與繳款，
+                                // 之後還有新刷卡或保留的分期時，新欠款仍依原條件計息（F12）。停的是計畫裡的繳卡費。
+                                it.source != EventSource.CARD_SCHEDULE &&
                                 it.period.index >= change.atIndex &&
                                 (it.kind == EventKind.TRANSFER && it.toAccountId in ids || it.relatedAccountId in ids)
                         }

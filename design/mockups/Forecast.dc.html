@@ -101,11 +101,11 @@
         <span class="lm" style="display: flex; justify-content: flex-end; align-items: center; gap: 4px;"><svg width="12" height="4" viewBox="0 0 12 4"><line x1="0" y1="2" x2="12" y2="2" stroke="#eb6834" stroke-width="2"></line></svg>整合</span>
         <span class="lm" style="display: flex; justify-content: flex-end; align-items: center; gap: 4px;"><svg width="12" height="4" viewBox="0 0 12 4"><line x1="0" y1="2" x2="12" y2="2" stroke="#1baf7a" stroke-width="2"></line></svg>−20%</span>
       </div>
-      <div class="kpi"><span class="bm muted">最低水位</span><span class="kv" style="color: var(--error);">18,465</span><span class="kv">13,786</span><span class="kv best">44,725</span></div>
+      <div class="kpi"><span class="bm muted">最低水位</span><span class="kv" style="color: var(--error);">18,465</span><span class="kv">13,009</span><span class="kv best">44,725</span></div>
       <div class="kpi"><span class="bm muted">低於安全線</span><span class="kv">2027/2</span><span class="kv">2028/2</span><span class="kv best">不會</span></div>
-      <div class="kpi"><span class="bm muted">年結構缺口</span><span class="kv">−84,747</span><span class="kv">−103,902</span><span class="kv best">+29,837</span></div>
+      <div class="kpi"><span class="bm muted">年結構缺口</span><span class="kv">−84,747</span><span class="kv">−104,290</span><span class="kv best">+29,837</span></div>
       <div class="kpi"><span class="bm muted">期末卡債</span><span class="kv">339,986</span><span class="kv best">0</span><span class="kv">212,278</span></div>
-      <div class="kpi"><span class="bm muted">兩年循環利息</span><span class="kv">48,526</span><span class="kv best">750</span><span class="kv">32,870</span></div>
+      <div class="kpi"><span class="bm muted">兩年循環利息</span><span class="kv">48,526</span><span class="kv best">1,527</span><span class="kv">32,870</span></div>
       <div class="kpi" style="border-bottom: none;"><span class="bm muted">期末總負債</span><span class="kv">1,462,382</span><span class="kv best">1,256,468</span><span class="kv">1,334,674</span></div>
     </section>
 
@@ -187,7 +187,7 @@ class Component extends DCLogic {
   renderVals() {
     const series = [
       { short: '現況', v: [114,126,124,124,54,18,177,196,196,165,99,107,121,139,146,155,94,67,226,245,245,214,148,156] },
-      { short: '整合', v: [114,233,237,238,169,135,286,285,263,234,164,143,118,116,116,117,48,14,165,164,142,113,43,22] },
+      { short: '整合', v: [114,233,237,237,168,134,285,284,262,233,163,142,117,115,115,116,47,13,164,163,141,112,42,21] },
       { short: '−20%', v: [115,129,132,136,69,45,208,230,235,206,144,155,172,194,206,219,161,145,308,330,335,307,245,256] },
     ];
     const W = 326, H = 212, L = 34, R = 74, T = 10, B = 24, min = -60, max = 300, n = 24, hover = 12;

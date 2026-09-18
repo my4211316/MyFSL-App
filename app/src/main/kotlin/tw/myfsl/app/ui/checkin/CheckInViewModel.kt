@@ -147,9 +147,10 @@ class CheckInViewModel @Inject constructor(
 
     private fun build(snapshot: FinanceSnapshot, local: Local): CheckInUiState {
         val confirmLines = CheckInRules.confirmLines(snapshot)
-        val dueLines = CheckInRules.dueLines(snapshot)
         val reportLines = CheckInRules.reportLines(snapshot)
         val fullInput = input(snapshot, local)
+        // 清單依已經選的項目往下算（略過利息後全額繳款跟著變），預覽與寫入一致。
+        val dueLines = CheckInRules.dueLines(snapshot, input = fullInput)
 
         // 對帳的推算要包含前面步驟產生的補記。
         val beforeReconcile = CheckInRules.build(snapshot, fullInput.copy(reconciles = emptyMap()))
@@ -288,7 +289,8 @@ class CheckInViewModel @Inject constructor(
         val row = state.value.reconciles.firstOrNull { it.row.id == rowId }?.row ?: return
         local.update { current ->
             val fills = if (row.isCard) {
-                row.accounts.associate { it.id to it.balance.toString() }
+                // 每張卡填各自的推算欠款（含本次記下的利息與繳款，F01）。
+                row.accounts.associate { it.id to (row.perAccount[it.id] ?: it.balance).toString() }
             } else {
                 row.accounts.associate { it.id to row.computed.toString() }
             }

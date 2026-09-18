@@ -228,8 +228,15 @@ class DueItemsTest {
             assertEquals(PaymentMethod.CREDIT_CARD, method)
             assertEquals(CARD_B, accountId)
             assertEquals("識別碼不變，記下後不再列出", "plan:201:TRANSFER:2026-09:10", postingKey)
-            assertEquals(LocalDate.of(2026, 9, 10), date)
+            assertEquals("付款日預設今天（F02）", today, date)
+            assertEquals("預算仍算在 9 月", java.time.YearMonth.of(2026, 9), budgetMonth)
         }
+        assertEquals(
+            "到期日當天就付了：選到期日",
+            LocalDate.of(2026, 9, 10),
+            DueItems.record(s, rent, DueChoice(20_000, PaymentMethod.TRANSFER, date = LocalDate.of(2026, 9, 10))).entries.single().date,
+        )
+        assertEquals("付款日不能晚於今天", DueItems.validate(s, rent, DueChoice(20_000, PaymentMethod.TRANSFER, date = today.plusDays(1))))
         DueItems.record(s, rent, DueChoice(20_000, PaymentMethod.CREDIT_CARD, cardId = null)).entries.single().run {
             assertNull("不指定卡片", accountId)
         }

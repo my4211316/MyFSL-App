@@ -3,6 +3,7 @@ package tw.myfsl.app.core.data
 import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
@@ -22,6 +23,7 @@ import tw.myfsl.app.core.domain.ImportMode
 import tw.myfsl.app.core.domain.ImportPreview
 import tw.myfsl.app.core.domain.PlanImport
 import tw.myfsl.app.core.domain.RecordRules
+import tw.myfsl.app.core.domain.Deletion
 import tw.myfsl.app.core.domain.DueItems
 import tw.myfsl.app.core.domain.DueRecord
 import tw.myfsl.app.core.model.Account
@@ -64,6 +66,7 @@ class FinanceRepository @Inject constructor(
     private val db: AppDatabase,
     private val settingsRepository: SettingsRepository,
     private val time: TimeProvider,
+    private val restoreJournal: RestoreJournal,
 ) {
     private val accountDao = db.accountDao()
     private val planDao = db.planDao()
@@ -198,6 +201,7 @@ class FinanceRepository @Inject constructor(
             val ids = record.entries.map { actualDao.insertLedger(it.copy(createdAt = now).toEntity()) }
             record.loanRemaining?.let { (id, months) -> accountDao.setLoanRemainingMonths(id, months) }
             record.cardTerms?.let { (id, terms) -> accountDao.setCardRevolvingBalance(id, terms.revolvingBalance) }
+            record.marker?.let { actualDao.insertPostedKeys(listOf(PostedKeyEntity(it, time.today().toEpochDay()))) }
             ids.first()
         }
     }
@@ -303,36 +307,29 @@ class FinanceRepository @Inject constructor(
         actualDao.insertLedger(entry.copy(createdAt = time.nowMillis()).toEntity())
 
     /**
-     * 刪除記帳，並讓相關狀態保持一致（R-REC-EDIT-07）：
-     * - 到期確認的補記：同一列同一月沒有其他確認補記時，撤銷「已完成」，下次檢查會再問。
-     * - 延期款的付款：延期款改回未付清。
-     * - 到期記下的（R-DUE）：同一組的記帳一起刪（貸款的本金與利息、分期同一期的本金與手續費），
-     *   回到本月到期清單；貸款剩餘期數加回一期。
+     * 刪除記帳，並讓相關狀態保持一致（R-REC-EDIT-05、R-REC-EDIT-07）。
+     * 要做什麼由 [Deletion.plan] 算出（可以單獨測試），這裡在同一個交易內照做：
+     * 分期消費本身整筆取消；某一期分期只刪那一期；到期記下的同一組一起刪並回到清單、
+     * 貸款期數加回、第一次利息恢復既有卡循；到期確認撤銷「已完成」；延期款改回未付。
      */
-    suspend fun deleteLedgerEntry(id: Long) = db.withTransaction {
-        val entry = actualDao.ledgerById(id)?.toModel() ?: return@withTransaction
-        actualDao.deleteLedger(id)
-        val key = entry.postingKey
-        when {
-            key != null && key.startsWith(PostingKeys.DEFERRAL) ->
-                key.removePrefix(PostingKeys.DEFERRAL).toLongOrNull()?.let { actualDao.setDeferralSettled(it, false) }
-
-            entry.source == EntrySource.CONFIRMED && entry.itemId != null -> {
-                val itemId = entry.itemId ?: return@withTransaction
-                val others = actualDao.observeLedger().first().map { it.toModel() }.any {
-                    it.id != id && it.source == EntrySource.CONFIRMED && it.postingKey == null &&
-                        it.itemId == itemId && it.method == entry.method &&
-                        it.date.year == entry.date.year && it.date.monthValue == entry.date.monthValue
-                }
-                if (!others) actualDao.deleteActual(itemId, entry.method.toColumn(), entry.date.year, entry.date.monthValue)
+    suspend fun deleteLedgerEntry(id: Long) {
+        val snapshot = snapshot.first()
+        val entry = snapshot.ledger.firstOrNull { it.id == id } ?: return
+        val plan = Deletion.plan(snapshot, entry)
+        db.withTransaction {
+            plan.cancelInstallmentId?.let { installmentId ->
+                actualDao.deleteLedgerOfInstallment(installmentId)
+                actualDao.deletePostedKeysWithPrefix("${PostingKeys.INSTALLMENT_PRINCIPAL}$installmentId:")
+                actualDao.deletePostedKeysWithPrefix("${PostingKeys.INSTALLMENT_FEE}$installmentId:")
+                actualDao.deleteInstallment(installmentId)
             }
-
-            key != null -> {
-                val group = DueItems.groupKeys(key)
-                actualDao.deleteLedgerByKeys(group)
-                actualDao.deletePostedKeys(group)
-                DueItems.loanIdOf(key)?.let { accountDao.addLoanRemainingMonth(it) }
-            }
+            plan.ledgerIds.forEach { actualDao.deleteLedger(it) }
+            if (plan.ledgerKeys.isNotEmpty()) actualDao.deleteLedgerByKeys(plan.ledgerKeys)
+            if (plan.postedKeys.isNotEmpty()) actualDao.deletePostedKeys(plan.postedKeys)
+            plan.unsettleDeferralId?.let { actualDao.setDeferralSettled(it, false) }
+            plan.reopenActual?.let { actualDao.deleteActual(it.itemId, it.method.toColumn(), it.year, it.month) }
+            plan.addLoanMonthTo?.let { accountDao.addLoanRemainingMonth(it) }
+            plan.restoreRevolving?.let { (cardId, amount) -> accountDao.setCardRevolvingBalance(cardId, amount) }
         }
     }
 
@@ -369,8 +366,11 @@ class FinanceRepository @Inject constructor(
     suspend fun settleInstallment(id: Long) = actualDao.setInstallmentSettled(id, true)
 
     /** 刪掉一筆分期消費：分期本身與它的消費、已入帳的各期一起刪。 */
+    /** 整筆取消分期（記帳畫面的復原用）：消費、已入帳的各期本金與手續費、選過「這個月沒有」的標記一起刪。 */
     suspend fun deleteInstallment(id: Long) = db.withTransaction {
         actualDao.deleteLedgerOfInstallment(id)
+        actualDao.deletePostedKeysWithPrefix("${PostingKeys.INSTALLMENT_PRINCIPAL}$id:")
+        actualDao.deletePostedKeysWithPrefix("${PostingKeys.INSTALLMENT_FEE}$id:")
         actualDao.deleteInstallment(id)
     }
 
@@ -389,8 +389,8 @@ class FinanceRepository @Inject constructor(
         }
         if (result.actuals.isNotEmpty()) actualDao.upsert(result.actuals.map { it.toEntity() })
         result.deferrals.forEach { actualDao.upsertDeferral(it.toEntity()) }
-        if (result.skippedKeys.isNotEmpty()) {
-            actualDao.insertPostedKeys(result.skippedKeys.map { PostedKeyEntity(it, date.toEpochDay()) })
+        if (result.skippedKeys.isNotEmpty() || result.markers.isNotEmpty()) {
+            actualDao.insertPostedKeys((result.skippedKeys + result.markers).map { PostedKeyEntity(it, date.toEpochDay()) })
         }
         result.loanRemaining.forEach { (id, months) -> accountDao.setLoanRemainingMonths(id, months) }
         result.cardTerms.forEach { (id, terms) -> accountDao.setCardRevolvingBalance(id, terms.revolvingBalance) }
@@ -479,24 +479,29 @@ class FinanceRepository @Inject constructor(
         }
     }
 
-    /**
-     * 用備份取代目前所有資料（R-DATA-06）。
-     * 資料庫在同一個交易裡先清空再寫入；設定在資料庫之後寫。設定寫入失敗時，
-     * 用還原前自動做的備份把資料庫與設定都放回去，不會留下「資料是新的、設定是舊的」。
-     */
-    suspend fun restoreBackup(file: BackupFile) {
-        val previous = exportBackup()
-        replaceDatabase(file)
-        try {
-            file.settings?.let { settingsRepository.save(it.toSettings(settingsRepository.settings.first())) }
-            settingsRepository.setAutoPostFrom(file.settings?.autoPostFrom ?: time.today().toEpochDay())
-        } catch (e: Exception) {
-            replaceDatabase(previous)
-            previous.settings?.let { settingsRepository.save(it.toSettings(settingsRepository.settings.first())) }
-            settingsRepository.setAutoPostFrom(previous.settings?.autoPostFrom)
-            throw e
-        }
-    }
+    // ---- 從備份還原（R-DATA-06，F11）：流程在 RestoreCoordinator，可以單獨測試中斷與失敗 ----
+
+    private val restore = RestoreCoordinator(
+        journal = restoreJournal,
+        target = object : RestoreTarget {
+            override suspend fun export(): BackupFile = exportBackup()
+            override suspend fun replaceDatabase(file: BackupFile) = this@FinanceRepository.replaceDatabase(file)
+            override suspend fun replaceSettings(file: BackupFile, autoPostFromFallback: Long?) {
+                file.settings?.let { settingsRepository.save(it.toSettings(settingsRepository.settings.first())) }
+                settingsRepository.setAutoPostFrom(file.settings?.autoPostFrom ?: autoPostFromFallback)
+            }
+        },
+        today = { time.today().toEpochDay() },
+    )
+
+    /** 還原狀態；不是 READY 時畫面不開放帳務操作。 */
+    val restoreState: StateFlow<RestoreState> = restore.state
+
+    /** 用備份取代目前所有資料（先寫復原紀錄，資料庫與設定都成功才刪）。 */
+    suspend fun restoreBackup(file: BackupFile) = restore.restore(file)
+
+    /** 開 App 時先呼叫：上次還原沒完成就放回還原前的資料。放回失敗時可以再呼叫重試。 */
+    suspend fun recoverInterruptedRestore(): RestoreCoordinator.Recovery = restore.recover()
 
     private suspend fun replaceDatabase(file: BackupFile) = with(db.maintenanceDao()) {
         db.withTransaction {

@@ -80,12 +80,13 @@ fun EntryScreen(
     onDueMethod: (PaymentMethod) -> Unit,
     onDueCard: (Long?) -> Unit,
     onDueAccount: (Long) -> Unit,
+    onDueUseDueDate: (Boolean) -> Unit,
     onRecordDue: () -> Unit,
     onSkipDue: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     state.dueDialog?.let { dialog ->
-        DueRecordDialog(dialog, onCloseDue, onDueAmount, onDueMethod, onDueCard, onDueAccount, onRecordDue, onSkipDue)
+        DueRecordDialog(dialog, onCloseDue, onDueAmount, onDueMethod, onDueCard, onDueAccount, onDueUseDueDate, onRecordDue, onSkipDue)
     }
     state.missedPrompt?.let { prompt ->
         AlertDialog(
@@ -364,6 +365,7 @@ private fun DueRecordDialog(
     onMethod: (PaymentMethod) -> Unit,
     onCard: (Long?) -> Unit,
     onAccount: (Long) -> Unit,
+    onUseDueDate: (Boolean) -> Unit,
     onRecord: () -> Unit,
     onSkip: () -> Unit,
 ) {
@@ -421,6 +423,13 @@ private fun DueRecordDialog(
                         dialog.accounts.forEach { account ->
                             FilterChip(selected = dialog.accountId == account.id, onClick = { onAccount(account.id) }, label = { Text(account.name) })
                         }
+                    }
+                }
+                dialog.dueDateLabel?.let { dueLabel ->
+                    Text("付款日", style = MaterialTheme.typography.labelMedium)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !dialog.useDueDate, onClick = { onUseDueDate(false) }, label = { Text("今天") })
+                        FilterChip(selected = dialog.useDueDate, onClick = { onUseDueDate(true) }, label = { Text(dueLabel) })
                     }
                 }
                 dialog.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }

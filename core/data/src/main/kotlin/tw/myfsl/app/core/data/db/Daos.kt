@@ -90,6 +90,9 @@ interface ActualDao {
     @Query("DELETE FROM posted_keys WHERE `key` IN (:keys)")
     suspend fun deletePostedKeys(keys: List<String>)
 
+    @Query("DELETE FROM posted_keys WHERE `key` LIKE :prefix || '%'")
+    suspend fun deletePostedKeysWithPrefix(prefix: String)
+
     @Query("DELETE FROM ledger_entries WHERE postingKey IN (:keys)")
     suspend fun deleteLedgerByKeys(keys: List<String>)
 

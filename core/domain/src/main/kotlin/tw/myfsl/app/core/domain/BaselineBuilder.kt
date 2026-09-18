@@ -45,7 +45,7 @@ object ActualCalculator {
         val entries = ledger.filter {
             it.itemId == line.itemId && it.method == line.method && it.countsForBudget &&
                 it.postingKey?.startsWith(tw.myfsl.app.core.model.PostingKeys.DEFERRAL) != true &&
-                it.date.year == year && it.date.monthValue == month
+                it.budgetMonth.year == year && it.budgetMonth.monthValue == month
         }
         return ItemActualView(
             amount = entries.sumOf { it.amount },
@@ -273,7 +273,7 @@ object BaselineBuilder {
             while (periodFor(snapshot, due, input).index < endIndex) {
                 val period = periodFor(snapshot, due, input)
                 val ym = YearMonth.from(due)
-                if (DueItems.cardInterestKey(card.id, ym) !in snapshot.recordedKeys) events += FlowEvent(
+                if (!DueItems.isRecorded(snapshot, DueItems.cardInterestKey(card.id, ym))) events += FlowEvent(
                     period = period,
                     kind = EventKind.EXPENSE,
                     amount = 0,
@@ -285,7 +285,7 @@ object BaselineBuilder {
                     interestBase = if (first) terms.revolvingBalance else null,
                     source = EventSource.CARD_SCHEDULE,
                 ).also { first = false }
-                if (payAccount != null && DueItems.cardPaymentKey(card.id, ym) !in snapshot.recordedKeys) {
+                if (payAccount != null && !DueItems.isRecorded(snapshot, DueItems.cardPaymentKey(card.id, ym))) {
                     val payment = when (terms.payMode) {
                         CardPayMode.FULL -> FlowEvent(
                             period = period, kind = EventKind.TRANSFER, amount = 0, label = "繳 ${card.name}（當期全額）",
@@ -327,7 +327,7 @@ object BaselineBuilder {
                     val period = periodFor(snapshot, due, input)
                     if (period.index >= endIndex) break
                     // 已經記下（或選了這個月沒有）的月份，餘額與期數已經反映，跳過。
-                    if (DueItems.loanKey(loan.id, YearMonth.from(due)) !in snapshot.recordedKeys) {
+                    if (!DueItems.isRecorded(snapshot, DueItems.loanKey(loan.id, YearMonth.from(due)))) {
                         events += loanEvents(loan.id, loan.name, terms.payAccountId, period, schedule[next], EventSource.LOAN_SCHEDULE)
                         next++
                     }

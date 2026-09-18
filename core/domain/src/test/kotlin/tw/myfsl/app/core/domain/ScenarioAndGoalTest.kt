@@ -70,11 +70,13 @@ class ScenarioAndGoalTest {
         assertEquals(setOf(CARD_A, CARD_B), payoff.map { it.toAccountId }.toSet())
         assertTrue(applied.events.none { it.itemId == PAY_CARD_B && it.period >= oct })
         assertTrue(applied.events.any { it.itemId == PAY_CARD_B && it.period < oct })
-        assertTrue("A 卡的合約繳款也停掉", applied.events.none { it.relatedAccountId == CARD_A && it.source == EventSource.CARD_SCHEDULE && it.period >= oct })
+        // F12：卡片的合約（計息與繳款）照舊，清償後欠款是 0 所以金額是 0；有新刷卡時依原條件計息
+        assertTrue("A 卡的合約照舊", applied.events.any { it.relatedAccountId == CARD_A && it.source == EventSource.CARD_SCHEDULE && it.period > oct })
         val result = CashFlowEngine.run(applied)
         val octResult = result.periods.first { it.period == oct }
         val debtBefore = result.periods.first { it.period == oct.plus(-1) }.cardDebtEnd
-        assertEquals(debtBefore, octResult.debtPayoff)
+        // 同一個半月先計 A 卡利息（A 欠 62,150 × 15% ÷ 12 = 777）再清償（R-ORD-01）
+        assertEquals(debtBefore + 777, octResult.debtPayoff)
         assertEquals(0L, octResult.cardPayments)
         // 期初清償後，同一個半月的刷卡成為新的卡債
         assertEquals("刷卡都在預設卡片 A", octResult.cardSpending, octResult.balances[CARD_A])

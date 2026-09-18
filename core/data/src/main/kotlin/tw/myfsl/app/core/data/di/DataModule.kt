@@ -37,6 +37,12 @@ object DataModule {
     fun provideDataStore(@ApplicationContext context: Context): DataStore<Preferences> =
         PreferenceDataStoreFactory.create(produceFile = { context.preferencesDataStoreFile("settings") })
 
+    /** 還原備份的復原紀錄放在 App 的私有資料夾（F11）。 */
+    @Provides
+    @Singleton
+    fun provideRestoreJournal(@ApplicationContext context: Context): tw.myfsl.app.core.data.RestoreJournal =
+        tw.myfsl.app.core.data.RestoreJournal(java.io.File(context.filesDir, "restore"))
+
     @Provides
     fun provideTimeProvider(): TimeProvider = object : TimeProvider {
         override fun today(): LocalDate = LocalDate.now()

@@ -14,16 +14,16 @@
   "monthlyLowsThousands": [114, 126, 124, 124, 54, 18, 177, 196, 196, 165, 99, 107, 121, 139, 146, 155, 94, 67, 226, 245, 245, 214, 148, 156]
 },
             "integrate": {
-  "lowestLiquid": 13786,
+  "lowestLiquid": 13009,
   "lowestPeriod": "2028年2月上半月",
   "firstBelowSafety": "2028年2月上半月",
   "monthsUntilBelow": 17,
-  "structuralGapPerYear": -103902,
+  "structuralGapPerYear": -104290,
   "endCardDebt": 0,
   "endLoanDebt": 1256468,
   "endTotalDebt": 1256468,
-  "totalCardInterest": 750,
-  "monthlyLowsThousands": [114, 233, 237, 238, 169, 135, 286, 285, 263, 234, 164, 143, 118, 116, 116, 117, 48, 14, 165, 164, 142, 113, 43, 22]
+  "totalCardInterest": 1527,
+  "monthlyLowsThousands": [114, 233, 237, 237, 168, 134, 285, 284, 262, 233, 163, 142, 117, 115, 115, 116, 47, 13, 164, 163, 141, 112, 42, 21]
 },
             "cut20": {
   "lowestLiquid": 44725,

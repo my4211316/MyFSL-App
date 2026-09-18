@@ -97,6 +97,8 @@ data class Reconcile(
     val pendingRecent: Money,
     val method: PaymentMethod,
     val defaultItem: PlanItem?,
+    /** 信用卡合計：每張卡各自的推算欠款（含本次檢查記下的利息、繳款與刷卡），「填入各卡推算欠款」用。 */
+    val perAccount: Map<Long, Money> = emptyMap(),
 ) {
     /** 正數代表實際比記帳多花了（漏記）。信用卡看欠款，所以方向相反。 */
     fun missed(actual: Money): Money = if (isCard) actual - computed else computed - actual
@@ -135,6 +137,8 @@ data class CheckInResult(
     val loanRemaining: Map<Long, Int> = emptyMap(),
     /** 記下第一次利息後清掉既有卡循的卡片條件。 */
     val cardTerms: Map<Long, tw.myfsl.app.core.model.CardTerms> = emptyMap(),
+    /** 清掉既有卡循時記下的原值（刪掉那筆利息時恢復）。 */
+    val markers: List<String> = emptyList(),
 ) {
     /** 這次記下的到期項目。 */
     val dueEntries: List<LedgerEntry> get() = entries.filter { it.source == EntrySource.DUE }
@@ -170,7 +174,24 @@ object CheckInRules {
      * 到期了（今天或之前）還沒在記帳畫面記下的項目（R-DUE-05）。
      * 在對帳之前先處理，對帳時才不會把它們當成漏記。
      */
-    fun dueLines(snapshot: FinanceSnapshot, date: LocalDate = snapshot.today): List<DueItem> = DueItems.list(snapshot, through = date)
+    fun dueLines(snapshot: FinanceSnapshot, date: LocalDate = snapshot.today, input: CheckInInput = CheckInInput()): List<DueItem> =
+        DueItems.list(snapshot, through = date) { due -> dueRecord(snapshot, due, input, date)?.entries.orEmpty() }
+
+    /**
+     * 使用者對一個到期項目的選擇實際會寫入什麼；還沒選、選「這個月沒有」或金額 0 為 null。
+     * 清單依這個結果往下算，所以略過利息後，全額繳款會跟著少那筆利息（F06）。畫面預覽與寫入用同一份結果。
+     */
+    private fun dueRecord(snapshot: FinanceSnapshot, due: DueItem, input: CheckInInput, date: LocalDate): DueRecord? {
+        val decision = input.dues[due.key] ?: return null
+        val default = DueItems.defaultChoice(snapshot, due).copy(date = date)
+        val choice = when (decision.choice) {
+            DueCheck.SKIP -> return null
+            DueCheck.PAID -> default
+            DueCheck.DIFFERENT_AMOUNT -> default.copy(amount = decision.amount ?: return null)
+        }
+        if (choice.amount <= 0) return null
+        return DueItems.record(snapshot, due, choice)
+    }
 
     /** 每週回報的列：本月有計畫或已有記帳的支出列。 */
     fun reportLines(snapshot: FinanceSnapshot, date: LocalDate = snapshot.today): List<ReportLine> =
@@ -244,8 +265,12 @@ object CheckInRules {
         }
         val cards = active.filter { it.kind == AccountKind.CREDIT_CARD }
         if (cards.isEmpty()) return liquid
-        val pendingCard = pending
-            .filter { it.type == FlowType.EXPENSE && it.method == PaymentMethod.CREDIT_CARD }
+        // 每張卡套用本次產生的記帳（利息、繳卡費、分期各期、指定卡片的刷卡）；未指定卡片的刷卡另外加（F01）。
+        val perCard = cards.associate { card ->
+            card.id to card.balance + pending.sumOf { BalanceRules.effect(it, card.id, AccountKind.CREDIT_CARD) }
+        }
+        val pendingUnassigned = pending
+            .filter { it.type == FlowType.EXPENSE && it.method == PaymentMethod.CREDIT_CARD && it.accountId == null && !it.isInstallmentPurchase }
             .sumOf { it.amount }
         val since = date.minusDays(snapshot.settings.cardPostingDays.toLong())
         // 最近幾天自己記的刷卡可能還沒送到銀行（分期消費本身不算，入帳的是各期）。
@@ -260,10 +285,11 @@ object CheckInRules {
             name = "信用卡合計",
             accounts = cards,
             isCard = true,
-            computed = cards.sumOf { it.balance } + snapshot.unassignedCardSpending + pendingCard,
+            computed = perCard.values.sum() + snapshot.unassignedCardSpending + pendingUnassigned,
             pendingRecent = recent,
             method = PaymentMethod.CREDIT_CARD,
             defaultItem = defaultItemFor(snapshot, PaymentMethod.CREDIT_CARD, date),
+            perAccount = perCard,
         )
     }
 
@@ -379,29 +405,22 @@ object CheckInRules {
         val skipped = mutableListOf<String>()
         val loanRemaining = mutableMapOf<Long, Int>()
         val cardTerms = mutableMapOf<Long, tw.myfsl.app.core.model.CardTerms>()
-        dueLines(snapshot, date).forEach { due ->
+        val markers = mutableListOf<String>()
+        dueLines(snapshot, date, input).forEach { due ->
             val decision = input.dues[due.key] ?: return@forEach
-            if (decision.choice == DueCheck.SKIP) {
+            if (decision.choice == DueCheck.DIFFERENT_AMOUNT) requireNotNull(decision.amount) { "金額不同需要輸入實際金額" }
+            val record = dueRecord(snapshot, due, input, date)
+            if (record == null) {
                 skipped += due.key
                 return@forEach
             }
-            val default = DueItems.defaultChoice(snapshot, due)
-            val choice = if (decision.choice == DueCheck.DIFFERENT_AMOUNT) {
-                default.copy(amount = requireNotNull(decision.amount) { "金額不同需要輸入實際金額" })
-            } else {
-                default
-            }
-            if (choice.amount <= 0 && decision.choice == DueCheck.DIFFERENT_AMOUNT) {
-                skipped += due.key
-                return@forEach
-            }
-            val record = DueItems.record(snapshot, due, choice)
-            entries += record.entries.map { it.copy(date = minOf(due.date, date)) }
+            entries += record.entries
             record.loanRemaining?.let { (id, _) ->
                 val current = loanRemaining[id] ?: snapshot.account(id)?.loan?.remainingMonths ?: 0
                 loanRemaining[id] = (current - 1).coerceAtLeast(0)
             }
             record.cardTerms?.let { (id, terms) -> cardTerms[id] = terms }
+            record.marker?.let { markers += it }
         }
 
         reconciles(snapshot, entries, date).forEach { row ->
@@ -418,7 +437,7 @@ object CheckInRules {
             row.accounts.forEach { balances[it.id] = decision.balances.getValue(it.id) }
         }
 
-        return CheckInResult(entries, actuals, balances, deferrals, skipped, loanRemaining, cardTerms)
+        return CheckInResult(entries, actuals, balances, deferrals, skipped, loanRemaining, cardTerms, markers)
     }
 
     private fun adjustment(
