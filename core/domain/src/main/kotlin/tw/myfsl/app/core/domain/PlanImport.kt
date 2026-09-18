@@ -14,8 +14,11 @@ import tw.myfsl.app.core.model.TrackingMode
 
 /** 匯入方式。 */
 enum class ImportMode(val label: String) {
-    /** 覆蓋檔案裡出現的項目在該年度的金額；沒出現的項目保持不動。 */
-    REPLACE_YEAR("取代這個年度"),
+    /**
+     * 更新檔案中的項目：檔案裡出現的項目，該年度的金額以檔案為準（檔案沒有的支付方式列會清成 0）；
+     * 檔案沒出現的項目保持不動。
+     */
+    REPLACE_YEAR("更新檔案中的項目"),
 
     /** 只新增檔案裡有、App 裡還沒有的項目。 */
     ADD_ONLY("只新增"),
@@ -58,7 +61,7 @@ data class ImportPreview(
  */
 object PlanImport {
 
-    val COLUMNS = listOf("群組", "項目", "類型", "支付方式", "時點", "可調", "追蹤", "帳戶", "轉入帳戶", "備註", "現行") +
+    val COLUMNS = listOf("群組", "項目", "類型", "支付方式", "時點", "日期", "可調", "追蹤", "帳戶", "轉入帳戶", "備註", "現行") +
         (1..12).map { "${it}月" }
 
     private val MONTH_NAMES = listOf("一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二")
@@ -66,8 +69,8 @@ object PlanImport {
     /** 空白範本（含兩列示範）。 */
     fun template(): String = buildString {
         appendLine(COLUMNS.joinToString(","))
-        appendLine("收入,薪資,收入,,上半月,否,自動計入,薪轉帳戶,,,780000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000")
-        appendLine("生活,生活費,支出,現金,上下各半,是,依記帳,,,錢包,108000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000")
+        appendLine("收入,薪資,收入,,上半月,5,否,每月固定,薪轉帳戶,,,780000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000")
+        appendLine("生活,生活費,支出,現金,上下各半,,是,依記帳,,,錢包,108000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000")
     }
 
     /** 把目前的計畫匯出成同一個格式，可以在 Excel 改完再匯回來。 */
@@ -93,6 +96,7 @@ object PlanImport {
                         item.type.label,
                         line.method?.label.orEmpty(),
                         item.timing.label,
+                        item.dueDay?.toString().orEmpty(),
                         if (item.flexibility == Flexibility.FLEXIBLE) "是" else "否",
                         item.tracking.label,
                         accountName[item.accountId].orEmpty(),
@@ -153,11 +157,22 @@ object PlanImport {
             val months = (0 until 12).map { m ->
                 val raw = monthColumns[m]?.let { cells.getOrNull(it) }.orEmpty()
                 val parsed = amount(raw)
-                if (parsed == null) {
-                    issues += PlanIssue(Severity.ERROR, "第 $lineNumber 列 ${MONTH_NAMES[m]}月的金額「${raw.trim()}」看不懂")
-                    0L
-                } else {
-                    parsed
+                when {
+                    parsed == null -> {
+                        issues += PlanIssue(Severity.ERROR, "第 $lineNumber 列 ${MONTH_NAMES[m]}月的金額「${raw.trim()}」看不懂")
+                        0L
+                    }
+                    // 解析得出負數，但計畫金額不能是負的（和 App 內編輯同一條規則 R-EDT-02）。
+                    parsed < 0 -> {
+                        issues += PlanIssue(Severity.ERROR, "第 $lineNumber 列 ${MONTH_NAMES[m]}月的金額不能是負數；退款或收入請另列一個項目")
+                        0L
+                    }
+                    else -> parsed
+                }
+            }
+            val dueDay = cell("日期").takeIf { it.isNotEmpty() }?.let { raw ->
+                raw.removeSuffix("日").removeSuffix("號").trim().toIntOrNull()?.takeIf { it in 1..31 }.also {
+                    if (it == null) issues += PlanIssue(Severity.ERROR, "第 $lineNumber 列的日期「$raw」要是 1 到 31")
                 }
             }
             val method = paymentMethod(cell("支付方式"))
@@ -169,14 +184,21 @@ object PlanImport {
                 issues += PlanIssue(Severity.WARNING, "第 $lineNumber 列「$name」是${type.label}，支付方式會被忽略")
             }
 
-            val accountId = accountId(cell("帳戶"), accounts)
-            val toAccountId = accountId(cell("轉入帳戶"), accounts)
-            if (cell("帳戶").isNotEmpty() && accountId == null) {
-                issues += PlanIssue(Severity.ERROR, "第 $lineNumber 列找不到帳戶「${cell("帳戶")}」")
+            fun resolveAccount(column: String, label: String): Long? {
+                val raw = cell(column)
+                if (raw.isEmpty()) return null
+                val matches = matchAccounts(raw, accounts)
+                when {
+                    matches.isEmpty() -> issues += PlanIssue(Severity.ERROR, "第 $lineNumber 列找不到$label「$raw」")
+                    matches.size > 1 -> issues += PlanIssue(
+                        Severity.ERROR,
+                        "第 $lineNumber 列的$label「$raw」對到好幾個帳戶（${matches.joinToString("、") { it.name }}），請填完整名稱",
+                    )
+                }
+                return matches.singleOrNull()?.id
             }
-            if (cell("轉入帳戶").isNotEmpty() && toAccountId == null) {
-                issues += PlanIssue(Severity.ERROR, "第 $lineNumber 列找不到轉入帳戶「${cell("轉入帳戶")}」")
-            }
+            val accountId = resolveAccount("帳戶", "帳戶")
+            val toAccountId = resolveAccount("轉入帳戶", "轉入帳戶")
             when (type) {
                 FlowType.INCOME -> if (accountId == null && cell("帳戶").isEmpty()) {
                     issues += PlanIssue(Severity.ERROR, "第 $lineNumber 列「$name」是收入，要填入帳帳戶")
@@ -226,6 +248,7 @@ object PlanImport {
                         flexibility = if (yes(cell("可調"))) Flexibility.FLEXIBLE else Flexibility.FIXED,
                         tracking = tracking(cell("追蹤")),
                         note = cell("備註"),
+                        dueDay = dueDay,
                     ),
                     amounts = linkedMapOf(method to months),
                     lines = mutableListOf(lineNumber),
@@ -234,6 +257,19 @@ object PlanImport {
                 if (existing.item.type != type) {
                     issues += PlanIssue(Severity.ERROR, "第 $lineNumber 列「$name」的類型和前面那列不一樣")
                 }
+                // 同一個項目的多列，項目層級的欄位要一致；有填卻和前面不同就報錯，不默默取第一列。
+                val first = existing.item
+                fun conflict(column: String, same: Boolean) {
+                    if (cell(column).isNotEmpty() && !same) {
+                        issues += PlanIssue(Severity.ERROR, "第 $lineNumber 列「$name」的${column}和前面那列（第 ${existing.lines.first()} 列）不一樣")
+                    }
+                }
+                conflict("時點", timing(cell("時點")) == first.timing)
+                conflict("日期", dueDay == first.dueDay)
+                conflict("可調", (if (yes(cell("可調"))) Flexibility.FLEXIBLE else Flexibility.FIXED) == first.flexibility)
+                conflict("追蹤", tracking(cell("追蹤")) == first.tracking)
+                conflict("帳戶", accountId == first.accountId)
+                conflict("轉入帳戶", toAccountId == first.toAccountId)
                 if (existing.amounts.containsKey(method)) {
                     issues += PlanIssue(
                         Severity.ERROR,
@@ -319,6 +355,7 @@ object PlanImport {
         "類型" to listOf("類型", "收支", "種類"),
         "支付方式" to listOf("支付方式", "付款", "付款方式", "支付"),
         "時點" to listOf("時點", "時間", "上下半月"),
+        "日期" to listOf("日期", "發生日", "扣款日", "幾號"),
         "可調" to listOf("可調", "可調整", "彈性"),
         "追蹤" to listOf("追蹤", "追蹤方式", "控管"),
         "帳戶" to listOf("帳戶", "入帳帳戶", "轉出帳戶", "扣款帳戶"),
@@ -378,6 +415,7 @@ object PlanImport {
     }
 
     private fun tracking(raw: String): TrackingMode = when (normalize(raw)) {
+        "每月固定", "固定", "自動計入", "自動" -> TrackingMode.AUTO
         "依記帳", "記帳" -> TrackingMode.LEDGER
         "每週回報", "回報", "信封" -> TrackingMode.REPORT
         "到期確認", "確認", "不定期" -> TrackingMode.CONFIRM
@@ -386,11 +424,12 @@ object PlanImport {
 
     private fun yes(raw: String): Boolean = normalize(raw) in setOf("是", "Y", "y", "yes", "true", "1", "可調")
 
-    private fun accountId(raw: String, accounts: List<Account>): Long? {
-        if (raw.isBlank()) return null
+    /** 帳戶名稱比對：先找完全相同；沒有才找開頭相同。對到多個時由呼叫端報錯，不任選一個。 */
+    private fun matchAccounts(raw: String, accounts: List<Account>): List<Account> {
         val target = normalize(raw)
-        return accounts.firstOrNull { normalize(it.name) == target }?.id
-            ?: accounts.firstOrNull { normalize(it.name).startsWith(target) }?.id
+        val active = accounts.filter { !it.archived }
+        active.filter { normalize(it.name) == target }.takeIf { it.isNotEmpty() }?.let { return it }
+        return active.filter { normalize(it.name).startsWith(target) }
     }
 }
 

@@ -55,6 +55,8 @@ data class SeekState(
     val achievable: Boolean = true,
     val cutsPerYear: List<Pair<String, Money>> = emptyList(),
     val lowestAfter: Money? = null,
+    val lowBeforeStart: Boolean = false,
+    val nothingToCut: Boolean = false,
 )
 
 data class ForecastUiState(
@@ -213,6 +215,8 @@ class ForecastViewModel @Inject constructor(
                     cutsPerYear = result.cutsPerYear.entries.sortedByDescending { e -> e.value }
                         .map { e -> (snapshot.item(e.key)?.name ?: "") to e.value },
                     lowestAfter = result.result.lowestLiquid,
+                    lowBeforeStart = result.lowBeforeStart,
+                    nothingToCut = result.nothingToCut,
                 )
             }
         }

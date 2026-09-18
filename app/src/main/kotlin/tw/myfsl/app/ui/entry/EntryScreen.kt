@@ -1,6 +1,9 @@
 package tw.myfsl.app.ui.entry
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -16,7 +19,9 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Backspace
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -66,8 +71,31 @@ fun EntryScreen(
     onInstallmentFeeValue: (String) -> Unit,
     onOpenRecords: () -> Unit,
     onLoadSample: () -> Unit,
+    onToggleRefund: () -> Unit,
+    onAnswerMissed: (Boolean) -> Unit,
+    onCancelMissed: () -> Unit,
+    onOpenDue: (String) -> Unit,
+    onCloseDue: () -> Unit,
+    onDueAmount: (String) -> Unit,
+    onDueMethod: (PaymentMethod) -> Unit,
+    onDueCard: (Long?) -> Unit,
+    onDueAccount: (Long) -> Unit,
+    onRecordDue: () -> Unit,
+    onSkipDue: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    state.dueDialog?.let { dialog ->
+        DueRecordDialog(dialog, onCloseDue, onDueAmount, onDueMethod, onDueCard, onDueAccount, onRecordDue, onSkipDue)
+    }
+    state.missedPrompt?.let { prompt ->
+        AlertDialog(
+            onDismissRequest = onCancelMissed,
+            title = { Text("是之前漏記的那筆嗎？") },
+            text = { Text(prompt + "\n\n選「是」會用這筆明細取代漏記差額，項目花費和帳戶餘額都不會重複算。") },
+            confirmButton = { TextButton(onClick = { onAnswerMissed(true) }) { Text("是，換成這筆") } },
+            dismissButton = { TextButton(onClick = { onAnswerMissed(false) }) { Text("不是，另外一筆") } },
+        )
+    }
     if (state.loading) {
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
@@ -111,6 +139,10 @@ fun EntryScreen(
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+        }
+
+        if (state.dues.isNotEmpty()) {
+            DueStrip(state.dues, onOpenDue)
         }
 
         Spacer(Modifier.height(8.dp))
@@ -169,6 +201,13 @@ fun EntryScreen(
                                     },
                                 )
                             },
+                        )
+                    }
+                    if (state.showRefund) {
+                        FilterChip(
+                            selected = state.refund,
+                            onClick = onToggleRefund,
+                            label = { Text("退款") },
                         )
                     }
                 }
@@ -279,6 +318,123 @@ fun EntryScreen(
 }
 
 private val INSTALLMENT_MONTHS = listOf(3, 6, 12, 18, 24, 30)
+
+/** 本月到期（R-DUE）：還沒記下的每月固定帳單、貸款、卡費、分期；點一下記下。 */
+@Composable
+private fun DueStrip(dues: List<DueRow>, onOpen: (String) -> Unit) {
+    val reached = dues.count { it.reached }
+    Row(Modifier.padding(top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("本月到期", style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            if (reached > 0) "$reached 筆已到期，點一下記下" else "點一下記下",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(dues.size) { index ->
+            val due = dues[index]
+            Surface(
+                onClick = { onOpen(due.key) },
+                shape = MaterialTheme.shapes.small,
+                color = if (due.reached) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+                border = if (due.overdue) BorderStroke(1.dp, StatusColors.warningText) else null,
+            ) {
+                Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                    Text(due.title, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+                    Text(
+                        "${due.dateLabel} · ${due.amountText}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (due.overdue) StatusColors.warningText else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 記下到期項目：金額帶好，可以改；支出選支付方式（刷卡再選卡），轉帳、貸款、卡費選扣款帳戶，收入選入帳帳戶。 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DueRecordDialog(
+    dialog: DueDialog,
+    onClose: () -> Unit,
+    onAmount: (String) -> Unit,
+    onMethod: (PaymentMethod) -> Unit,
+    onCard: (Long?) -> Unit,
+    onAccount: (Long) -> Unit,
+    onRecord: () -> Unit,
+    onSkip: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text(dialog.title) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(dialog.subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (dialog.amountEditable) {
+                    OutlinedTextField(
+                        value = dialog.amountText,
+                        onValueChange = onAmount,
+                        label = { Text("金額") },
+                        prefix = { Text("$") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    Text("金額 ${dialog.amountText}", style = MaterialTheme.typography.titleMedium)
+                }
+                if (dialog.choosesMethod) {
+                    Text("支付方式", style = MaterialTheme.typography.labelMedium)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PaymentMethod.entries.forEach { method ->
+                            FilterChip(
+                                selected = dialog.method == method,
+                                onClick = { onMethod(method) },
+                                label = { Text(method.label) },
+                            )
+                        }
+                    }
+                    val planned = dialog.plannedMethod
+                    if (planned != null && dialog.method != null && dialog.method != planned) {
+                        Text(
+                            "計畫是${planned.label}，這次用${dialog.method.label}；一樣算在這個項目",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (dialog.showCards) {
+                    Text("卡片", style = MaterialTheme.typography.labelMedium)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = dialog.cardId == null, onClick = { onCard(null) }, label = { Text("不指定") })
+                        dialog.cards.forEach { card ->
+                            FilterChip(selected = dialog.cardId == card.id, onClick = { onCard(card.id) }, label = { Text(card.name) })
+                        }
+                    }
+                }
+                if (dialog.choosesAccount) {
+                    Text(dialog.accountLabel, style = MaterialTheme.typography.labelMedium)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        dialog.accounts.forEach { account ->
+                            FilterChip(selected = dialog.accountId == account.id, onClick = { onAccount(account.id) }, label = { Text(account.name) })
+                        }
+                    }
+                }
+                dialog.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = { TextButton(onClick = onRecord) { Text(dialog.recordLabel) } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onSkip) { Text("這個月沒有") }
+                TextButton(onClick = onClose) { Text("取消") }
+            }
+        },
+    )
+}
 
 @Composable
 private fun LabeledRow(label: String, content: @Composable () -> Unit) {

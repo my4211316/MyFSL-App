@@ -18,7 +18,12 @@ data class GoalSeekResult(
     val achievable: Boolean,
     /** 每個項目每年需要減少的金額。 */
     val cutsPerYear: Map<Long, Money>,
+    /** 用進位後的比例重跑的結果；[achievable] 依這個結果判斷。 */
     val result: ForecastResult,
+    /** 最低點發生在開始減少之前，怎麼減都來不及（R-GS-04）。 */
+    val lowBeforeStart: Boolean = false,
+    /** 選的項目在期間內沒有可以減的金額（R-GS-04）。 */
+    val nothingToCut: Boolean = false,
 )
 
 /** 反推「選定項目要減少多少百分比才能達成目標」。 */
@@ -45,10 +50,16 @@ object GoalSeeker {
             return GoalSeekResult(percent, meets(result), cutsPerYear(input, itemIds, percent, fromIndex), result)
         }
 
-        if (itemIds.isEmpty()) return resultFor(0.0)
         val base = run(0.0)
         if (meets(base)) return GoalSeekResult(0.0, true, emptyMap(), base)
-        if (!meets(run(100.0))) return resultFor(100.0)
+        val cuttable = input.events.any { it.source == EventSource.PLAN && it.itemId in itemIds && it.period.index >= fromIndex && it.amount > 0 }
+        if (itemIds.isEmpty() || !cuttable) return GoalSeekResult(0.0, false, emptyMap(), base, nothingToCut = true)
+        val all = run(100.0)
+        if (!meets(all)) {
+            val early = target is GoalTarget.MinLiquid &&
+                all.periods.filter { it.period.index < fromIndex }.any { it.liquidLow < target.amount }
+            return resultFor(100.0).copy(lowBeforeStart = early)
+        }
 
         var low = 0.0
         var high = 100.0
@@ -64,7 +75,7 @@ object GoalSeeker {
     private fun cutsPerYear(input: ForecastInput, itemIds: Set<Long>, percent: Double, fromIndex: Int): Map<Long, Money> {
         if (input.periodCount == 0) return emptyMap()
         return input.events
-            .filter { it.itemId in itemIds && it.period.index >= fromIndex }
+            .filter { it.source == EventSource.PLAN && it.itemId in itemIds && it.period.index >= fromIndex }
             .groupBy { it.itemId!! }
             .mapValues { (_, events) ->
                 Math.round(events.sumOf { it.amount } * percent / 100.0 * 24 / input.periodCount)

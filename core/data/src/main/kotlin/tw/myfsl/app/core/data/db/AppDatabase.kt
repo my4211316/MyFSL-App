@@ -15,12 +15,19 @@ import androidx.room.RoomDatabase
         ScenarioEntity::class,
         CheckInEntity::class,
         CardInstallmentEntity::class,
+        PostedKeyEntity::class,
+        DeferralEntity::class,
     ],
     // 1.0.0 首發的結構。之後改 schema：提高版本，並在 Migrations 加上升級 SQL（MigrationTest 會檢查）。
-    version = 1,
+    version = AppDatabase.VERSION,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
+    companion object {
+        const val VERSION = 1
+        const val NAME = "myfsl.db"
+    }
+
     abstract fun accountDao(): AccountDao
     abstract fun planDao(): PlanDao
     abstract fun actualDao(): ActualDao

@@ -19,6 +19,8 @@ data class ScenarioOutcome(
     val endCardDebt: Money,
     val endTotalDebt: Money,
     val cardInterest: Money,
+    /** 第一次有扣款帳戶不夠扣的月份與帳戶，例如「2027/3 薪轉帳戶」；不會發生時為 null。 */
+    val shortfallLabel: String? = null,
 )
 
 data class Comparison(
@@ -57,6 +59,7 @@ object ForecastComparisonCalculator {
         endCardDebt = result.endCardDebt,
         endTotalDebt = result.endTotalDebt,
         cardInterest = result.totalCardInterest,
+        shortfallLabel = result.firstShortfall?.let { (p, id) -> "${ForecastSummary.shortLabel(p.period)} ${result.input.accountName(id)}" },
     )
 
     /** 反推：選定項目要減多少才能達成目標。 */

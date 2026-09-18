@@ -8,6 +8,7 @@ import tw.myfsl.app.core.model.CardPayMode
 import tw.myfsl.app.core.model.InstallmentFee
 import tw.myfsl.app.core.model.CardTerms
 import tw.myfsl.app.core.model.CheckIn
+import tw.myfsl.app.core.model.Deferral
 import tw.myfsl.app.core.model.EntrySource
 import tw.myfsl.app.core.model.FlowType
 import tw.myfsl.app.core.model.Flexibility
@@ -122,6 +123,9 @@ fun PlanItemEntity.toModel() = PlanItem(
     note = note,
     archived = archived,
     sortOrder = sortOrder,
+    dueDay = dueDay,
+    extraRepayment = extraRepayment,
+    archivedFrom = archivedFrom,
 )
 
 fun PlanItem.toEntity() = PlanItemEntity(
@@ -137,6 +141,9 @@ fun PlanItem.toEntity() = PlanItemEntity(
     note = note,
     archived = archived,
     sortOrder = sortOrder,
+    dueDay = dueDay,
+    extraRepayment = extraRepayment,
+    archivedFrom = archivedFrom,
 )
 
 fun ItemActualEntity.toModel() = ItemActual(
@@ -170,6 +177,7 @@ fun LedgerEntryEntity.toModel() = LedgerEntry(
     source = EntrySource.valueOf(source),
     installmentId = installmentId,
     createdAt = createdAtMillis,
+    postingKey = postingKey,
 )
 
 fun LedgerEntry.toEntity() = LedgerEntryEntity(
@@ -185,6 +193,31 @@ fun LedgerEntry.toEntity() = LedgerEntryEntity(
     source = source.name,
     installmentId = installmentId,
     createdAtMillis = createdAt,
+    postingKey = postingKey,
+)
+
+fun DeferralEntity.toModel() = Deferral(
+    id = id,
+    itemId = itemId,
+    method = method.toPaymentMethod(),
+    fromYear = fromYear,
+    fromMonth = fromMonth,
+    dueYear = dueYear,
+    dueMonth = dueMonth,
+    amount = amount,
+    settled = settled,
+)
+
+fun Deferral.toEntity() = DeferralEntity(
+    id = id,
+    itemId = itemId,
+    method = method.toColumn(),
+    fromYear = fromYear,
+    fromMonth = fromMonth,
+    dueYear = dueYear,
+    dueMonth = dueMonth,
+    amount = amount,
+    settled = settled,
 )
 
 fun CardInstallmentEntity.toModel() = CardInstallment(

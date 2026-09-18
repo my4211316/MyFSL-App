@@ -6,14 +6,14 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.room.Room
-import tw.myfsl.app.core.data.TimeProvider
-import tw.myfsl.app.core.data.db.AppDatabase
-import tw.myfsl.app.core.data.db.Migrations
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import tw.myfsl.app.core.data.TimeProvider
+import tw.myfsl.app.core.data.db.AppDatabase
+import tw.myfsl.app.core.data.db.Migrations
 import java.time.LocalDate
 import javax.inject.Singleton
 
@@ -21,13 +21,15 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object DataModule {
 
+    /**
+     * 升級時保留資料（R-DATA-01）。不設定任何「重建資料庫」的退路：
+     * 裝回舊版 App 時由 [tw.myfsl.app.core.data.DatabaseGuard] 先擋下來，資料原封不動。
+     */
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase =
-        Room.databaseBuilder(context, AppDatabase::class.java, "myfsl.db")
-            // 升級時保留資料；只有降版（裝回舊版 App）才重建。
+        Room.databaseBuilder(context, AppDatabase::class.java, AppDatabase.NAME)
             .addMigrations(*Migrations.all)
-            .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
             .build()
 
     @Provides

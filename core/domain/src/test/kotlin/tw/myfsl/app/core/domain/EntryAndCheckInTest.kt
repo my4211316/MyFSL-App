@@ -10,7 +10,8 @@ import tw.myfsl.app.core.sample.SampleHousehold.CONTEST
 import tw.myfsl.app.core.sample.SampleHousehold.FUEL
 import tw.myfsl.app.core.sample.SampleHousehold.HOUSEHOLD
 import tw.myfsl.app.core.sample.SampleHousehold.LIVING
-import tw.myfsl.app.core.sample.SampleHousehold.PAY_CARD_A
+import tw.myfsl.app.core.sample.SampleHousehold.PAY_CARD_B
+import tw.myfsl.app.core.sample.SampleHousehold.CARD_B
 import tw.myfsl.app.core.sample.SampleHousehold.SALARY
 import tw.myfsl.app.core.sample.SampleHousehold.SUBSIDY
 import tw.myfsl.app.core.model.EntrySource
@@ -131,8 +132,14 @@ class EntryAndCheckInTest {
         assertEquals(LedgerEntry(date = snapshot.today, type = FlowType.EXPENSE, amount = 150, itemId = LIVING, method = PaymentMethod.CREDIT_CARD, accountId = CARD_A, note = "午餐"), card)
         val income = EntryRules.buildEntry(snapshot, item(SALARY), null, null, "65000", "")!!
         assertEquals(BANK, income.accountId); assertNull(income.method)
-        val transfer = EntryRules.buildEntry(snapshot, item(PAY_CARD_A), null, null, "18000", "")!!
-        assertEquals(BANK, transfer.accountId); assertEquals(CARD_A, transfer.toAccountId)
+        val transfer = EntryRules.buildEntry(snapshot, item(PAY_CARD_B), null, null, "9000", "")!!
+        assertEquals(BANK, transfer.accountId); assertEquals(CARD_B, transfer.toAccountId)
+        // 退款：存成負數，退回原付款帳戶
+        val refund = EntryRules.buildEntry(snapshot, item(LIVING), PaymentMethod.CASH, null, "300", "退貨", refund = true)!!
+        assertEquals(-300L, refund.amount)
+        assertEquals(CASH, refund.accountId)
+        assertEquals("退款", RecordRules.sourceLabel(refund))
+        assertEquals("現金帳戶多回 300", 300L, BalanceRules.effect(refund, CASH, tw.myfsl.app.core.model.AccountKind.CASH))
     }
 
     @Test fun `記下後的提示與今天提示列`() {

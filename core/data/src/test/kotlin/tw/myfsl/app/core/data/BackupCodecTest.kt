@@ -1,10 +1,12 @@
 package tw.myfsl.app.core.data
 
 import tw.myfsl.app.core.data.db.PlanAmountEntity
+import tw.myfsl.app.core.data.db.PostedKeyEntity
 import tw.myfsl.app.core.data.db.toColumn
 import tw.myfsl.app.core.data.db.toEntity
 import tw.myfsl.app.core.sample.SampleHousehold
 import tw.myfsl.app.core.model.CardTerms
+import tw.myfsl.app.core.model.Deferral
 import tw.myfsl.app.core.model.Scenario
 import tw.myfsl.app.core.model.ScenarioChange
 import org.junit.Assert.assertEquals
@@ -29,7 +31,16 @@ class BackupCodecTest {
         scenarios = listOf(
             Scenario(7, "整合", LocalDate.of(2026, 9, 1), listOf(ScenarioChange.StopItem(SampleHousehold.TRIP, 48_700)), "備註").toEntity(),
         ),
-        settings = SettingsBackup.of(SampleHousehold.settings.copy(checkInDay = DayOfWeek.FRIDAY)),
+        settings = SettingsBackup.of(
+            SampleHousehold.settings.copy(
+                checkInDay = DayOfWeek.FRIDAY,
+                defaultCardId = SampleHousehold.CARD_B,
+                autoPostFrom = LocalDate.of(2026, 9, 1).toEpochDay(),
+            ),
+        ),
+        // 選了「這個月沒有」的到期項目與延期款也要備份，還原後才不會再列出或重複記
+        postedKeys = listOf(PostedKeyEntity("plan:101:-:2026-09:15", 20_711), PostedKeyEntity("cardpay:3:2026-09", 20_711)),
+        deferrals = listOf(Deferral(4, SampleHousehold.SUBSIDY, null, 2026, 9, 2026, 10, 5_000).toEntity()),
     )
 
     @Test fun `匯出再讀回完全一樣（含 id、既有卡循、情境與設定）`() {
@@ -65,5 +76,14 @@ class BackupCodecTest {
         assertTrue(result.summary.warnings.any { it.contains("記帳") })
         assertTrue(result.summary.warnings.any { it.contains("計畫金額") })
         assertTrue(result.file.amounts.none { it.itemId == SampleHousehold.LIVING })
+    }
+
+    @Test fun `延期款的項目不存在：提醒並略過；識別碼照樣保留`() {
+        val broken = sample.copy(items = sample.items.filter { it.id != SampleHousehold.SUBSIDY })
+        val result = BackupCodec.decode(BackupCodec.encode(broken)) as BackupReadResult.Ok
+        assertTrue(result.summary.warnings.contains("1 筆延期款的項目不存在，會被略過"))
+        assertTrue(result.file.deferrals.isEmpty())
+        assertEquals(2, result.file.postedKeys.size)
+        assertTrue("有對不上的資料時提供救援還原", result.summary.needsRescue)
     }
 }

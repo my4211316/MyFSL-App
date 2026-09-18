@@ -2,6 +2,8 @@ package tw.myfsl.app.core.domain
 
 import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
+import tw.myfsl.app.core.model.Deferral
+import java.time.YearMonth
 import tw.myfsl.app.core.model.ActualStatus
 import tw.myfsl.app.core.model.EntrySource
 import tw.myfsl.app.core.model.FinanceSnapshot
@@ -17,6 +19,18 @@ import tw.myfsl.app.core.model.PlanLine
 import tw.myfsl.app.core.model.ReportInput
 import tw.myfsl.app.core.model.TrackingMode
 import java.time.LocalDate
+
+/** 本週檢查裡，到期還沒記下的項目（R-DUE-05）怎麼處理。 */
+enum class DueCheck(val label: String) {
+    PAID("已付"),
+    DIFFERENT_AMOUNT("金額不同"),
+    SKIP("這個月沒有"),
+    ;
+
+    fun labelFor(income: Boolean): String = if (this == PAID && income) "已入帳" else label
+}
+
+data class DueDecision(val choice: DueCheck, val amount: Money? = null)
 
 enum class ConfirmChoice(val label: String) {
     PAID("已付"),
@@ -41,14 +55,18 @@ data class ReportLine(
     val prefill: Money get() = CheckInRules.prefill(input, planned, recorded)
 }
 
-/** 到期確認的一列。 */
+/** 到期確認的一列：本月計畫的到期項目，或之前延期、現在到期的款項（[deferral] 不為 null）。 */
 data class ConfirmLine(
     val item: PlanItem,
     val method: PaymentMethod?,
     val planned: Money,
     val recorded: Money,
+    val deferral: Deferral? = null,
 ) {
     val line: PlanLine get() = PlanLine(item.id, method)
+
+    /** 在一次檢查裡辨識這一列。 */
+    val key: String get() = deferral?.key ?: "line:${item.id}:${method?.name ?: "-"}"
 }
 
 /** 對帳結果的四種情況。 */
@@ -97,8 +115,11 @@ data class ReconcileDecision(
 
 data class CheckInInput(
     val reports: Map<PlanLine, Money> = emptyMap(),
-    val confirms: Map<PlanLine, ConfirmDecision> = emptyMap(),
+    /** 到期確認，以 [ConfirmLine.key] 對應。 */
+    val confirms: Map<String, ConfirmDecision> = emptyMap(),
     val reconciles: Map<Long, ReconcileDecision> = emptyMap(),
+    /** 到期還沒記下的項目，以 [DueItem.key] 對應。 */
+    val dues: Map<String, DueDecision> = emptyMap(),
 )
 
 data class CheckInResult(
@@ -106,13 +127,27 @@ data class CheckInResult(
     val actuals: List<ItemActual>,
     /** 要寫入的校正餘額。 */
     val balances: Map<Long, Money>,
+    /** 要新增（id = 0）或更新的延期款項。 */
+    val deferrals: List<Deferral> = emptyList(),
+    /** 選了「這個月沒有」的到期項目識別碼。 */
+    val skippedKeys: List<String> = emptyList(),
+    /** 記下貸款月繳後的剩餘期數。 */
+    val loanRemaining: Map<Long, Int> = emptyMap(),
+    /** 記下第一次利息後清掉既有卡循的卡片條件。 */
+    val cardTerms: Map<Long, tw.myfsl.app.core.model.CardTerms> = emptyMap(),
 ) {
+    /** 這次記下的到期項目。 */
+    val dueEntries: List<LedgerEntry> get() = entries.filter { it.source == EntrySource.DUE }
     val missedEntries: List<LedgerEntry> get() = entries.filter { it.source == EntrySource.MISSED && it.amount > 0 }
     val missedTotal: Money get() = missedEntries.sumOf { it.amount }
-    val isEmpty: Boolean get() = entries.isEmpty() && actuals.isEmpty() && balances.isEmpty()
+    val isEmpty: Boolean
+        get() = entries.isEmpty() && actuals.isEmpty() && balances.isEmpty() && deferrals.isEmpty() && skippedKeys.isEmpty()
 }
 
 object CheckInRules {
+
+    /** 對帳時「信用卡合計」那一列的 id（不是真的帳戶）。 */
+    const val CARD_ROW_ID = -1L
 
     fun inputFor(method: PaymentMethod?): ReportInput =
         if (method == PaymentMethod.CASH) ReportInput.REMAINING else ReportInput.SPENT_TO_DATE
@@ -131,6 +166,12 @@ object CheckInRules {
     /** 回報值與記帳的差額：正數代表漏記，負數代表多記。 */
     fun difference(spent: Money, recorded: Money): Money = spent - recorded
 
+    /**
+     * 到期了（今天或之前）還沒在記帳畫面記下的項目（R-DUE-05）。
+     * 在對帳之前先處理，對帳時才不會把它們當成漏記。
+     */
+    fun dueLines(snapshot: FinanceSnapshot, date: LocalDate = snapshot.today): List<DueItem> = DueItems.list(snapshot, through = date)
+
     /** 每週回報的列：本月有計畫或已有記帳的支出列。 */
     fun reportLines(snapshot: FinanceSnapshot, date: LocalDate = snapshot.today): List<ReportLine> =
         rows(snapshot, date, TrackingMode.REPORT).mapNotNull { row ->
@@ -141,9 +182,12 @@ object CheckInRules {
             }
         }
 
-    /** 到期確認的列：本月有計畫、尚未完成也未延期。 */
-    fun confirmLines(snapshot: FinanceSnapshot, date: LocalDate = snapshot.today): List<ConfirmLine> =
-        rows(snapshot, date, TrackingMode.CONFIRM).mapNotNull { row ->
+    /**
+     * 到期確認的列（R-CHK-02）：本月有計畫、尚未完成也未延期的列，
+     * 加上之前延期、到本月（或更早）到期還沒付清的款項（R-DEF-02）。
+     */
+    fun confirmLines(snapshot: FinanceSnapshot, date: LocalDate = snapshot.today): List<ConfirmLine> {
+        val planLines = rows(snapshot, date, TrackingMode.CONFIRM).mapNotNull { row ->
             val status = ActualCalculator
                 .actualFor(row.line, date.year, date.monthValue, snapshot.actuals, snapshot.ledger).status
             if (row.planned > 0 && status != ActualStatus.DONE && status != ActualStatus.POSTPONED) {
@@ -152,6 +196,11 @@ object CheckInRules {
                 null
             }
         }
+        val deferred = snapshot.deferrals
+            .filter { !it.settled && it.isDueBy(date.year, date.monthValue) }
+            .mapNotNull { d -> snapshot.item(d.itemId)?.let { ConfirmLine(it, d.method, d.amount, 0, d) } }
+        return planLines + deferred
+    }
 
     private data class Row(val item: PlanItem, val line: PlanLine, val planned: Money, val recorded: Money)
 
@@ -199,11 +248,15 @@ object CheckInRules {
             .filter { it.type == FlowType.EXPENSE && it.method == PaymentMethod.CREDIT_CARD }
             .sumOf { it.amount }
         val since = date.minusDays(snapshot.settings.cardPostingDays.toLong())
+        // 最近幾天自己記的刷卡可能還沒送到銀行（分期消費本身不算，入帳的是各期）。
         val recent = snapshot.ledger
-            .filter { it.type == FlowType.EXPENSE && it.method == PaymentMethod.CREDIT_CARD && it.date.isAfter(since) }
+            .filter {
+                it.type == FlowType.EXPENSE && it.method == PaymentMethod.CREDIT_CARD && it.postingKey == null &&
+                    !it.isInstallmentPurchase && it.date.isAfter(since)
+            }
             .sumOf { it.amount }
         return liquid + Reconcile(
-            id = CashFlowEngine.CARD_POOL_ID,
+            id = CARD_ROW_ID,
             name = "信用卡合計",
             accounts = cards,
             isCard = true,
@@ -279,10 +332,37 @@ object CheckInRules {
             if (diff != 0L) entries += adjustment(snapshot, line.item, line.method, diff, date, EntrySource.MISSED)
         }
 
+        val deferrals = mutableListOf<Deferral>()
+        val next = YearMonth.from(date).plusMonths(1)
         confirmLines(snapshot, date).forEach { line ->
-            val decision = input.confirms[line.line] ?: return@forEach
+            val decision = input.confirms[line.key] ?: return@forEach
+            val deferral = line.deferral
+            if (deferral != null) {
+                // 延期款到期（R-DEF-02）：付了就結清；再延一次就改到期月份，金額不變。
+                when (decision.choice) {
+                    ConfirmChoice.POSTPONE -> deferrals += deferral.copy(dueYear = next.year, dueMonth = next.monthValue)
+                    else -> {
+                        val amount = if (decision.choice == ConfirmChoice.PAID) deferral.amount else requireNotNull(decision.amount) { "金額不同需要輸入實際金額" }
+                        if (amount != 0L) {
+                            entries += adjustment(snapshot, line.item, line.method, amount, date, EntrySource.CONFIRMED)
+                                .copy(postingKey = deferral.key)
+                        }
+                        deferrals += deferral.copy(settled = true)
+                    }
+                }
+                return@forEach
+            }
             if (decision.choice == ConfirmChoice.POSTPONE) {
+                // 延到下月：本月標為延期，還沒付的金額變成一筆獨立的延期款（R-DEF-01）。
                 actuals += ItemActual(line.item.id, line.method, date.year, date.monthValue, ActualStatus.POSTPONED, date)
+                val unpaid = (line.planned - line.recorded).coerceAtLeast(0)
+                if (unpaid > 0) {
+                    deferrals += Deferral(
+                        itemId = line.item.id, method = line.method,
+                        fromYear = date.year, fromMonth = date.monthValue,
+                        dueYear = next.year, dueMonth = next.monthValue, amount = unpaid,
+                    )
+                }
                 return@forEach
             }
             val amount = if (decision.choice == ConfirmChoice.PAID) {
@@ -293,6 +373,35 @@ object CheckInRules {
             val diff = amount - line.recorded
             if (diff != 0L) entries += adjustment(snapshot, line.item, line.method, diff, date, EntrySource.CONFIRMED)
             actuals += ItemActual(line.item.id, line.method, date.year, date.monthValue, ActualStatus.DONE, date)
+        }
+
+        // 到期還沒記下的項目：已付就照建議金額記下，金額不同就記實際金額，這個月沒有就略過（R-DUE-05）。
+        val skipped = mutableListOf<String>()
+        val loanRemaining = mutableMapOf<Long, Int>()
+        val cardTerms = mutableMapOf<Long, tw.myfsl.app.core.model.CardTerms>()
+        dueLines(snapshot, date).forEach { due ->
+            val decision = input.dues[due.key] ?: return@forEach
+            if (decision.choice == DueCheck.SKIP) {
+                skipped += due.key
+                return@forEach
+            }
+            val default = DueItems.defaultChoice(snapshot, due)
+            val choice = if (decision.choice == DueCheck.DIFFERENT_AMOUNT) {
+                default.copy(amount = requireNotNull(decision.amount) { "金額不同需要輸入實際金額" })
+            } else {
+                default
+            }
+            if (choice.amount <= 0 && decision.choice == DueCheck.DIFFERENT_AMOUNT) {
+                skipped += due.key
+                return@forEach
+            }
+            val record = DueItems.record(snapshot, due, choice)
+            entries += record.entries.map { it.copy(date = minOf(due.date, date)) }
+            record.loanRemaining?.let { (id, _) ->
+                val current = loanRemaining[id] ?: snapshot.account(id)?.loan?.remainingMonths ?: 0
+                loanRemaining[id] = (current - 1).coerceAtLeast(0)
+            }
+            record.cardTerms?.let { (id, terms) -> cardTerms[id] = terms }
         }
 
         reconciles(snapshot, entries, date).forEach { row ->
@@ -309,7 +418,7 @@ object CheckInRules {
             row.accounts.forEach { balances[it.id] = decision.balances.getValue(it.id) }
         }
 
-        return CheckInResult(entries, actuals, balances)
+        return CheckInResult(entries, actuals, balances, deferrals, skipped, loanRemaining, cardTerms)
     }
 
     private fun adjustment(

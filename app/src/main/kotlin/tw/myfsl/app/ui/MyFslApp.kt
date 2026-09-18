@@ -84,6 +84,8 @@ fun MyFslApp() {
     val startViewModel: StartViewModel = hiltViewModel()
     val needsWelcome by startViewModel.needsWelcome.collectAsStateWithLifecycle()
     var pendingRoute by rememberSaveable { mutableStateOf<String?>(null) }
+    // 到期項目的起算日只在第一次設定；到期的款項由使用者在記帳畫面點下（R-DUE）。
+    LaunchedEffect(Unit) { startViewModel.startDueTracking() }
     when (needsWelcome) {
         null -> return
         true -> {
@@ -159,6 +161,17 @@ fun MyFslApp() {
                     onInstallmentFeeValue = viewModel::setInstallmentFeeValue,
                     onOpenRecords = { navController.navigate("records") },
                     onLoadSample = viewModel::loadSample,
+                    onToggleRefund = viewModel::toggleRefund,
+                    onAnswerMissed = viewModel::answerMissed,
+                    onCancelMissed = viewModel::cancelMissed,
+                    onOpenDue = viewModel::openDue,
+                    onCloseDue = viewModel::closeDue,
+                    onDueAmount = viewModel::setDueAmount,
+                    onDueMethod = viewModel::setDueMethod,
+                    onDueCard = viewModel::setDueCard,
+                    onDueAccount = viewModel::setDueAccount,
+                    onRecordDue = viewModel::recordDue,
+                    onSkipDue = viewModel::skipDue,
                 )
             }
 
@@ -267,6 +280,8 @@ fun MyFslApp() {
                     onChoose = viewModel::choose,
                     onConfirmAmount = viewModel::setConfirmAmount,
                     onReport = viewModel::setReport,
+                    onDueChoose = viewModel::chooseDue,
+                    onDueAmount = viewModel::setDueAmount,
                     onBalance = viewModel::setBalance,
                     onMatch = viewModel::matchComputed,
                     onResolution = viewModel::setResolution,

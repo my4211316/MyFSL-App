@@ -16,11 +16,12 @@ class RevolvingBalanceTest {
 
     private val snapshot = SampleHousehold.snapshot()
 
+    /** 示意資料 B 卡沒有循環條件；這裡讓兩張卡都有，才能測逐卡的既有卡循。 */
     private fun withRevolving(a: Long?, b: Long?) = snapshot.copy(
         accounts = snapshot.accounts.map {
             when (it.id) {
                 CARD_A -> it.copy(card = it.card!!.copy(revolvingBalance = a))
-                CARD_B -> it.copy(card = it.card!!.copy(revolvingBalance = b))
+                CARD_B -> it.copy(card = CardTerms(13.5, payMode = tw.myfsl.app.core.model.CardPayMode.FIXED, fixedPayment = 9_000, payDay = 25, revolvingBalance = b))
                 else -> it
             }
         },
@@ -37,19 +38,21 @@ class RevolvingBalanceTest {
         assertEquals(0L, CardRules.interestBase(-100, terms))
     }
 
-    @Test fun `合計：任一張卡有填才合計，沒填的卡以整筆欠款計`() {
-        val cards = withRevolving(10_000, null).accounts.filter { it.kind == AccountKind.CREDIT_CARD }
-        val b = cards.first { it.id == CARD_B }
-        assertEquals(10_000L + b.balance, CardRules.pooled(cards)!!.revolvingBalance)
-        assertNull(CardRules.pooled(snapshot.accounts.filter { it.kind == AccountKind.CREDIT_CARD })!!.revolvingBalance)
+    @Test fun `逐卡：各卡用自己的既有卡循，沒填的卡以整筆欠款計`() {
+        val s = withRevolving(10_000, null)
+        val events = BaselineBuilder.build(s).events.filter { it.interestRatePercent != null }
+        val firstA = events.filter { it.fromAccountId == CARD_A }.minBy { it.period }
+        val firstB = events.filter { it.fromAccountId == CARD_B }.minBy { it.period }
+        assertEquals(10_000L, firstA.interestBase)
+        assertNull("B 沒填既有卡循，整筆欠款計息", firstB.interestBase)
     }
 
     @Test fun `試算：只影響第一次計息，之後沒繳清的欠款都計息`() {
-        val base = interests(snapshot)
+        val base = interests(withRevolving(null, null))
         val lower = interests(withRevolving(0, 0))
         assertTrue("原本第一次有利息", base.first() > 0)
-        // 利息為 0 的那一期不會產生事件，所以少一筆；第二次起照常計息。
-        assertEquals("兩張卡都沒有卡循，第一次不計息", base.size - 1, lower.size)
+        // 利息為 0 的那一期不會產生事件，所以每張卡各少一筆；第二次起照常計息。
+        assertEquals("兩張卡都沒有卡循，各自第一次不計息", base.size - 2, lower.size)
         assertTrue(lower.first() > 0)
         assertTrue(lower.sum() < base.sum())
     }

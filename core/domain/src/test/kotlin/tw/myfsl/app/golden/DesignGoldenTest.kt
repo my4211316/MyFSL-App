@@ -29,7 +29,8 @@ import org.junit.Test
 
 /**
  * 黃金測試：App 的計算引擎要算出和設計稿（design/mockups）完全相同的數字。
- * 設計稿數字由 sample-model.mjs 產生；兩邊任何一邊的邏輯改變，這裡就會失敗。
+ * 數字由 App 引擎算出、前幾期逐筆手算核對過（見 AutoPostingTest、BaselineBuilderTest），
+ * 再由 DesignNumbersDump 寫進 design/mockups/sample-numbers.json；引擎邏輯改變，這裡就會失敗。
  */
 class DesignGoldenTest {
 
@@ -40,16 +41,16 @@ class DesignGoldenTest {
 
     @Test fun `現況：最低水位、首次低於安全線、結構缺口、期末負債、曲線`() {
         val result = ScenarioApplier.run(base, emptyList())
-        assertEquals(-48_639L, result.lowestLiquid)
-        assertEquals(Period(2028, 2, Half.FIRST), result.lowest?.period)
+        assertEquals(18_465L, result.lowestLiquid)
+        assertEquals(Period(2027, 2, Half.FIRST), result.lowest?.period)
         assertEquals(Period(2027, 2, Half.FIRST), result.firstBelowSafety?.period)
         assertEquals(5, ForecastSummary.monthsUntil(base.start, result.firstBelowSafety!!.period))
-        assertEquals(-80_356L, result.structuralGapPerYear)
-        assertEquals(152_205L, result.endCardDebt)
-        assertEquals(1_274_601L, result.endTotalDebt)
-        assertEquals("兩年循環利息", 29_345L, result.totalCardInterest)
+        assertEquals(-84_747L, result.structuralGapPerYear)
+        assertEquals("A 卡每月刷約 28,000、固定只繳 18,000，卡債一路增加；B 卡 2027/1 繳清後不再扣款", 339_986L, result.endCardDebt)
+        assertEquals(1_462_382L, result.endTotalDebt)
+        assertEquals("兩年循環利息（只有 A 卡計息）", 48_526L, result.totalCardInterest)
         assertEquals(
-            listOf(106L, 118, 116, 116, 46, 10, 160, 170, 152, 121, 46, 45, 50, 59, 57, 57, -13, -49, 101, 111, 93, 62, -13, -14),
+            listOf(114L, 126, 124, 124, 54, 18, 177, 196, 196, 165, 99, 107, 121, 139, 146, 155, 94, 67, 226, 245, 245, 214, 148, 156),
             thousandsSeries(result),
         )
         assertEquals("−1.4萬", ForecastSummary.wanLabel(-14))
@@ -65,15 +66,15 @@ class DesignGoldenTest {
                 ScenarioChange.ChangeMethod(listOf(LIVING, FUEL, PHONE, CAR_SERVICE, TRIP), PaymentMethod.CREDIT_CARD, PaymentMethod.CASH, oct.index),
             ),
         )
-        assertEquals(2_880L, result.lowestLiquid)
+        assertEquals(13_786L, result.lowestLiquid)
         assertEquals(Period(2028, 2, Half.FIRST), result.lowest?.period)
         assertEquals(Period(2028, 2, Half.FIRST), result.firstBelowSafety?.period)
-        assertEquals(-109_355L, result.structuralGapPerYear)
+        assertEquals(-103_902L, result.structuralGapPerYear)
         assertEquals(0L, result.endCardDebt)
-        assertEquals("清掉卡債後只剩清償前的利息", 1_256L, result.totalCardInterest)
+        assertEquals("清掉卡債後只剩 9 月那一次的利息 60,000 × 15% ÷ 12", 750L, result.totalCardInterest)
         assertEquals(1_256_468L, result.endTotalDebt)
         assertEquals(
-            listOf(106L, 222, 226, 227, 158, 124, 275, 274, 252, 223, 153, 132, 107, 105, 105, 106, 37, 3, 154, 153, 131, 102, 32, 11),
+            listOf(114L, 233, 237, 238, 169, 135, 286, 285, 263, 234, 164, 143, 118, 116, 116, 117, 48, 14, 165, 164, 142, 113, 43, 22),
             thousandsSeries(result),
         )
     }
@@ -81,15 +82,15 @@ class DesignGoldenTest {
     @Test fun `情境：可調支出減少 20%`() {
         val flexible = listOf(LIVING, HOUSEHOLD, FUEL, LESSONS, CONTEST, RED_ENVELOPE, BIRTHDAY, TRIP)
         val result = ScenarioApplier.run(base, listOf(ScenarioChange.AdjustItems(flexible, -20.0, base.start.index)))
-        assertEquals(30_621L, result.lowestLiquid)
-        assertEquals(Period(2028, 2, Half.FIRST), result.lowest?.period)
+        assertEquals(44_725L, result.lowestLiquid)
+        assertEquals(Period(2027, 2, Half.FIRST), result.lowest?.period)
         assertNull(result.firstBelowSafety)
-        assertEquals(34_416L, result.structuralGapPerYear)
-        assertEquals(25_320L, result.endCardDebt)
-        assertEquals(1_147_716L, result.endTotalDebt)
-        assertEquals(14_512L, result.totalCardInterest)
+        assertEquals(29_837L, result.structuralGapPerYear)
+        assertEquals(212_278L, result.endCardDebt)
+        assertEquals(1_334_674L, result.endTotalDebt)
+        assertEquals(32_870L, result.totalCardInterest)
         assertEquals(
-            listOf(108L, 122, 125, 129, 62, 38, 192, 205, 192, 163, 92, 95, 103, 115, 118, 122, 55, 31, 185, 197, 185, 156, 85, 87),
+            listOf(115L, 129, 132, 136, 69, 45, 208, 230, 235, 206, 144, 155, 172, 194, 206, 219, 161, 145, 308, 330, 335, 307, 245, 256),
             thousandsSeries(result),
         )
     }

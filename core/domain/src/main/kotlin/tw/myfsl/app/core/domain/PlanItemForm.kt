@@ -39,6 +39,10 @@ data class PlanItemDraft(
     val lines: List<PlanLineDraft> = listOf(PlanLineDraft(PaymentMethod.CASH)),
     val sortOrder: Int = 0,
     val archived: Boolean = false,
+    /** 每月幾號（選填，1–31）。 */
+    val dueDay: String = "",
+    val extraRepayment: Boolean = false,
+    val archivedFrom: Int? = null,
 ) {
     /** 還沒用到的支付方式，給「新增支付方式列」用。 */
     val unusedMethods: List<PaymentMethod>
@@ -55,6 +59,8 @@ object PlanItemForm {
         const val ACCOUNT = "account"
         const val TO_ACCOUNT = "toAccount"
         const val LINES = "lines"
+        const val TYPE = "type"
+        const val DUE_DAY = "dueDay"
         fun month(line: Int, month: Int) = "line$line-month$month"
         fun method(line: Int) = "line$line-method"
     }
@@ -98,8 +104,15 @@ object PlanItemForm {
             lines = lines,
             sortOrder = item.sortOrder,
             archived = item.archived,
+            dueDay = item.dueDay?.toString().orEmpty(),
+            extraRepayment = item.extraRepayment,
+            archivedFrom = item.archivedFrom,
         )
     }
+
+    /** 這個項目已經有記帳時，類型不能改（R-EDT-11）：舊記帳的類型會對不上。 */
+    fun typeLocked(draft: PlanItemDraft, snapshot: FinanceSnapshot): Boolean =
+        draft.id != 0L && snapshot.ledger.any { it.itemId == draft.id }
 
     /** 切換類型時整理計畫列：支出要有支付方式，收入與轉帳合併成一列。 */
     fun changeType(draft: PlanItemDraft, type: FlowType): PlanItemDraft {
@@ -193,6 +206,13 @@ object PlanItemForm {
             FlowType.EXPENSE -> Unit
         }
 
+        val original = snapshot.item(draft.id)
+        if (original != null && original.type != draft.type && typeLocked(draft, snapshot)) {
+            errors[Field.TYPE] = "「${original.name}」已經有記帳，不能改成${draft.type.label}；請新增一個項目"
+        }
+        val dueDay = draft.dueDay.trim().takeIf { it.isNotEmpty() }?.let { raw ->
+            raw.toIntOrNull()?.takeIf { it in 1..31 }.also { if (it == null) errors[Field.DUE_DAY] = "日期要是 1 到 31" }
+        }
         if (draft.lines.isEmpty()) errors[Field.LINES] = "至少要有一列金額"
         if (draft.type == FlowType.EXPENSE) {
             val seen = mutableSetOf<PaymentMethod>()
@@ -225,6 +245,12 @@ object PlanItemForm {
         if (draft.flexibility == Flexibility.FLEXIBLE && draft.tracking == TrackingMode.AUTO) {
             warnings += "可調項目建議改成「依記帳」，才能控管進度"
         }
+        if (draft.tracking == TrackingMode.AUTO && draft.dueDay.isBlank()) {
+            warnings += "每月固定沒填日期：上半月當作 1 號、下半月當作 16 號到期"
+        }
+        if (draft.type == FlowType.TRANSFER && snapshot.isAutoManagedDebt(draft.toAccountId) && !draft.extraRepayment) {
+            warnings += "轉入的帳戶已依合約自動繳款，這個項目不會計入；若是額外還款請勾選「額外還款」"
+        }
 
         if (errors.isNotEmpty()) return Result(null, null, emptyMap(), errors, warnings)
 
@@ -241,6 +267,9 @@ object PlanItemForm {
             note = draft.note.trim(),
             archived = draft.archived,
             sortOrder = draft.sortOrder,
+            dueDay = dueDay,
+            extraRepayment = draft.type == FlowType.TRANSFER && draft.extraRepayment,
+            archivedFrom = draft.archivedFrom,
         )
         val createGroup = if (group == null && existingGroupForNewName == null) newGroupName else null
         return Result(item, createGroup, amounts, emptyMap(), warnings)

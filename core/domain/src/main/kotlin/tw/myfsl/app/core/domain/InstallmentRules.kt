@@ -104,20 +104,44 @@ object InstallmentRules {
         val nextAmount: Money,
     )
 
-    fun summary(installments: List<CardInstallment>, period: Period, cardAccountId: Long? = null): CardInstallments {
-        val active = installments.filter {
-            !it.settled &&
-                (cardAccountId == null || it.cardAccountId == cardAccountId) &&
-                remainingPeriods(it, period.index) > 0
+    /**
+     * 實際還沒入帳的期數（R-DUE）：到期日在起算日之後、且還沒記下。
+     * 到期了但還沒在記帳畫面點下的那一期也算未入帳。
+     */
+    fun unposted(snapshot: tw.myfsl.app.core.model.FinanceSnapshot, installment: CardInstallment): List<InstallmentPeriod> =
+        if (installment.settled) {
+            emptyList()
+        } else {
+            schedule(installment).filter { DueItems.isInstallmentPeriodPending(snapshot, installment.id, it.number, it.periodIndex) }
         }
+
+    /** 依實際入帳狀況的分期摘要。 */
+    fun summary(snapshot: tw.myfsl.app.core.model.FinanceSnapshot, installments: List<CardInstallment>): CardInstallments {
+        val pending = installments.associateWith { unposted(snapshot, it) }.filterValues { it.isNotEmpty() }
+        return CardInstallments(
+            count = pending.size,
+            pendingPrincipal = pending.values.sumOf { periods -> periods.sumOf { it.principal } },
+            nextAmount = pending.values.sumOf { periods -> periods.minByOrNull { it.periodIndex }?.total ?: 0L },
+        )
+    }
+
+    /** [fromIndex] 起（含）尚未入帳的分期摘要。 */
+    fun summary(installments: List<CardInstallment>, fromIndex: Int): CardInstallments {
+        val active = installments.filter { !it.settled && remainingPeriods(it, fromIndex) > 0 }
         return CardInstallments(
             count = active.size,
-            pendingPrincipal = active.sumOf { pendingPrincipal(it, period.index) },
+            pendingPrincipal = active.sumOf { pendingPrincipal(it, fromIndex) },
             nextAmount = active.sumOf { installment ->
-                pendingPeriods(installment, period.index).minByOrNull { it.periodIndex }?.total ?: 0L
+                pendingPeriods(installment, fromIndex).minByOrNull { it.periodIndex }?.total ?: 0L
             },
         )
     }
+
+    /**
+     * 今天以後才入帳的第一個期別：各期在期別開始那天（1 日或 16 日）入帳，
+     * 所以今天所在的半月那一期已經入帳，下一個半月起才是未入帳。
+     */
+    fun pendingFromIndex(today: java.time.LocalDate): Int = Period.of(today).index + 1
 
     /**
      * 第一期入帳的期別：消費後的下一個月，落在該卡繳款日所在的半月。

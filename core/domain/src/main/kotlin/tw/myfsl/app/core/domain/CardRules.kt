@@ -1,6 +1,5 @@
 package tw.myfsl.app.core.domain
 
-import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.CardPayMode
 import tw.myfsl.app.core.model.CardTerms
 import tw.myfsl.app.core.model.Money
@@ -28,43 +27,8 @@ object CardRules {
     fun minimumPayment(balance: Money, terms: CardTerms): Money {
         if (balance <= 0) return 0
         val byPercent = Math.round(balance * terms.minPaymentPercent / 100.0)
-        val interest = monthlyInterest(balance, terms.revolvingRatePercent)
+        val interest = monthlyInterest(interestBase(balance, terms), terms.revolvingRatePercent)
         return maxOf(terms.minPaymentFloor, byPercent, interest).coerceAtMost(balance)
-    }
-
-    /**
-     * 多張卡合併成「信用卡合計」的條件：
-     * 利率與最低應繳比例依餘額加權，下限相加，繳款方式與扣款帳戶以餘額最大的卡為準，
-     * 計息與繳款日取最早的一天。沒有設定循環條件的卡不納入。
-     */
-    fun pooled(cards: List<Account>): CardTerms? {
-        val withTerms = cards.filter { it.card != null }
-        if (withTerms.isEmpty()) return null
-        val total = withTerms.sumOf { it.balance.coerceAtLeast(0) }
-        fun weighted(pick: (CardTerms) -> Double): Double =
-            if (total <= 0) {
-                withTerms.map { pick(it.card!!) }.average()
-            } else {
-                withTerms.sumOf { pick(it.card!!) * it.balance.coerceAtLeast(0) } / total
-            }
-
-        val lead = withTerms.maxByOrNull { it.balance }!!.card!!
-        val fixed = withTerms.sumOf { it.card!!.fixedPayment ?: 0L }
-        return CardTerms(
-            revolvingRatePercent = weighted { it.revolvingRatePercent },
-            minPaymentPercent = weighted { it.minPaymentPercent },
-            minPaymentFloor = withTerms.sumOf { it.card!!.minPaymentFloor },
-            payMode = lead.payMode,
-            fixedPayment = fixed.takeIf { it > 0 },
-            payAccountId = lead.payAccountId,
-            payDay = withTerms.minOf { it.card!!.payDay },
-            // 任一張卡填了既有卡循才合計；沒填的卡以整筆欠款計。
-            revolvingBalance = if (withTerms.any { it.card!!.revolvingBalance != null }) {
-                withTerms.sumOf { interestBase(it.balance, it.card) }
-            } else {
-                null
-            },
-        )
     }
 
     /** 這樣繳下去，卡債會往哪裡走。 */
@@ -77,11 +41,16 @@ object CardRules {
     ) {
         /** 本月卡債變化：新刷 ＋ 利息 − 繳款。正數代表卡債變多。 */
         val change: Money get() = spending + interest - payment
-        val principalRepaid: Money get() = payment - interest
+
+        /** 還到本金 = 繳款 − 利息，最低 0；繳款不夠付利息時，沒付到的利息留在卡債裡。 */
+        val principalRepaid: Money get() = (payment - interest).coerceAtLeast(0)
+
+        /** 沒付到的利息。 */
+        val unpaidInterest: Money get() = (interest - payment).coerceAtLeast(0)
         val growing: Boolean get() = change > 0
 
-        /** 要讓卡債開始下降，每月還要多繳多少。 */
-        val extraToShrink: Money get() = if (change > 0) change else 0
+        /** 每月還要多繳多少，卡債才**不再增加**（多繳這個數字是持平；要下降須再多一些）。 */
+        val extraToStop: Money get() = if (change > 0) change else 0
     }
 
     fun outlook(balance: Money, terms: CardTerms, monthlySpending: Money, payment: Money? = null): CardOutlook {
@@ -97,12 +66,12 @@ object CardRules {
     /** 卡債會變多時的提醒文字；會下降時為 null。 */
     fun warning(outlook: CardOutlook): String? {
         if (!outlook.growing) return null
-        val extra = MoneyFormat.currency(outlook.extraToShrink)
+        val extra = MoneyFormat.currency(outlook.extraToStop)
         return if (outlook.payment <= outlook.interest) {
-            "繳的錢還不夠付循環利息 ${MoneyFormat.currency(outlook.interest)}，卡債只會變多；每月要多繳 $extra 才會開始下降"
+            "繳的錢還不夠付循環利息 ${MoneyFormat.currency(outlook.interest)}，卡債只會變多；每月至少要多繳 $extra 卡債才不會再增加"
         } else {
             "每月刷 ${MoneyFormat.currency(outlook.spending)}、利息 ${MoneyFormat.currency(outlook.interest)}，" +
-                "繳 ${MoneyFormat.currency(outlook.payment)} 不夠；每月要多繳 $extra 卡債才會開始下降"
+                "繳 ${MoneyFormat.currency(outlook.payment)} 不夠；每月至少要多繳 $extra 卡債才不會再增加"
         }
     }
 

@@ -12,7 +12,7 @@ class CashFlowEngineTest {
 
     private val start = Period(2026, 9, Half.FIRST)
     private val second = start.next()
-    private val pool = CashFlowEngine.CARD_POOL_ID
+    private val pool = CashFlowEngine.FALLBACK_CARD_ID
 
     private fun input(accounts: List<AccountSeed>, events: List<FlowEvent>, periods: Int = 2, safety: Long = 0) =
         ForecastInput(start, periods, accounts, events, safety, mapOf(PaymentMethod.CREDIT_CARD to pool))

@@ -19,6 +19,13 @@ data class AppSettings(
     val cardPostingDays: Int = 5,
     /** 上次匯出完整備份的日期（epochDay）；從沒備份過為 null。 */
     val lastBackupEpochDay: Long? = null,
+    /** 沒有指定卡片的刷卡（記帳、計畫、分期）歸到這張卡；未設定時用排序第一張卡。 */
+    val defaultCardId: Long? = null,
+    /**
+     * 到期項目的起算日（epochDay）：這天（含）以前到期的款項視為已經包含在校正的餘額裡，不會列在本月到期。
+     * 第一次開啟時設為當天；null 表示還沒開始（視為今天）。
+     */
+    val autoPostFrom: Long? = null,
 )
 
 /** 某個時間點的完整財務資料，供純計算函式使用。 */
@@ -35,11 +42,42 @@ data class FinanceSnapshot(
     val installments: List<CardInstallment> = emptyList(),
     val settings: AppSettings,
     val lastCheckIn: CheckIn? = null,
-    /** 刷卡但未指定卡片、且晚於最近一次信用卡校正的金額合計。 */
+    /** 刷卡但未指定卡片、且晚於最近一次「全部卡片一起對帳」的金額合計。 */
     val unassignedCardSpending: Money = 0,
+    /** 選了「這個月沒有」的到期項目識別碼；記下的項目看記帳上的識別碼（[recordedKeys]）。 */
+    val postedKeys: Set<String> = emptySet(),
+    /** 延期款項（含已付清的）。 */
+    val deferrals: List<Deferral> = emptyList(),
 ) {
     val activeAccounts: List<Account> get() = accounts.filter { !it.archived }
+
+    /** 到期項目的起算日；這天（含）以前到期的款項視為已包含在餘額裡。 */
+    val trackingFrom: LocalDate
+        get() = settings.autoPostFrom?.let(LocalDate::ofEpochDay)?.takeIf { !it.isAfter(today) } ?: today
+
+    /** 已經處理過的到期項目：記下的（記帳上的識別碼）與選了「這個月沒有」的。 */
+    val recordedKeys: Set<String> by lazy { postedKeys + ledger.mapNotNull { it.postingKey } }
     val activeItems: List<PlanItem> get() = items.filter { !it.archived }
+
+    val activeCards: List<Account> get() = activeAccounts.filter { it.kind == AccountKind.CREDIT_CARD }.sortedBy { it.sortOrder }
+
+    /** 沒有指定卡片的刷卡歸到哪一張卡；沒有任何信用卡時為 null。 */
+    val defaultCardId: Long?
+        get() = settings.defaultCardId?.takeIf { id -> activeCards.any { it.id == id } } ?: activeCards.firstOrNull()?.id
+
+    /** 已依合約（循環條件或攤還條件）自動繳款的負債帳戶。 */
+    fun isAutoManagedDebt(accountId: Long?): Boolean {
+        val account = account(accountId) ?: return false
+        return (account.kind == AccountKind.CREDIT_CARD && account.card != null) || account.loan != null
+    }
+
+    /**
+     * 某項目在某月是否仍在使用：封存只影響封存月份（含）之後，之前的計畫與紀錄照舊。
+     */
+    fun isItemActiveIn(item: PlanItem, year: Int, month: Int): Boolean {
+        val from = item.archivedFrom ?: return !item.archived
+        return year * 12 + (month - 1) < from
+    }
 
     fun account(id: Long?): Account? = accounts.firstOrNull { it.id == id }
     fun item(id: Long?): PlanItem? = items.firstOrNull { it.id == id }

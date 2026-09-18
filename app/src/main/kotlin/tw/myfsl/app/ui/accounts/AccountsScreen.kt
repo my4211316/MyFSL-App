@@ -88,6 +88,16 @@ fun AccountsScreen(
                     SummaryTile("可動用現金", MoneyFormat.currency(overview.liquid), Modifier.weight(1f))
                     SummaryTile("負債合計", MoneyFormat.currency(overview.totalDebt), Modifier.weight(1f))
                 }
+                if (overview.cards.isNotEmpty() || overview.unassignedCardSpending > 0) {
+                    Text(
+                        "信用卡總負債 ${MoneyFormat.currency(overview.cardTotalDebt)}＝已入帳卡款 ${MoneyFormat.currency(overview.cardDebt)}" +
+                            "＋未入帳分期本金 ${MoneyFormat.currency(overview.pendingInstallmentPrincipal)}" +
+                            if (overview.unassignedCardSpending > 0) "（含未指定卡片的刷卡 ${MoneyFormat.currency(overview.unassignedCardSpending)}）" else "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
             }
 
             if (overview.liquidAccounts.isNotEmpty()) {
@@ -103,7 +113,8 @@ fun AccountsScreen(
                     AccountRow(
                         title = card.account.name,
                         subtitle = listOf(card.account.kind.label, card.account.issuer).filter { it.isNotBlank() }.joinToString(" · "),
-                        amount = "欠 " + MoneyFormat.currency(card.account.balance),
+                        amount = "欠 " + MoneyFormat.currency(card.account.balance) +
+                            if (card.pendingInstallmentPrincipal > 0) "\n總 ${MoneyFormat.currency(card.totalDebt)}" else "",
                         details = cardDetails(card),
                         warn = (card.utilizationPercent ?: 0) >= 50,
                     ) { onEdit(card.account) }
@@ -142,7 +153,10 @@ fun AccountsScreen(
 
 private fun cardDetails(card: CardView): List<String> = buildList {
     card.account.creditLimit?.let { limit ->
-        add("額度 ${MoneyFormat.currency(limit)} · 已佔用 ${MoneyFormat.currency(card.usedCredit)}" + (card.utilizationPercent?.let { " · 使用率 $it%" } ?: ""))
+        add(
+            "額度 ${MoneyFormat.currency(limit)} · 已佔用 ${MoneyFormat.currency(card.usedCredit)} · 可用 ${MoneyFormat.currency(card.available ?: 0)}" +
+                (card.utilizationPercent?.let { " · 使用率 $it%" } ?: ""),
+        )
     }
     if (card.installmentCount > 0) {
         add("分期 ${card.installmentCount} 筆 · 未入帳 ${MoneyFormat.currency(card.pendingInstallmentPrincipal)} · 下期 ${MoneyFormat.currency(card.nextInstallmentAmount)}")

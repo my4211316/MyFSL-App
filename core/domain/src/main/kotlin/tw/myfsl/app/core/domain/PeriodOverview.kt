@@ -48,6 +48,8 @@ data class PeriodOverview(
     val upcoming: List<UpcomingItem>,
     /** 需要提醒備份時的文字；最近備份過為 null。 */
     val backupReminder: String? = null,
+    /** 總水位夠、但某個扣款帳戶會不夠扣時的提醒（R-FC-12）。 */
+    val shortfall: String? = null,
 )
 
 /** 本期畫面的資料：現金、水位、本週檢查、可調支出進度、接下來到期。 */
@@ -92,7 +94,8 @@ object PeriodOverviewCalculator {
             monthsUntilBelowSafety = result.firstBelowSafety?.let { ForecastSummary.monthsUntil(start, it.period) },
             checkIn = CheckInReminder(
                 daysSinceLast = last?.let { ChronoUnit.DAYS.between(it, today) },
-                confirmCount = CheckInRules.confirmLines(snapshot).size,
+                // 到期確認＋到期還沒記下的項目（R-DUE-05）
+                confirmCount = CheckInRules.confirmLines(snapshot).size + CheckInRules.dueLines(snapshot).size,
                 reconcileCount = CheckInRules.reconciles(snapshot).size,
                 missedLabel = RecordRules.missedLabel(RecordRules.missedSummary(snapshot)),
                 isCheckInDay = today.dayOfWeek == snapshot.settings.checkInDay,
@@ -100,6 +103,9 @@ object PeriodOverviewCalculator {
             budget = BudgetProgressCalculator.forMonth(snapshot),
             upcoming = upcoming,
             backupReminder = backupReminder(snapshot),
+            shortfall = result.firstShortfall?.let { (p, id) ->
+                "「${result.input.accountName(id)}」約 ${ForecastSummary.shortLabel(p.period)} 會不夠扣款，記得先從其他帳戶轉入"
+            },
         )
     }
 

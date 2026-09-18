@@ -8,7 +8,8 @@ import tw.myfsl.app.core.model.Period
 
 enum class EventKind { INCOME, EXPENSE, TRANSFER }
 
-enum class EventSource { PLAN, LOAN_SCHEDULE, CARD_SCHEDULE, INSTALLMENT, SCENARIO }
+/** 事件來源。情境的「調整／停止項目／改支付方式」只作用在 [PLAN]，不會動到既有分期、延期與合約繳款。 */
+enum class EventSource { PLAN, DEFERRAL, LOAN_SCHEDULE, CARD_SCHEDULE, INSTALLMENT, SCENARIO }
 
 /**
  * 模擬中的一筆金流。
@@ -64,13 +65,18 @@ data class ForecastInput(
     val accounts: List<AccountSeed>,
     val events: List<FlowEvent>,
     val safetyLevel: Money,
-    /** 支付方式 → 模擬用的扣款帳戶（信用卡為合併的 [CashFlowEngine.CARD_POOL_ID]）。 */
+    /** 支付方式 → 模擬用的扣款帳戶（信用卡為預設卡片）。 */
     val methodAccounts: Map<PaymentMethod, Long> = emptyMap(),
-    /** 原始信用卡帳戶 id；模擬時全部合併成一個信用卡合計。 */
-    val cardAccountIds: Set<Long> = emptySet(),
+    /**
+     * 試算期間結束後才入帳的分期本金，依卡片分列。
+     * 這些已經是消費過的付款義務，期末總負債要算進去（R-FC-10）。
+     */
+    val installmentsBeyond: Map<Long, Money> = emptyMap(),
 ) {
-    /** 把信用卡帳戶 id 轉成信用卡合計 id，其他帳戶不變。 */
-    fun mapAccount(id: Long?): Long? = if (id != null && id in cardAccountIds) CashFlowEngine.CARD_POOL_ID else id
+    /** 帳戶 id 原樣回傳（每張卡各自模擬）。保留給情境套用時統一使用。 */
+    fun mapAccount(id: Long?): Long? = id
+
+    val accountName: (Long) -> String get() = { id -> accounts.firstOrNull { it.id == id }?.name ?: "帳戶" }
 }
 
 data class ResolvedEvent(val event: FlowEvent, val amount: Money)
@@ -121,22 +127,36 @@ class ForecastResult(
         ?: input.accounts.filter { it.kind == AccountKind.CREDIT_CARD }.sumOf { it.balance }
     val endLoanDebt: Money = periods.lastOrNull()?.loanDebtEnd
         ?: input.accounts.filter { it.kind.isLiability && it.kind != AccountKind.CREDIT_CARD }.sumOf { it.balance }
-    val endTotalDebt: Money = endCardDebt + endLoanDebt
+
+    /** 期末仍未入帳的分期本金（試算期間之後才入帳）。 */
+    val endPendingInstallments: Money = input.installmentsBeyond.values.sum()
+
+    /** 期末總負債 = 卡債 ＋ 未入帳分期本金 ＋ 貸款與保單借款。 */
+    val endTotalDebt: Money = endCardDebt + endPendingInstallments + endLoanDebt
 
     /**
-     * 結構缺口（換算成每年）：收入 − 支出 − 貸款本金還款，不含新借款與一次性清償。
-     * 負數代表入不敷出，差額只能靠存款、刷卡或借款補。
+     * 試算期間年化缺口：(收入 − 支出 − 貸款本金還款) × 24 ÷ 期數。
+     * 支出含一般消費、貸款利息、循環利息、分期手續費；不含分期本金入帳（消費當月已算）、一次清償與新借款。
+     * 第一期若只剩半個半月，仍以整期計算（R-FC-10）。
      */
     val structuralGapPerYear: Money =
         if (periods.isEmpty()) 0
         else Math.round((totalIncome - totalExpense - totalPrincipalRepaid).toDouble() * 24 / periods.size)
+
+    /** 第一次有扣款帳戶餘額變成負數的期別與帳戶；總水位夠、個別帳戶不夠時也要提醒。 */
+    val firstShortfall: Pair<PeriodResult, Long>? = run {
+        val liquidIds = input.accounts.filter { it.kind.isLiquid }.map { it.id }.toSet()
+        periods.firstNotNullOfOrNull { p ->
+            p.balances.entries.firstOrNull { it.key in liquidIds && it.value < 0 }?.let { p to it.key }
+        }
+    }
 }
 
 /** 以半月為單位逐期模擬所有帳戶餘額。純函式，無副作用。 */
 object CashFlowEngine {
 
-    /** 模擬時所有信用卡合併成的一個負債帳戶。 */
-    const val CARD_POOL_ID = -1L
+    /** 沒有任何信用卡、計畫卻有刷卡時，模擬用的替代卡片。 */
+    const val FALLBACK_CARD_ID = -1L
 
     fun run(input: ForecastInput): ForecastResult {
         val kinds = input.accounts.associate { it.id to it.kind }
@@ -204,6 +224,10 @@ object CashFlowEngine {
                             ),
                         )
                     }
+
+                    // 還款最多還到欠款為 0，多的錢留在原帳戶（R-PAY-02）。
+                    event.kind == EventKind.TRANSFER && event.toAccountId?.let { kinds[it] }?.isLiability == true ->
+                        minOf(event.amount, balances.getValue(event.toAccountId).coerceAtLeast(0))
 
                     else -> event.amount
                 }

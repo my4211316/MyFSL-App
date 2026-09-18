@@ -169,7 +169,15 @@ fun RecordsScreen(
             text = {
                 Text(
                     "${row.title} ${row.amountText}\n${row.subtitle}" +
-                        if (row.sourceLabel?.startsWith("分") == true) "\n分期消費會連同尚未入帳的各期一起刪除。" else "",
+                        when {
+                            row.sourceLabel == "分期入帳" || row.sourceLabel == "分期手續費" -> "\n這一期的本金與手續費一起刪掉，回到記帳畫面的「本月到期」。"
+                            row.sourceLabel?.startsWith("分") == true -> "\n分期消費會連同已入帳與未入帳的各期一起刪除。"
+                            row.sourceLabel == "貸款月繳" -> "\n本金與利息一起刪掉，剩餘期數加回一期，回到記帳畫面的「本月到期」。"
+                            row.sourceLabel in setOf("每月固定", "循環利息", "繳卡費") -> "\n刪掉後回到記帳畫面的「本月到期」，可以重新記下。"
+                            row.sourceLabel == "到期確認" -> "\n刪掉後這個項目本月會回到「待確認」。"
+                            row.sourceLabel == "延期款" -> "\n刪掉後這筆延期款會回到「未付」。"
+                            else -> ""
+                        },
                 )
             },
             confirmButton = {

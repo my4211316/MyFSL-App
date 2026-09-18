@@ -69,6 +69,9 @@ data class PlanItemEntity(
     val note: String,
     val archived: Boolean,
     val sortOrder: Int,
+    val dueDay: Int? = null,
+    val extraRepayment: Boolean = false,
+    val archivedFrom: Int? = null,
 )
 
 @Serializable
@@ -93,7 +96,7 @@ data class ItemActualEntity(
 )
 
 @Serializable
-@Entity(tableName = "ledger_entries", indices = [Index("itemId"), Index("epochDay")])
+@Entity(tableName = "ledger_entries", indices = [Index("itemId"), Index("epochDay"), Index(value = ["postingKey"], unique = true)])
 data class LedgerEntryEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val epochDay: Long,
@@ -107,6 +110,30 @@ data class LedgerEntryEntity(
     val source: String = "MANUAL",
     val installmentId: Long? = null,
     val createdAtMillis: Long = 0,
+    /** 到期項目與延期付款的識別碼；唯一，保證同一筆不會記兩次。 */
+    val postingKey: String? = null,
+)
+
+/** 選了「這個月沒有」的到期項目識別碼，之後不再列出。 */
+@Serializable
+@Entity(tableName = "posted_keys")
+data class PostedKeyEntity(
+    @PrimaryKey val key: String,
+    val epochDay: Long,
+)
+
+@Serializable
+@Entity(tableName = "deferrals", indices = [Index("itemId")])
+data class DeferralEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val itemId: Long,
+    val method: String,
+    val fromYear: Int,
+    val fromMonth: Int,
+    val dueYear: Int,
+    val dueMonth: Int,
+    val amount: Long,
+    val settled: Boolean,
 )
 
 @Serializable

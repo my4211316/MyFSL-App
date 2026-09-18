@@ -127,6 +127,9 @@ class PlanItemFormTest {
             .copy(name = "零用", flexibility = Flexibility.FLEXIBLE, tracking = TrackingMode.AUTO)
         val result = PlanItemForm.validate(draft, snapshot)
         assertTrue("提醒不擋存檔", result.ok)
-        assertEquals(2, result.warnings.size)
+        assertEquals("全部為 0、可調卻每月固定、每月固定沒填日期", 3, result.warnings.size)
+        assertTrue(result.warnings.any { it.startsWith("每月固定沒填日期") })
+        // 填了日期就不再提醒日期
+        assertEquals(2, PlanItemForm.validate(draft.copy(dueDay = "10"), snapshot).warnings.size)
     }
 }

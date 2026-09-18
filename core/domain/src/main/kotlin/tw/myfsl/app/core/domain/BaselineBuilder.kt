@@ -7,6 +7,7 @@ import tw.myfsl.app.core.model.FinanceSnapshot
 import tw.myfsl.app.core.model.FlowType
 import tw.myfsl.app.core.model.Flexibility
 import tw.myfsl.app.core.model.Half
+import tw.myfsl.app.core.model.InstallmentPeriod
 import tw.myfsl.app.core.model.ItemActual
 import tw.myfsl.app.core.model.LedgerEntry
 import tw.myfsl.app.core.model.Money
@@ -27,7 +28,10 @@ data class ItemActualView(
 
 object ActualCalculator {
 
-    /** 計畫列某月至今的實際金額 = 當月該列所有記帳的合計（含本週檢查產生的差額與補記）。 */
+    /**
+     * 計畫列某月至今的實際金額 = 當月該列記帳的合計（含對帳差額、到期確認、到期記下）。
+     * 分期各期入帳的本金不算（消費當月已經算過全額）；延期付款算在原本的月份以外，不在這裡。
+     */
     fun actualFor(
         line: PlanLine,
         year: Int,
@@ -39,7 +43,8 @@ object ActualCalculator {
             it.itemId == line.itemId && it.method == line.method && it.year == year && it.month == month
         }?.status
         val entries = ledger.filter {
-            it.itemId == line.itemId && it.method == line.method &&
+            it.itemId == line.itemId && it.method == line.method && it.countsForBudget &&
+                it.postingKey?.startsWith(tw.myfsl.app.core.model.PostingKeys.DEFERRAL) != true &&
                 it.date.year == year && it.date.monthValue == month
         }
         return ItemActualView(
@@ -51,86 +56,88 @@ object ActualCalculator {
 }
 
 /**
- * 產生「現況」基準線：從今天所在的半月開始，未來用計畫、當月扣掉已發生的實際數字。
- * 起始餘額為各帳戶目前推算的餘額；所有信用卡合併成一個信用卡合計。
+ * 產生「現況」基準線（R-FC）：從今天所在的半月開始，只放**今天以後**才會發生的事。
+ *
+ * - 起始餘額為各帳戶目前推算的餘額；每張信用卡各自一個帳戶，未指定卡片的刷卡算在預設卡片。
+ * - 到期項目（R-DUE）：起算日（含）以前到期的視為已在餘額裡；之後到期、已經記下的不再預測；
+ *   到期了還沒記下的放在今天所在的半月，還沒到期的依到期日放。
+ * - 每月固定的項目本月以前看到期清單；依記帳、回報、確認的項目本月放「計畫 − 已發生」。
+ * - 延期款項獨立列出，金額固定。
  */
 object BaselineBuilder {
 
     fun build(snapshot: FinanceSnapshot, periodCount: Int = snapshot.settings.horizonMonths * 2): ForecastInput {
-        val start = Period.of(snapshot.today)
+        val today = snapshot.today
+        val start = Period.of(today)
         val end = start.index + periodCount
         val active = snapshot.activeAccounts
-        val cards = active.filter { it.kind == AccountKind.CREDIT_CARD }
-        val cardIds = cards.map { it.id }.toSet()
+        val defaultCard = snapshot.defaultCardId ?: CashFlowEngine.FALLBACK_CARD_ID
 
-        val seeds = active.filter { it.kind != AccountKind.CREDIT_CARD }
-            .map { AccountSeed(it.id, it.name, it.kind, it.balance) } +
-            AccountSeed(
-                CashFlowEngine.CARD_POOL_ID,
-                "信用卡",
-                AccountKind.CREDIT_CARD,
-                cards.sumOf { it.balance } + snapshot.unassignedCardSpending,
-            )
+        val seeds = active.map { account ->
+            val extra = if (account.id == defaultCard) snapshot.unassignedCardSpending else 0L
+            AccountSeed(account.id, account.name, account.kind, account.balance + extra)
+        } + if (snapshot.defaultCardId == null) {
+            listOf(AccountSeed(CashFlowEngine.FALLBACK_CARD_ID, "信用卡", AccountKind.CREDIT_CARD, snapshot.unassignedCardSpending))
+        } else {
+            emptyList()
+        }
 
         val methodAccounts = buildMap {
             PaymentMethod.entries.forEach { method ->
-                val id = if (method == PaymentMethod.CREDIT_CARD) CashFlowEngine.CARD_POOL_ID else snapshot.methodAccountId(method)
+                val id = if (method == PaymentMethod.CREDIT_CARD) defaultCard else snapshot.methodAccountId(method)
                 if (id != null) put(method, id)
             }
         }
-        val input = ForecastInput(start, periodCount, seeds, emptyList(), snapshot.settings.safetyLevel, methodAccounts, cardIds)
+        val input = ForecastInput(start, periodCount, seeds, emptyList(), snapshot.settings.safetyLevel, methodAccounts)
         val events = ArrayList<FlowEvent>()
 
         val months = Period.range(start, periodCount).map { it.yearMonth }.distinct()
-        val currentMonth = start.yearMonth
-        val postponed = mutableMapOf<Pair<PlanLine, YearMonth>, Money>()
+        val currentMonth = YearMonth.from(today)
 
         for (ym in months) {
-            for (item in snapshot.activeItems) {
+            for (item in snapshot.items) {
+                if (!snapshot.isItemActiveIn(item, ym.year, ym.monthValue)) continue
+                // 繳給已依合約自動繳款的卡片或貸款：除非標成額外還款，否則不計（R-PAY-01）。
+                if (item.type == FlowType.TRANSFER && snapshot.isAutoManagedDebt(item.toAccountId) && !item.extraRepayment) continue
                 val lines = if (item.type == FlowType.EXPENSE) {
                     snapshot.linesOf(item.id).filter { it.method != null }
                 } else {
                     listOf(PlanLine(item.id, null))
                 }
                 for (line in lines) {
-                    var monthAmount = snapshot.planAmount(line, ym.year, ym.monthValue) +
-                        (postponed.remove(line to ym) ?: 0L)
-                    var firstHalfPassed = false
-
+                    val planned = snapshot.planAmount(line, ym.year, ym.monthValue)
+                    if (planned <= 0) continue
+                    if (item.tracking == TrackingMode.AUTO) {
+                        // 每月固定：本月以前看到期清單（還沒記下的才算，見 addDueItems）；之後的月份依到期日放。
+                        if (!ym.isAfter(currentMonth)) continue
+                        item.occurrences(ym.year, ym.monthValue, planned)
+                            .forEach { (date, amount) -> events.addIfInRange(item, line, Period.of(date), amount, input, end) }
+                        continue
+                    }
+                    var monthAmount = planned
                     if (ym == currentMonth) {
                         val actual = ActualCalculator.actualFor(line, ym.year, ym.monthValue, snapshot.actuals, snapshot.ledger)
-                        when {
-                            actual.status == ActualStatus.POSTPONED -> {
-                                postponed[line to ym.plusMonths(1)] = monthAmount
-                                monthAmount = 0
-                            }
-
-                            actual.status == ActualStatus.DONE -> monthAmount = 0
-                            item.tracking == TrackingMode.AUTO && !actual.reported -> Unit
-                            else -> monthAmount = (monthAmount - actual.amount).coerceAtLeast(0)
-                        }
-                        firstHalfPassed = start.half == Half.SECOND
-                        if (firstHalfPassed && item.tracking != TrackingMode.AUTO && monthAmount > 0) {
-                            // 回報型項目：剩下的額度都算在下半月。
-                            events.addIfInRange(item, line, Period(ym.year, ym.monthValue, Half.SECOND), monthAmount, input, end)
-                            continue
+                        monthAmount = when (actual.status) {
+                            ActualStatus.DONE, ActualStatus.POSTPONED -> 0
+                            else -> (planned - actual.amount).coerceAtLeast(0)
                         }
                     }
-
                     if (monthAmount <= 0L) continue
-                    val (first, second) = item.timing.split(monthAmount)
-                    if (!firstHalfPassed) {
-                        events.addIfInRange(item, line, Period(ym.year, ym.monthValue, Half.FIRST), first, input, end)
+                    // 已經過了的發生日，剩下的額度移到今天所在的半月。
+                    item.occurrences(ym.year, ym.monthValue, monthAmount).forEach { (date, amount) ->
+                        val period = if (date.isAfter(today)) Period.of(date) else start
+                        events.addIfInRange(item, line, period, amount, input, end)
                     }
-                    events.addIfInRange(item, line, Period(ym.year, ym.monthValue, Half.SECOND), second, input, end)
                 }
             }
         }
 
-        addInstallments(snapshot, input, end, events)
+        addDueItems(snapshot, input, end, events)
+        addDeferrals(snapshot, input, end, events)
+        val beyond = addInstallments(snapshot, input, end, events)
         addCardSchedule(snapshot, input, end, events)
         addLoanSchedules(snapshot, input, end, events)
-        return input.copy(events = events)
+        return input.copy(events = events, installmentsBeyond = beyond)
     }
 
     private fun MutableList<FlowEvent>.addIfInRange(
@@ -140,9 +147,48 @@ object BaselineBuilder {
         amount: Money,
         input: ForecastInput,
         endIndex: Int,
+        source: EventSource = EventSource.PLAN,
     ) {
         if (amount <= 0L || period.index < input.start.index || period.index >= endIndex) return
-        add(toEvent(item, line.method, period, amount, input))
+        add(toEvent(item, line.method, period, amount, input).copy(source = source))
+    }
+
+    /** 下一個到期日：本月的 [day] 還沒到就是本月，否則下個月（短月份取月底）。 */
+    fun nextDue(today: java.time.LocalDate, day: Int): java.time.LocalDate {
+        val ym = YearMonth.from(today)
+        val thisMonth = ym.atDay(day.coerceIn(1, ym.lengthOfMonth()))
+        if (thisMonth.isAfter(today)) return thisMonth
+        val next = ym.plusMonths(1)
+        return next.atDay(day.coerceIn(1, next.lengthOfMonth()))
+    }
+
+    /** 本月以前每月固定、還沒記下的到期項目：到期了放今天所在的半月，還沒到期的依到期日放。 */
+    private fun addDueItems(snapshot: FinanceSnapshot, input: ForecastInput, endIndex: Int, events: MutableList<FlowEvent>) {
+        DueItems.list(snapshot).filter { it.kind == DueKind.PLAN }.forEach { due ->
+            val item = due.item ?: return@forEach
+            events.addIfInRange(item, PlanLine(item.id, due.method), periodFor(snapshot, due.date, input), due.amount, input, endIndex)
+        }
+    }
+
+    /** 到期日所在的期別；已經到期（還沒記下）的放在今天所在的半月。 */
+    private fun periodFor(snapshot: FinanceSnapshot, date: java.time.LocalDate, input: ForecastInput): Period =
+        if (date.isAfter(snapshot.today)) Period.of(date) else input.start
+
+    /** 延期款項（R-DEF）：未付清的，在到期月份（已過期的算在本期）依項目時點放入。 */
+    private fun addDeferrals(snapshot: FinanceSnapshot, input: ForecastInput, endIndex: Int, events: MutableList<FlowEvent>) {
+        val today = snapshot.today
+        snapshot.deferrals.filter { !it.settled && it.amount > 0 }.forEach { deferral ->
+            val item = snapshot.item(deferral.itemId) ?: return@forEach
+            val due = YearMonth.of(deferral.dueYear, deferral.dueMonth)
+            val line = deferral.line
+            if (!due.isAfter(YearMonth.from(today))) {
+                events.addIfInRange(item, line, input.start, deferral.amount, input, endIndex, EventSource.DEFERRAL)
+            } else {
+                item.occurrences(due.year, due.monthValue, deferral.amount).forEach { (date, amount) ->
+                    events.addIfInRange(item, line, Period.of(date), amount, input, endIndex, EventSource.DEFERRAL)
+                }
+            }
+        }
     }
 
     fun toEvent(item: PlanItem, method: PaymentMethod?, period: Period, amount: Money, input: ForecastInput): FlowEvent =
@@ -173,16 +219,23 @@ object BaselineBuilder {
         )
 
     /**
-     * 分期：每期入帳一期金額。本金不再算成支出（刷卡當月已算過預算），手續費算成支出。
+     * 分期：還沒入帳的每期（R-DUE；到期了還沒記下的放今天所在的半月）。本金不再算成支出（刷卡當月已算過預算），手續費算成支出。
+     * 回傳試算期間之後才入帳的本金（依卡片），期末總負債要算進去。
      */
-    private fun addInstallments(snapshot: FinanceSnapshot, input: ForecastInput, endIndex: Int, events: MutableList<FlowEvent>) {
-        val pool = CashFlowEngine.CARD_POOL_ID
+    private fun addInstallments(snapshot: FinanceSnapshot, input: ForecastInput, endIndex: Int, events: MutableList<FlowEvent>): Map<Long, Money> {
+        val fallback = input.methodAccounts[PaymentMethod.CREDIT_CARD] ?: CashFlowEngine.FALLBACK_CARD_ID
+        val beyond = mutableMapOf<Long, Money>()
         snapshot.installments.filter { !it.settled }.forEach { installment ->
-            val card = input.mapAccount(installment.cardAccountId) ?: pool
-            InstallmentRules.pendingPeriods(installment, input.start.index)
-                .filter { it.periodIndex < endIndex }
+            val card = installment.cardAccountId?.takeIf { id -> input.accounts.any { it.id == id } } ?: fallback
+            val pending = InstallmentRules.unposted(snapshot, installment)
+            fun at(period: InstallmentPeriod) = periodFor(snapshot, Period.fromIndex(period.periodIndex).startDate, input)
+            pending.filter { at(it).index >= endIndex }.sumOf { it.principal }.takeIf { it > 0 }?.let {
+                beyond[card] = (beyond[card] ?: 0L) + it
+            }
+            pending
+                .filter { at(it).index < endIndex }
                 .forEach { period ->
-                    val at = Period.fromIndex(period.periodIndex)
+                    val at = at(period)
                     val name = snapshot.item(installment.itemId)?.name ?: "分期"
                     if (period.principal > 0) {
                         events += FlowEvent(
@@ -203,77 +256,83 @@ object BaselineBuilder {
                     }
                 }
         }
+        return beyond
     }
 
     /**
-     * 信用卡循環利息與繳款：所有設了循環條件的卡合併成信用卡合計處理。
-     * 利息視為刷在卡上的支出，繳款則從扣款帳戶轉到信用卡合計。
+     * 有循環條件的卡，逐卡在各自的繳款日產生：先計息，再依該卡繳款方式扣款（R-CARD-03）。
+     * 從起算日之後的第一個繳款日開始；已經記下的月份跳過，到期了還沒記下的放在今天所在的半月（R-DUE）。
      */
     private fun addCardSchedule(snapshot: FinanceSnapshot, input: ForecastInput, endIndex: Int, events: MutableList<FlowEvent>) {
-        val cards = snapshot.activeAccounts.filter { it.kind == AccountKind.CREDIT_CARD }
-        val terms = CardRules.pooled(cards) ?: return
-        val pool = CashFlowEngine.CARD_POOL_ID
-        val payAccount = input.mapAccount(terms.payAccountId) ?: snapshot.methodAccountId(PaymentMethod.TRANSFER) ?: return
-        var period = Period(input.start.year, input.start.month, Period.halfOfDay(terms.payDay))
-        if (period < input.start) period = period.plus(2)
-        var first = true
-        while (period.index < endIndex) {
-            events += FlowEvent(
-                period = period,
-                kind = EventKind.EXPENSE,
-                amount = 0,
-                label = "信用卡循環利息",
-                fromAccountId = pool,
-                relatedAccountId = pool,
-                interestRatePercent = terms.revolvingRatePercent,
-                // 既有卡循只影響第一次計息；之後沒繳清的欠款都會計息。
-                interestBase = if (first) terms.revolvingBalance else null,
-                source = EventSource.CARD_SCHEDULE,
-            )
-            first = false
-            val payment = when (terms.payMode) {
-                CardPayMode.FULL -> FlowEvent(
-                    period = period, kind = EventKind.TRANSFER, amount = 0, label = "繳卡費（當期全額）",
-                    fromAccountId = payAccount, toAccountId = pool, relatedAccountId = pool,
-                    payFullBalance = true, source = EventSource.CARD_SCHEDULE,
-                )
-
-                CardPayMode.MINIMUM -> FlowEvent(
-                    period = period, kind = EventKind.TRANSFER, amount = 0, label = "繳卡費（最低應繳）",
-                    fromAccountId = payAccount, toAccountId = pool, relatedAccountId = pool,
-                    minimumPayment = MinimumPaymentRule(terms.minPaymentPercent, terms.minPaymentFloor, terms.revolvingRatePercent),
+        snapshot.activeCards.forEach { card ->
+            val terms = card.card ?: return@forEach
+            val payAccount = terms.payAccountId?.takeIf { id -> input.accounts.any { it.id == id && it.kind.isLiquid } }
+                ?: snapshot.methodAccountId(PaymentMethod.TRANSFER)
+            var due = nextDue(snapshot.trackingFrom, terms.payDay)
+            var first = true
+            while (periodFor(snapshot, due, input).index < endIndex) {
+                val period = periodFor(snapshot, due, input)
+                val ym = YearMonth.from(due)
+                if (DueItems.cardInterestKey(card.id, ym) !in snapshot.recordedKeys) events += FlowEvent(
+                    period = period,
+                    kind = EventKind.EXPENSE,
+                    amount = 0,
+                    label = "${card.name} 循環利息",
+                    fromAccountId = card.id,
+                    relatedAccountId = card.id,
+                    interestRatePercent = terms.revolvingRatePercent,
+                    // 既有卡循只影響第一次計息；之後沒繳清的欠款都會計息。
+                    interestBase = if (first) terms.revolvingBalance else null,
                     source = EventSource.CARD_SCHEDULE,
-                )
+                ).also { first = false }
+                if (payAccount != null && DueItems.cardPaymentKey(card.id, ym) !in snapshot.recordedKeys) {
+                    val payment = when (terms.payMode) {
+                        CardPayMode.FULL -> FlowEvent(
+                            period = period, kind = EventKind.TRANSFER, amount = 0, label = "繳 ${card.name}（當期全額）",
+                            fromAccountId = payAccount, toAccountId = card.id, relatedAccountId = card.id,
+                            payFullBalance = true, source = EventSource.CARD_SCHEDULE,
+                        )
 
-                CardPayMode.FIXED -> FlowEvent(
-                    period = period, kind = EventKind.TRANSFER, amount = terms.fixedPayment ?: 0, label = "繳卡費",
-                    fromAccountId = payAccount, toAccountId = pool, relatedAccountId = pool,
-                    source = EventSource.CARD_SCHEDULE,
-                )
+                        CardPayMode.MINIMUM -> FlowEvent(
+                            period = period, kind = EventKind.TRANSFER, amount = 0, label = "繳 ${card.name}（最低應繳）",
+                            fromAccountId = payAccount, toAccountId = card.id, relatedAccountId = card.id,
+                            minimumPayment = MinimumPaymentRule(terms.minPaymentPercent, terms.minPaymentFloor, terms.revolvingRatePercent),
+                            source = EventSource.CARD_SCHEDULE,
+                        )
+
+                        CardPayMode.FIXED -> FlowEvent(
+                            period = period, kind = EventKind.TRANSFER, amount = terms.fixedPayment ?: 0, label = "繳 ${card.name}",
+                            fromAccountId = payAccount, toAccountId = card.id, relatedAccountId = card.id,
+                            source = EventSource.CARD_SCHEDULE,
+                        )
+                    }
+                    if (payment.amount > 0 || payment.payFullBalance || payment.minimumPayment != null) events += payment
+                }
+                due = nextDue(due, terms.payDay)
             }
-            if (payment.amount > 0 || payment.payFullBalance || payment.minimumPayment != null) events += payment
-            period = period.plus(2)
         }
     }
 
+    /** 有攤還條件的貸款：從起算日之後還沒記下的繳款日開始，依目前餘額與剩餘期數攤還（R-DUE）。 */
     private fun addLoanSchedules(snapshot: FinanceSnapshot, input: ForecastInput, endIndex: Int, events: MutableList<FlowEvent>) {
-        val start = input.start
         snapshot.activeAccounts
             .filter { it.kind == AccountKind.LOAN || it.kind == AccountKind.POLICY_LOAN }
             .forEach { loan ->
                 val terms = loan.loan ?: return@forEach
                 if (loan.balance <= 0) return@forEach
-                var first = Period(start.year, start.month, Period.halfOfDay(terms.payDay))
-                if (first < start) first = first.plus(2)
-                LoanAmortization.schedule(loan.balance, terms.annualRatePercent, terms.remainingMonths, terms.method)
-                    .forEachIndexed { i, installment ->
-                        val period = first.plus(i * 2)
-                        if (period.index >= endIndex) return@forEach
-                        events += loanEvents(
-                            loan.id, loan.name, input.mapAccount(terms.payAccountId) ?: terms.payAccountId,
-                            period, installment, EventSource.LOAN_SCHEDULE,
-                        )
+                val schedule = LoanAmortization.schedule(loan.balance, terms.annualRatePercent, terms.remainingMonths, terms.method)
+                var due = nextDue(snapshot.trackingFrom, terms.payDay)
+                var next = 0
+                while (next < schedule.size) {
+                    val period = periodFor(snapshot, due, input)
+                    if (period.index >= endIndex) break
+                    // 已經記下（或選了這個月沒有）的月份，餘額與期數已經反映，跳過。
+                    if (DueItems.loanKey(loan.id, YearMonth.from(due)) !in snapshot.recordedKeys) {
+                        events += loanEvents(loan.id, loan.name, terms.payAccountId, period, schedule[next], EventSource.LOAN_SCHEDULE)
+                        next++
                     }
+                    due = nextDue(due, terms.payDay)
+                }
             }
     }
 

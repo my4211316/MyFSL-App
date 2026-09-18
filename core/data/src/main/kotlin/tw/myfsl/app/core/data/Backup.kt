@@ -4,6 +4,8 @@ import tw.myfsl.app.core.data.db.AccountEntity
 import tw.myfsl.app.core.data.db.BalanceSnapshotEntity
 import tw.myfsl.app.core.data.db.CardInstallmentEntity
 import tw.myfsl.app.core.data.db.CheckInEntity
+import tw.myfsl.app.core.data.db.DeferralEntity
+import tw.myfsl.app.core.data.db.PostedKeyEntity
 import tw.myfsl.app.core.data.db.ItemActualEntity
 import tw.myfsl.app.core.data.db.LedgerEntryEntity
 import tw.myfsl.app.core.data.db.PlanAmountEntity
@@ -25,6 +27,8 @@ data class SettingsBackup(
     val cashAccountId: Long? = null,
     val transferAccountId: Long? = null,
     val cardPostingDays: Int,
+    val defaultCardId: Long? = null,
+    val autoPostFrom: Long? = null,
 ) {
     fun toSettings(current: AppSettings) = current.copy(
         safetyLevel = safetyLevel,
@@ -34,11 +38,13 @@ data class SettingsBackup(
         cashAccountId = cashAccountId,
         transferAccountId = transferAccountId,
         cardPostingDays = cardPostingDays,
+        defaultCardId = defaultCardId,
     )
 
     companion object {
         fun of(s: AppSettings) = SettingsBackup(
             s.safetyLevel, s.horizonMonths, s.checkInDay.value, s.pickCard, s.cashAccountId, s.transferAccountId, s.cardPostingDays,
+            s.defaultCardId, s.autoPostFrom,
         )
     }
 }
@@ -59,6 +65,8 @@ data class BackupFile(
     val installments: List<CardInstallmentEntity> = emptyList(),
     val scenarios: List<ScenarioEntity> = emptyList(),
     val checkIns: List<CheckInEntity> = emptyList(),
+    val postedKeys: List<PostedKeyEntity> = emptyList(),
+    val deferrals: List<DeferralEntity> = emptyList(),
     val settings: SettingsBackup? = null,
 ) {
     companion object {
@@ -77,6 +85,8 @@ data class BackupSummary(
     val scenarios: Int,
     val warnings: List<String>,
 ) {
+    /** 有對不上的資料：只能用「救援還原」，並列出會略過的內容（R-DATA-04）。 */
+    val needsRescue: Boolean get() = warnings.isNotEmpty()
     val text: String get() = "帳戶 $accounts 個、計畫項目 $items 個、記帳 $ledger 筆、分期 $installments 筆、情境 $scenarios 個"
 }
 
@@ -116,6 +126,8 @@ object BackupCodec {
             "記帳".takeIf { duplicates(file.ledger) { it.id } },
             "分期".takeIf { duplicates(file.installments) { it.id } },
             "計畫金額".takeIf { duplicates(file.amounts) { listOf(it.itemId, it.method, it.year, it.month) } },
+            "延期款".takeIf { duplicates(file.deferrals) { it.id } },
+            "到期項目識別碼".takeIf { duplicates(file.ledger.mapNotNull { it.postingKey }) { it } },
         )
         if (duplicated.isNotEmpty()) return BackupReadResult.Error("備份檔內容有重複（${duplicated.joinToString("、")}），無法還原")
 
@@ -136,11 +148,14 @@ object BackupCodec {
             if (orphanAmounts > 0) add("$orphanAmounts 筆計畫金額的項目不存在，會被略過")
             val orphanSnapshots = file.snapshots.count { it.accountId !in accountIds }
             if (orphanSnapshots > 0) add("$orphanSnapshots 筆餘額校正的帳戶不存在，會被略過")
+            val orphanDeferrals = file.deferrals.count { it.itemId !in itemIds }
+            if (orphanDeferrals > 0) add("$orphanDeferrals 筆延期款的項目不存在，會被略過")
         }
         val cleaned = file.copy(
             amounts = file.amounts.filter { it.itemId in itemIds },
             actuals = file.actuals.filter { it.itemId in itemIds },
             snapshots = file.snapshots.filter { it.accountId in accountIds },
+            deferrals = file.deferrals.filter { it.itemId in itemIds },
         )
         return BackupReadResult.Ok(
             cleaned,

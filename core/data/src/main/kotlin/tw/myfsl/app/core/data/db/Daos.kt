@@ -2,6 +2,7 @@ package tw.myfsl.app.core.data.db
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import androidx.room.Upsert
@@ -17,6 +18,16 @@ interface AccountDao {
 
     @Query("UPDATE accounts SET archived = :archived WHERE id = :id")
     suspend fun setArchived(id: Long, archived: Boolean)
+
+    @Query("UPDATE accounts SET loanRemainingMonths = :months WHERE id = :id")
+    suspend fun setLoanRemainingMonths(id: Long, months: Int)
+
+    /** 刪掉一筆貸款月繳後，剩餘期數加回一期。 */
+    @Query("UPDATE accounts SET loanRemainingMonths = loanRemainingMonths + 1 WHERE id = :id AND loanRemainingMonths IS NOT NULL")
+    suspend fun addLoanRemainingMonth(id: Long)
+
+    @Query("UPDATE accounts SET cardRevolvingBalance = :amount WHERE id = :id")
+    suspend fun setCardRevolvingBalance(id: Long, amount: Long?)
 
     @Query("SELECT * FROM balance_snapshots ORDER BY epochDay, id")
     fun observeSnapshots(): Flow<List<BalanceSnapshotEntity>>
@@ -48,8 +59,8 @@ interface PlanDao {
     @Query("DELETE FROM plan_amounts WHERE itemId = :itemId AND year = :year")
     suspend fun deleteAmounts(itemId: Long, year: Int)
 
-    @Query("UPDATE plan_items SET archived = :archived WHERE id = :id")
-    suspend fun setItemArchived(id: Long, archived: Boolean)
+    @Query("UPDATE plan_items SET archived = :archived, archivedFrom = :from WHERE id = :id")
+    suspend fun setItemArchived(id: Long, archived: Boolean, from: Int?)
 }
 
 @Dao
@@ -65,6 +76,35 @@ interface ActualDao {
 
     @Insert
     suspend fun insertLedger(entity: LedgerEntryEntity): Long
+
+    @Query("SELECT * FROM ledger_entries WHERE id = :id")
+    suspend fun ledgerById(id: Long): LedgerEntryEntity?
+
+    // ---- 到期項目：選了「這個月沒有」的識別碼 ----
+    @Query("SELECT `key` FROM posted_keys")
+    fun observePostedKeys(): Flow<List<String>>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertPostedKeys(keys: List<PostedKeyEntity>)
+
+    @Query("DELETE FROM posted_keys WHERE `key` IN (:keys)")
+    suspend fun deletePostedKeys(keys: List<String>)
+
+    @Query("DELETE FROM ledger_entries WHERE postingKey IN (:keys)")
+    suspend fun deleteLedgerByKeys(keys: List<String>)
+
+    // ---- 延期款 ----
+    @Query("SELECT * FROM deferrals ORDER BY id")
+    fun observeDeferrals(): Flow<List<DeferralEntity>>
+
+    @Upsert
+    suspend fun upsertDeferral(entity: DeferralEntity): Long
+
+    @Query("UPDATE deferrals SET settled = :settled WHERE id = :id")
+    suspend fun setDeferralSettled(id: Long, settled: Boolean)
+
+    @Query("DELETE FROM item_actuals WHERE itemId = :itemId AND method = :method AND year = :year AND month = :month")
+    suspend fun deleteActual(itemId: Long, method: String, year: Int, month: Int)
 
     @Query("DELETE FROM ledger_entries WHERE id = :id")
     suspend fun deleteLedger(id: Long)
@@ -142,4 +182,10 @@ interface MaintenanceDao {
     @Query("DELETE FROM scenarios") suspend fun clearScenarios()
     @Query("DELETE FROM check_ins") suspend fun clearCheckIns()
     @Query("DELETE FROM card_installments") suspend fun clearInstallments()
+    @Query("DELETE FROM posted_keys") suspend fun clearPostedKeys()
+    @Query("DELETE FROM deferrals") suspend fun clearDeferrals()
+    @Query("SELECT * FROM posted_keys") suspend fun allPostedKeys(): List<PostedKeyEntity>
+    @Query("SELECT * FROM deferrals ORDER BY id") suspend fun allDeferrals(): List<DeferralEntity>
+    @Insert suspend fun insertPostedKeyRows(list: List<PostedKeyEntity>)
+    @Insert suspend fun insertDeferrals(list: List<DeferralEntity>)
 }

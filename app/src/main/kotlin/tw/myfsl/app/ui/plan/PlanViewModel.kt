@@ -59,6 +59,8 @@ data class ItemEditor(
     val warnings: List<String> = emptyList(),
     /** 正在展開 12 個月的計畫列索引。 */
     val expandedLine: Int? = 0,
+    /** 已經有記帳，類型不能改（R-EDT-11）。 */
+    val typeLocked: Boolean = false,
 ) {
     val isNew: Boolean get() = draft.id == 0L
 }
@@ -151,7 +153,8 @@ class PlanViewModel @Inject constructor(
         viewModelScope.launch {
             val snapshot = repository.snapshot.first()
             val item = snapshot.item(itemId) ?: return@launch
-            local.update { it.copy(editor = ItemEditor(PlanItemForm.fromItem(item, snapshot, state.value.year))) }
+            val draft = PlanItemForm.fromItem(item, snapshot, state.value.year)
+            local.update { it.copy(editor = ItemEditor(draft, typeLocked = PlanItemForm.typeLocked(draft, snapshot))) }
         }
     }
 

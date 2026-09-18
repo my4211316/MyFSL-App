@@ -15,6 +15,7 @@ data class SettingsDraft(
     val cashAccountId: Long?,
     val transferAccountId: Long?,
     val cardPostingDays: String,
+    val defaultCardId: Long? = null,
 )
 
 object SettingsForm {
@@ -26,6 +27,7 @@ object SettingsForm {
         const val POSTING_DAYS = "postingDays"
         const val CASH_ACCOUNT = "cashAccount"
         const val TRANSFER_ACCOUNT = "transferAccount"
+        const val DEFAULT_CARD = "defaultCard"
     }
 
     data class Result(val settings: AppSettings?, val errors: Map<String, String>) {
@@ -40,6 +42,7 @@ object SettingsForm {
         cashAccountId = settings.cashAccountId,
         transferAccountId = settings.transferAccountId,
         cardPostingDays = settings.cardPostingDays.toString(),
+        defaultCardId = settings.defaultCardId,
     )
 
     fun validate(draft: SettingsDraft, current: AppSettings, accounts: List<Account>): Result {
@@ -53,6 +56,9 @@ object SettingsForm {
         if (draft.transferAccountId != null && liquid.none { it.id == draft.transferAccountId }) {
             errors[Field.TRANSFER_ACCOUNT] = "這個帳戶已不存在"
         }
+        if (draft.defaultCardId != null && accounts.none { !it.archived && it.id == draft.defaultCardId && it.kind == AccountKind.CREDIT_CARD }) {
+            errors[Field.DEFAULT_CARD] = "這張卡已不存在"
+        }
         if (errors.isNotEmpty()) return Result(null, errors)
         return Result(
             current.copy(
@@ -63,6 +69,7 @@ object SettingsForm {
                 cashAccountId = draft.cashAccountId,
                 transferAccountId = draft.transferAccountId,
                 cardPostingDays = days!!,
+                defaultCardId = draft.defaultCardId,
             ),
             emptyMap(),
         )

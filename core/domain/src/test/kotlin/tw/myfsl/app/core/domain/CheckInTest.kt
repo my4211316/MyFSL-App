@@ -26,11 +26,11 @@ import org.junit.Test
 class CheckInTest {
 
     private val snapshot = SampleHousehold.snapshot()
-    private val pool = CashFlowEngine.CARD_POOL_ID
+    private val pool = CheckInRules.CARD_ROW_ID
     private val postingDays = snapshot.settings.cardPostingDays
 
-    private fun cardLine() = PlanLine(CAR_SERVICE, PaymentMethod.CREDIT_CARD)
-    private fun subsidyLine() = PlanLine(SUBSIDY, null)
+    private fun cardLine() = "line:$CAR_SERVICE:CREDIT_CARD"
+    private fun subsidyLine() = "line:$SUBSIDY:-"
 
     // ---------- 要檢查什麼 ----------
 
@@ -222,6 +222,11 @@ class CheckInTest {
         )
         assertTrue(postponed.entries.isEmpty())
         assertEquals(ActualStatus.POSTPONED, postponed.actuals.single().status)
+        // 延期變成一筆獨立的延期款：金額固定、下個月到期（R-DEF-01）
+        val deferral = postponed.deferrals.single()
+        assertEquals(5_000L, deferral.amount)
+        assertEquals(2026 to 10, deferral.dueYear to deferral.dueMonth)
+        assertEquals(2026 to 9, deferral.fromYear to deferral.fromMonth)
 
         // 確認過的項目不再出現
         val done = snapshot.copy(actuals = different.actuals)

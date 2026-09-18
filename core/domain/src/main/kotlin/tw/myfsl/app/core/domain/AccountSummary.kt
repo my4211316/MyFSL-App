@@ -16,10 +16,12 @@ import java.time.LocalDate
 /** 記帳對帳戶餘額的影響。 */
 object BalanceRules {
 
-    /** 一筆記帳對某帳戶的影響；負債帳戶的餘額是欠款，所以方向相反。 */
+    /**
+     * 一筆記帳對某帳戶的影響；負債帳戶的餘額是欠款，所以方向相反。
+     * 分期消費本身不直接變成卡債，卡債由各期入帳（[LedgerEntry.isInstallmentPrincipal]）累加。
+     */
     fun effect(entry: LedgerEntry, accountId: Long, kind: AccountKind): Money {
-        // 分期消費不會一次全額變成卡債，改由各期入帳計算。
-        if (entry.installmentId != null && kind == AccountKind.CREDIT_CARD) return 0
+        if (entry.isInstallmentPurchase && kind == AccountKind.CREDIT_CARD) return 0
         val sign = if (kind.isLiability) -1L else 1L
         var effect = 0L
         when (entry.type) {
@@ -33,14 +35,30 @@ object BalanceRules {
         return effect
     }
 
-    /** 未指定卡片的刷卡：晚於所有信用卡中最近一次校正的記帳；沒有任何校正時全部計入。 */
-    fun unassignedCardSpending(ledger: List<LedgerEntry>, latestCardSnapshot: RecordMark?): Money =
+    /**
+     * 未指定卡片的刷卡：晚於最近一次「全部卡片一起對帳」的記帳；從沒一起對帳過時全部計入。
+     * 只校正其中一張卡時不會吸收這些刷卡，因為不知道它們是不是刷那張卡。
+     * 分期消費不算（由各期入帳到預設卡片）。
+     */
+    fun unassignedCardSpending(ledger: List<LedgerEntry>, fullCardReconcile: RecordMark?): Money =
         ledger.filter {
             it.type == FlowType.EXPENSE &&
                 it.method == PaymentMethod.CREDIT_CARD &&
                 it.accountId == null &&
-                (latestCardSnapshot == null || it.isAfter(latestCardSnapshot))
+                !it.isInstallmentPurchase &&
+                (fullCardReconcile == null || it.isAfter(fullCardReconcile))
         }.sumOf { it.amount }
+
+    /**
+     * 最近一次「全部卡片一起對帳」的時點：所有未封存卡片都有同一個寫入時間的校正。
+     * [cardMarks] 為每張卡的所有校正（日期＋寫入時間）。
+     */
+    fun fullCardReconcile(cardMarks: Map<Long, List<RecordMark>>): RecordMark? {
+        if (cardMarks.isEmpty()) return null
+        val common = cardMarks.values.map { marks -> marks.map { it.recordedAt }.toSet() }.reduce { a, b -> a intersect b }
+        val at = common.filter { it > 0 }.maxOrNull() ?: return null
+        return cardMarks.values.first().first { it.recordedAt == at }
+    }
 }
 
 data class CardView(
@@ -49,7 +67,7 @@ data class CardView(
     val available: Money?,
     /** 本月指定這張卡的刷卡。 */
     val monthSpending: Money,
-    /** 本月計畫中繳這張卡的金額。 */
+    /** 本月預計繳這張卡的金額：有循環條件依合約（加額外還款），沒有則依計畫轉帳。 */
     val fixedPayment: Money,
     /** 當期循環利息；沒有設定循環條件時為 0。 */
     val interest: Money = 0,
@@ -62,11 +80,14 @@ data class CardView(
     /** 下一期分期入帳金額。 */
     val nextInstallmentAmount: Money = 0,
 ) {
-    /** 已佔用額度 = 目前欠款 ＋ 未入帳的分期本金。 */
+    /** 已佔用額度 = 已入帳卡款 ＋ 未入帳的分期本金。 */
     val usedCredit: Money get() = account.balance + pendingInstallmentPrincipal
 
-    /** 依已佔用額度算的可用額度。 */
+    /** 可用額度 = 額度 − 已佔用額度（R-ACV-01，與 R-CARD-09 相同）。 */
     val availableWithInstallments: Money? get() = account.creditLimit?.let { (it - usedCredit).coerceAtLeast(0) }
+
+    /** 這張卡的總負債 = 已入帳卡款 ＋ 未入帳分期本金。 */
+    val totalDebt: Money get() = account.balance + pendingInstallmentPrincipal
 }
 
 data class LoanView(
@@ -84,10 +105,17 @@ data class AccountsOverview(
     val loans: List<LoanView>,
 ) {
     val liquid: Money get() = liquidAccounts.sumOf { it.balance }
+
+    /** 已入帳卡款：各卡欠款＋未指定卡片的刷卡。 */
     val cardDebt: Money get() = cards.sumOf { it.account.balance } + unassignedCardSpending
     val loanDebt: Money get() = loans.filter { it.account.kind == AccountKind.LOAN }.sumOf { it.account.balance }
     val policyLoanDebt: Money get() = loans.filter { it.account.kind == AccountKind.POLICY_LOAN }.sumOf { it.account.balance }
-    val totalDebt: Money get() = cardDebt + loanDebt + policyLoanDebt
+
+    /** 信用卡總負債 = 已入帳卡款 ＋ 未入帳分期本金（已經消費、之後每期一定會入帳）。 */
+    val cardTotalDebt: Money get() = cardDebt + pendingInstallmentPrincipal
+
+    /** 負債合計 = 信用卡總負債 ＋ 貸款 ＋ 保單借款。 */
+    val totalDebt: Money get() = cardTotalDebt + loanDebt + policyLoanDebt
 
     /** 各卡當期循環利息合計。 */
     val cardInterest: Money get() = cards.sumOf { it.interest }
@@ -104,21 +132,31 @@ object AccountSummaryCalculator {
         val month = date.monthValue
         val transfers = snapshot.activeItems.filter { it.type == FlowType.TRANSFER }
 
-        val period = Period.of(date)
+        // 未入帳的分期：起算日之後、還沒在記帳畫面記下的期數（R-DUE）。
+        val defaultCard = snapshot.defaultCardId
         val cards = active.filter { it.kind == AccountKind.CREDIT_CARD }.map { card ->
-            val installments = InstallmentRules.summary(snapshot.installments, period, card.id)
+            // 未指定卡片的分期由預設卡片入帳，所以也算在預設卡片上。
+            val own = snapshot.installments.filter { (it.cardAccountId ?: defaultCard) == card.id }
+            val installments = InstallmentRules.summary(snapshot, own)
+            val pending = installments.pendingPrincipal
             CardView(
                 account = card,
-                utilizationPercent = card.utilization?.let(::displayPercent),
-                available = card.availableCredit,
+                utilizationPercent = card.creditLimit?.takeIf { it > 0 }?.let { limit ->
+                    displayPercent(((card.balance + pending).toDouble() / limit).coerceIn(0.0, 1.0))
+                },
+                available = card.creditLimit?.let { (it - card.balance - pending).coerceAtLeast(0) },
+                // 本月已刷：這張卡的消費（含分期消費、刷卡付的每月固定帳單），不含利息與分期各期入帳。
                 monthSpending = snapshot.ledger.filter {
-                    it.type == FlowType.EXPENSE && it.accountId == card.id && it.date.year == year && it.date.monthValue == month
+                    it.type == FlowType.EXPENSE && it.accountId == card.id && !it.isCardCharge &&
+                        it.date.year == year && it.date.monthValue == month
                 }.sumOf { it.amount },
-                fixedPayment = transfers.filter { it.toAccountId == card.id }
-                    .sumOf { snapshot.planAmount(PlanLine(it.id, null), year, month) },
+                // 有循環條件：依合約繳款＋標成額外還款的計畫轉帳；沒有：計畫中繳這張卡的轉帳（R-PAY-01）。
+                fixedPayment = (card.card?.let { CardRules.outlook(card.balance, it, monthlySpending = 0).payment } ?: 0L) +
+                    transfers.filter { it.toAccountId == card.id && (card.card == null || it.extraRepayment) }
+                        .sumOf { snapshot.planAmount(PlanLine(it.id, null), year, month) },
                 interest = card.card?.let { CardRules.monthlyInterest(CardRules.interestBase(card.balance, it), it.revolvingRatePercent) } ?: 0,
                 minimumPayment = card.card?.let { CardRules.minimumPayment(card.balance, it) },
-                pendingInstallmentPrincipal = installments.pendingPrincipal,
+                pendingInstallmentPrincipal = pending,
                 installmentCount = installments.count,
                 nextInstallmentAmount = installments.nextAmount,
             )
@@ -141,10 +179,12 @@ object AccountSummaryCalculator {
             liquidAccounts = active.filter { it.kind.isLiquid },
             cards = cards,
             unassignedCardSpending = snapshot.unassignedCardSpending,
-            unassignedInstallmentPrincipal = InstallmentRules.summary(
-                snapshot.installments.filter { it.cardAccountId == null },
-                period,
-            ).pendingPrincipal,
+            // 沒有任何卡片時，未指定卡片的分期無處入帳，單獨列出。
+            unassignedInstallmentPrincipal = if (defaultCard != null) {
+                0
+            } else {
+                InstallmentRules.summary(snapshot, snapshot.installments.filter { it.cardAccountId == null }).pendingPrincipal
+            },
             loans = loans,
         )
     }

@@ -31,7 +31,6 @@ class InstallmentTest {
     private val start = Period(2026, 9, Half.FIRST)
     private val oct = Period(2026, 10, Half.FIRST)
     private val nov = Period(2026, 11, Half.FIRST)
-    private val pool = CashFlowEngine.CARD_POOL_ID
 
     private val BANK = 1L
     private val CARD = 3L
@@ -139,11 +138,11 @@ class InstallmentTest {
     }
 
     @Test fun `卡片摘要與說明文字`() {
-        val summary = InstallmentRules.summary(listOf(installment(), installment().copy(id = 2, amount = 12_000, months = 6)), start, CARD)
+        val summary = InstallmentRules.summary(listOf(installment(), installment().copy(id = 2, amount = 12_000, months = 6)), start.index)
         assertEquals(2, summary.count)
         assertEquals(48_000L, summary.pendingPrincipal)
         assertEquals(5_000L, summary.nextAmount)
-        assertEquals(0, InstallmentRules.summary(listOf(installment().copy(settled = true)), start, CARD).count)
+        assertEquals(0, InstallmentRules.summary(listOf(installment().copy(settled = true)), start.index).count)
 
         assertEquals("分 12 期 · 每期約 $3,000 · 0 利率", InstallmentRules.description(installment()))
         assertEquals(
@@ -175,11 +174,16 @@ class InstallmentTest {
         assertEquals(1, card.installmentCount)
         assertEquals(3_000L, card.nextInstallmentAmount)
         assertEquals(36_000L, overview.pendingInstallmentPrincipal)
+        // 審閱第 3 點：總負債要含未入帳分期本金
+        assertEquals("已入帳卡款", 0L, overview.cardDebt)
+        assertEquals("信用卡總負債 = 已入帳 ＋ 未入帳分期", 36_000L, overview.cardTotalDebt)
+        assertEquals(36_000L, overview.totalDebt)
+        assertEquals(36_000L, card.totalDebt)
 
-        // 未指定卡片的分期
+        // 未指定卡片的分期：由預設卡片入帳，所以算在預設卡片上
         val unassigned = AccountSummaryCalculator.overview(snapshot(installment(card = null)))
-        assertEquals(36_000L, unassigned.unassignedInstallmentPrincipal)
-        assertEquals(0L, unassigned.cards.single().pendingInstallmentPrincipal)
+        assertEquals(0L, unassigned.unassignedInstallmentPrincipal)
+        assertEquals(36_000L, unassigned.cards.single().pendingInstallmentPrincipal)
     }
 
     // ---------- 試算 ----------
@@ -195,6 +199,24 @@ class InstallmentTest {
         assertEquals(36_000L, result.totalInstallmentPosted)
         assertEquals(36_000L, result.endCardDebt)
         assertEquals("沒有任何支出，缺口只看收入", 0L, result.totalExpense)
+    }
+
+    @Test fun `試算期間結束後才入帳的本金也算進期末總負債`() {
+        // 只看 6 個月（到 2027/2），36 期的分期大部分在期間之後
+        val long = installment(amount = 36_000, months = 36)
+        val result = ScenarioApplier.run(BaselineBuilder.build(snapshot(long), periodCount = 12), emptyList())
+        val posted = result.totalInstallmentPosted
+        assertEquals("10 月到 2 月入帳 5 期", 5_000L, posted)
+        assertEquals(31_000L, result.endPendingInstallments)
+        assertEquals("期末總負債 = 已入帳 5,000 ＋ 未入帳 31,000", 36_000L, result.endTotalDebt)
+
+        // 清償時連期間之後的本金一起結清
+        val paid = ScenarioApplier.run(
+            BaselineBuilder.build(snapshot(long), periodCount = 12),
+            listOf(ScenarioChange.PayOffDebts(listOf(CARD), BANK, nov.index)),
+        )
+        assertEquals(0L, paid.endTotalDebt)
+        assertEquals(36_000L, paid.periods.first { it.period == nov }.debtPayoff)
     }
 
     @Test fun `手續費算成支出`() {

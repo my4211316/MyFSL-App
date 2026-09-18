@@ -1,11 +1,17 @@
 package tw.myfsl.app.core.data
 
 import androidx.room.withTransaction
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import tw.myfsl.app.core.data.db.AppDatabase
 import tw.myfsl.app.core.data.db.BalanceSnapshotEntity
 import tw.myfsl.app.core.data.db.CheckInEntity
 import tw.myfsl.app.core.data.db.PlanAmountEntity
-import tw.myfsl.app.core.sample.SampleHousehold
+import tw.myfsl.app.core.data.db.PostedKeyEntity
 import tw.myfsl.app.core.data.db.toColumn
 import tw.myfsl.app.core.data.db.toEntity
 import tw.myfsl.app.core.data.db.toModel
@@ -15,9 +21,14 @@ import tw.myfsl.app.core.domain.CheckInResult
 import tw.myfsl.app.core.domain.ImportMode
 import tw.myfsl.app.core.domain.ImportPreview
 import tw.myfsl.app.core.domain.PlanImport
+import tw.myfsl.app.core.domain.RecordRules
+import tw.myfsl.app.core.domain.DueItems
+import tw.myfsl.app.core.domain.DueRecord
 import tw.myfsl.app.core.model.Account
-import tw.myfsl.app.core.model.CardInstallment
 import tw.myfsl.app.core.model.AccountKind
+import tw.myfsl.app.core.model.CardInstallment
+import tw.myfsl.app.core.model.Deferral
+import tw.myfsl.app.core.model.EntrySource
 import tw.myfsl.app.core.model.FinanceSnapshot
 import tw.myfsl.app.core.model.ItemActual
 import tw.myfsl.app.core.model.LedgerEntry
@@ -27,13 +38,11 @@ import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.PlanGroup
 import tw.myfsl.app.core.model.PlanItem
 import tw.myfsl.app.core.model.PlanLine
+import tw.myfsl.app.core.model.PostingKeys
 import tw.myfsl.app.core.model.RecordMark
 import tw.myfsl.app.core.model.Scenario
 import tw.myfsl.app.core.model.isAfter
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
+import tw.myfsl.app.core.sample.SampleHousehold
 import java.time.LocalDate
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -71,6 +80,14 @@ class FinanceRepository @Inject constructor(
         val actuals: List<ItemActual>,
         val ledger: List<LedgerEntry>,
         val installments: List<CardInstallment>,
+        val postedKeys: Set<String>,
+        val deferrals: List<Deferral>,
+    )
+
+    private data class AccountPart(
+        val accounts: List<Account>,
+        /** 最近一次「全部卡片一起對帳」的時點。 */
+        val fullCardReconcile: RecordMark?,
     )
 
     private val planPart: Flow<PlanPart> = combine(
@@ -93,19 +110,28 @@ class FinanceRepository @Inject constructor(
         actualDao.observeAll(),
         actualDao.observeLedger(),
         actualDao.observeInstallments(),
-    ) { actuals, ledger, installments ->
-        ActualPart(actuals.map { it.toModel() }, ledger.map { it.toModel() }, installments.map { it.toModel() })
+        actualDao.observePostedKeys(),
+        actualDao.observeDeferrals(),
+    ) { actuals, ledger, installments, keys, deferrals ->
+        val entries = ledger.map { it.toModel() }
+        ActualPart(
+            actuals = actuals.map { it.toModel() },
+            ledger = entries,
+            installments = installments.map { it.toModel() },
+            postedKeys = keys.toSet() + entries.mapNotNull { it.postingKey },
+            deferrals = deferrals.map { it.toModel() },
+        )
     }
 
-    private val accounts: Flow<List<Account>> = combine(
+    private val accountPart: Flow<AccountPart> = combine(
         accountDao.observeAll(),
         accountDao.observeSnapshots(),
         actualDao.observeLedger(),
     ) { accounts, snapshots, ledger ->
-        val latest = snapshots.groupBy { it.accountId }
-            .mapValues { (_, list) -> list.maxWith(compareBy({ it.epochDay }, { it.recordedAtMillis }, { it.id })) }
+        val byAccount = snapshots.groupBy { it.accountId }
+        val latest = byAccount.mapValues { (_, list) -> list.maxWith(compareBy({ it.epochDay }, { it.recordedAtMillis }, { it.id })) }
         val entries = ledger.map { it.toModel() }
-        accounts.map { entity ->
+        val models = accounts.map { entity ->
             val model = entity.toModel()
             val snapshot = latest[entity.id]
             val mark = snapshot?.let { RecordMark(LocalDate.ofEpochDay(it.epochDay), it.recordedAtMillis) }
@@ -118,22 +144,22 @@ class FinanceRepository @Inject constructor(
                 balanceRecordedAt = mark?.recordedAt ?: 0L,
             )
         }
+        val cardMarks = models.filter { it.kind == AccountKind.CREDIT_CARD && !it.archived }.associate { card ->
+            card.id to byAccount[card.id].orEmpty().map { RecordMark(LocalDate.ofEpochDay(it.epochDay), it.recordedAtMillis) }
+        }
+        AccountPart(models, BalanceRules.fullCardReconcile(cardMarks))
     }
 
     val snapshot: Flow<FinanceSnapshot> = combine(
-        accounts,
+        accountPart,
         planPart,
         actualPart,
         settingsRepository.settings,
         actualDao.observeLatestCheckIn(),
-    ) { accounts, plan, actual, settings, checkIn ->
-        val latestCardSnapshot = accounts
-            .filter { it.kind == AccountKind.CREDIT_CARD }
-            .mapNotNull { card -> card.balanceAsOf?.let { RecordMark(it, card.balanceRecordedAt) } }
-            .maxWithOrNull(compareBy({ it.date }, { it.recordedAt }))
+    ) { accountPart, plan, actual, settings, checkIn ->
         FinanceSnapshot(
             today = time.today(),
-            accounts = accounts,
+            accounts = accountPart.accounts,
             groups = plan.groups,
             items = plan.items,
             amountsByYear = plan.amounts,
@@ -142,13 +168,42 @@ class FinanceRepository @Inject constructor(
             installments = actual.installments,
             settings = settings,
             lastCheckIn = checkIn?.toModel(),
-            unassignedCardSpending = BalanceRules.unassignedCardSpending(actual.ledger, latestCardSnapshot),
+            unassignedCardSpending = BalanceRules.unassignedCardSpending(actual.ledger, accountPart.fullCardReconcile),
+            postedKeys = actual.postedKeys,
+            deferrals = actual.deferrals,
         )
     }
 
     val scenarios: Flow<List<Scenario>> = scenarioDao.observeAll().map { list -> list.map { it.toModel() } }
 
     fun today(): LocalDate = time.today()
+
+    // ---- 到期項目（R-DUE）：不會自動寫入，使用者點了才記下 ----
+
+    private val dueLock = Mutex()
+
+    /** 第一次開 App 時把到期項目的起算日設成今天：之前到期的款項視為已包含在輸入的餘額裡。 */
+    suspend fun startDueTracking() = settingsRepository.startAutoPostingIfNeeded(time.today().toEpochDay())
+
+    /**
+     * 記下一個到期項目（同一個交易內寫入記帳、貸款剩餘期數與清掉的既有卡循）。
+     * 回傳第一筆記帳的 id（復原用）；已經記過（識別碼重複，例如連點兩下）時不寫入，回傳 null。
+     */
+    suspend fun recordDue(record: DueRecord): Long? = dueLock.withLock {
+        val keys = record.entries.mapNotNull { it.postingKey }
+        val existing = actualDao.observeLedger().first().mapNotNull { it.postingKey }.toSet()
+        if (keys.isEmpty() || keys.any { it in existing }) return@withLock null
+        val now = time.nowMillis()
+        db.withTransaction {
+            val ids = record.entries.map { actualDao.insertLedger(it.copy(createdAt = now).toEntity()) }
+            record.loanRemaining?.let { (id, months) -> accountDao.setLoanRemainingMonths(id, months) }
+            record.cardTerms?.let { (id, terms) -> accountDao.setCardRevolvingBalance(id, terms.revolvingBalance) }
+            ids.first()
+        }
+    }
+
+    /** 這個月沒有這筆：不記帳，只記下已經處理過，之後不再列出。 */
+    suspend fun skipDue(key: String) = actualDao.insertPostedKeys(listOf(PostedKeyEntity(key, time.today().toEpochDay())))
 
     // ---- 帳戶 ----
 
@@ -202,10 +257,14 @@ class FinanceRepository @Inject constructor(
             id
         }
 
-    suspend fun setItemArchived(id: Long, archived: Boolean) = planDao.setItemArchived(id, archived)
+    /** 封存從本月起生效；之前月份的計畫與紀錄仍算在歷史報表裡（R-EDT-10）。 */
+    suspend fun setItemArchived(id: Long, archived: Boolean) {
+        val today = time.today()
+        planDao.setItemArchived(id, archived, if (archived) today.year * 12 + today.monthValue - 1 else null)
+    }
 
     /**
-     * 匯入年度計畫。[ImportMode.REPLACE_YEAR] 會覆蓋檔案裡出現的項目在該年度的金額，
+     * 匯入年度計畫。[ImportMode.REPLACE_YEAR] 以檔案為準更新檔案裡出現的項目在該年度的金額，
      * 檔案裡沒有的項目保持不動；[ImportMode.ADD_ONLY] 只新增還不存在的項目。
      * 回傳實際寫入的項目數。
      */
@@ -224,7 +283,12 @@ class FinanceRepository @Inject constructor(
                 }
                 if (mode == ImportMode.ADD_ONLY && existing != null) return@forEach
                 saveItem(
-                    entry.item.copy(id = existing?.id ?: 0, groupId = groupId, sortOrder = existing?.sortOrder ?: 0),
+                    entry.item.copy(
+                        id = existing?.id ?: 0,
+                        groupId = groupId,
+                        sortOrder = existing?.sortOrder ?: 0,
+                        extraRepayment = existing?.extraRepayment ?: false,
+                    ),
                     mapOf(preview.year to entry.amounts),
                 )
                 written++
@@ -238,10 +302,57 @@ class FinanceRepository @Inject constructor(
     suspend fun addLedgerEntry(entry: LedgerEntry): Long =
         actualDao.insertLedger(entry.copy(createdAt = time.nowMillis()).toEntity())
 
-    suspend fun deleteLedgerEntry(id: Long) = actualDao.deleteLedger(id)
+    /**
+     * 刪除記帳，並讓相關狀態保持一致（R-REC-EDIT-07）：
+     * - 到期確認的補記：同一列同一月沒有其他確認補記時，撤銷「已完成」，下次檢查會再問。
+     * - 延期款的付款：延期款改回未付清。
+     * - 到期記下的（R-DUE）：同一組的記帳一起刪（貸款的本金與利息、分期同一期的本金與手續費），
+     *   回到本月到期清單；貸款剩餘期數加回一期。
+     */
+    suspend fun deleteLedgerEntry(id: Long) = db.withTransaction {
+        val entry = actualDao.ledgerById(id)?.toModel() ?: return@withTransaction
+        actualDao.deleteLedger(id)
+        val key = entry.postingKey
+        when {
+            key != null && key.startsWith(PostingKeys.DEFERRAL) ->
+                key.removePrefix(PostingKeys.DEFERRAL).toLongOrNull()?.let { actualDao.setDeferralSettled(it, false) }
+
+            entry.source == EntrySource.CONFIRMED && entry.itemId != null -> {
+                val itemId = entry.itemId ?: return@withTransaction
+                val others = actualDao.observeLedger().first().map { it.toModel() }.any {
+                    it.id != id && it.source == EntrySource.CONFIRMED && it.postingKey == null &&
+                        it.itemId == itemId && it.method == entry.method &&
+                        it.date.year == entry.date.year && it.date.monthValue == entry.date.monthValue
+                }
+                if (!others) actualDao.deleteActual(itemId, entry.method.toColumn(), entry.date.year, entry.date.monthValue)
+            }
+
+            key != null -> {
+                val group = DueItems.groupKeys(key)
+                actualDao.deleteLedgerByKeys(group)
+                actualDao.deletePostedKeys(group)
+                DueItems.loanIdOf(key)?.let { accountDao.addLoanRemainingMonth(it) }
+            }
+        }
+    }
 
     /** 修改記帳；保留原本的寫入時間，讓它和餘額校正的先後關係不變。 */
     suspend fun updateLedgerEntry(entry: LedgerEntry) = actualDao.updateLedger(entry.toEntity())
+
+    /**
+     * 補登找回的單據，取代之前對帳補的漏記差額（R-REC-03）：同一個交易內
+     * 更新（或刪掉）差額、寫入沿用差額時間的明細，超過的部分照今天記。
+     */
+    suspend fun replaceMissed(missedId: Long, entry: LedgerEntry) = db.withTransaction {
+        val missed = actualDao.ledgerById(missedId)?.toModel() ?: run {
+            actualDao.insertLedger(entry.copy(createdAt = time.nowMillis()).toEntity())
+            return@withTransaction
+        }
+        val replacement = RecordRules.replaceMissed(missed, entry)
+        replacement.remainingMissed?.let { actualDao.updateLedger(it.toEntity()) } ?: actualDao.deleteLedger(missed.id)
+        actualDao.insertLedger(replacement.detail.copy(id = 0).toEntity())
+        replacement.extra?.let { actualDao.insertLedger(it.copy(id = 0, createdAt = time.nowMillis()).toEntity()) }
+    }
 
     /**
      * 分期消費：一筆記帳（全額，用來算預算）＋一筆分期（各期入帳，用來算卡債與額度）。
@@ -257,14 +368,14 @@ class FinanceRepository @Inject constructor(
 
     suspend fun settleInstallment(id: Long) = actualDao.setInstallmentSettled(id, true)
 
-    /** 刪掉一筆分期消費：分期本身與它的記帳一起刪。 */
+    /** 刪掉一筆分期消費：分期本身與它的消費、已入帳的各期一起刪。 */
     suspend fun deleteInstallment(id: Long) = db.withTransaction {
         actualDao.deleteLedgerOfInstallment(id)
         actualDao.deleteInstallment(id)
     }
 
     /**
-     * 本週檢查：一次寫入對帳產生的記帳、到期確認狀態與校正餘額。
+     * 本週檢查：一次寫入對帳產生的記帳、到期確認狀態、延期款與校正餘額。
      * 記帳與校正使用同一個寫入時間，所以校正餘額已經包含這些記帳，不會重複扣。
      */
     suspend fun recordCheckIn(
@@ -277,6 +388,12 @@ class FinanceRepository @Inject constructor(
             actualDao.insertLedger(entry.copy(createdAt = now).toEntity())
         }
         if (result.actuals.isNotEmpty()) actualDao.upsert(result.actuals.map { it.toEntity() })
+        result.deferrals.forEach { actualDao.upsertDeferral(it.toEntity()) }
+        if (result.skippedKeys.isNotEmpty()) {
+            actualDao.insertPostedKeys(result.skippedKeys.map { PostedKeyEntity(it, date.toEpochDay()) })
+        }
+        result.loanRemaining.forEach { (id, months) -> accountDao.setLoanRemainingMonths(id, months) }
+        result.cardTerms.forEach { (id, terms) -> accountDao.setCardRevolvingBalance(id, terms.revolvingBalance) }
         result.balances.forEach { (id, value) ->
             accountDao.insertSnapshot(
                 BalanceSnapshotEntity(accountId = id, epochDay = date.toEpochDay(), balance = value, recordedAtMillis = now),
@@ -331,6 +448,8 @@ class FinanceRepository @Inject constructor(
         settingsRepository.setTransferAccount(SampleHousehold.BANK)
         settingsRepository.setPickCard(true)
         settingsRepository.setSafetyLevel(SampleHousehold.settings.safetyLevel)
+        // 示意資料的餘額是「今天」的；從今天起才列出到期項目。
+        settingsRepository.setAutoPostFrom(time.today().toEpochDay())
     }
 
     /** 備份檔已經寫出去之後才呼叫，用來提醒「多久沒備份」。 */
@@ -353,36 +472,58 @@ class FinanceRepository @Inject constructor(
                 installments = allInstallments(),
                 scenarios = allScenarios(),
                 checkIns = allCheckIns(),
+                postedKeys = allPostedKeys(),
+                deferrals = allDeferrals(),
                 settings = SettingsBackup.of(settingsRepository.settings.first()),
             )
         }
     }
 
-    /** 用備份取代目前所有資料（先清空再寫入，同一個交易，失敗時不會留下一半）。 */
+    /**
+     * 用備份取代目前所有資料（R-DATA-06）。
+     * 資料庫在同一個交易裡先清空再寫入；設定在資料庫之後寫。設定寫入失敗時，
+     * 用還原前自動做的備份把資料庫與設定都放回去，不會留下「資料是新的、設定是舊的」。
+     */
     suspend fun restoreBackup(file: BackupFile) {
-        with(db.maintenanceDao()) {
-            db.withTransaction {
-                clearAccounts(); clearSnapshots(); clearGroups(); clearItems(); clearAmounts()
-                clearActuals(); clearLedger(); clearScenarios(); clearCheckIns(); clearInstallments()
-                insertAccounts(file.accounts)
-                insertSnapshots(file.snapshots)
-                insertGroups(file.groups)
-                insertItems(file.items)
-                insertAmounts(file.amounts)
-                insertActuals(file.actuals)
-                insertInstallments(file.installments)
-                insertLedger(file.ledger)
-                insertScenarios(file.scenarios)
-                insertCheckIns(file.checkIns)
-            }
+        val previous = exportBackup()
+        replaceDatabase(file)
+        try {
+            file.settings?.let { settingsRepository.save(it.toSettings(settingsRepository.settings.first())) }
+            settingsRepository.setAutoPostFrom(file.settings?.autoPostFrom ?: time.today().toEpochDay())
+        } catch (e: Exception) {
+            replaceDatabase(previous)
+            previous.settings?.let { settingsRepository.save(it.toSettings(settingsRepository.settings.first())) }
+            settingsRepository.setAutoPostFrom(previous.settings?.autoPostFrom)
+            throw e
         }
-        file.settings?.let { settingsRepository.save(it.toSettings(settingsRepository.settings.first())) }
     }
 
-    suspend fun clearAll() = db.withTransaction {
-        with(db.maintenanceDao()) {
-            clearAccounts(); clearSnapshots(); clearGroups(); clearItems(); clearAmounts()
-            clearActuals(); clearLedger(); clearScenarios(); clearCheckIns(); clearInstallments()
+    private suspend fun replaceDatabase(file: BackupFile) = with(db.maintenanceDao()) {
+        db.withTransaction {
+            clearEverything()
+            insertAccounts(file.accounts)
+            insertSnapshots(file.snapshots)
+            insertGroups(file.groups)
+            insertItems(file.items)
+            insertAmounts(file.amounts)
+            insertActuals(file.actuals)
+            insertInstallments(file.installments)
+            insertLedger(file.ledger)
+            insertScenarios(file.scenarios)
+            insertCheckIns(file.checkIns)
+            insertPostedKeyRows(file.postedKeys)
+            insertDeferrals(file.deferrals)
         }
+    }
+
+    private suspend fun clearEverything() = with(db.maintenanceDao()) {
+        clearAccounts(); clearSnapshots(); clearGroups(); clearItems(); clearAmounts()
+        clearActuals(); clearLedger(); clearScenarios(); clearCheckIns(); clearInstallments()
+        clearPostedKeys(); clearDeferrals()
+    }
+
+    suspend fun clearAll() {
+        db.withTransaction { clearEverything() }
+        settingsRepository.setAutoPostFrom(null)
     }
 }

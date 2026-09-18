@@ -173,9 +173,10 @@ private fun ComparisonTable(c: Comparison) {
     data class Metric(val label: String, val value: (ScenarioOutcome) -> String, val best: (ScenarioOutcome) -> Boolean, val bad: (ScenarioOutcome) -> Boolean)
 
     val metrics = listOf(
-        Metric("最低水位", { MoneyFormat.currency(it.lowest) + (it.lowestLabel?.let { l -> "\n$l" } ?: "") }, { it.lowest == c.bestLowest }, { it.lowest < 0 }),
+        Metric("最低水位\n（半月估算）", { MoneyFormat.currency(it.lowest) + (it.lowestLabel?.let { l -> "\n$l" } ?: "") }, { it.lowest == c.bestLowest }, { it.lowest < 0 }),
         Metric("低於安全線", { it.firstBelowSafetyLabel ?: "不會" }, { it.firstBelowSafetyLabel == null }, { it.firstBelowSafetyLabel != null }),
-        Metric("年結構缺口", { MoneyFormat.signed(it.structuralGapPerYear) }, { it.structuralGapPerYear == c.bestGap }, { it.structuralGapPerYear < 0 }),
+        Metric("期間年化缺口", { MoneyFormat.signed(it.structuralGapPerYear) }, { it.structuralGapPerYear == c.bestGap }, { it.structuralGapPerYear < 0 }),
+        Metric("扣款帳戶不足", { it.shortfallLabel ?: "不會" }, { it.shortfallLabel == null }, { it.shortfallLabel != null }),
         Metric("期末卡債", { MoneyFormat.currency(it.endCardDebt) }, { it.endCardDebt == c.bestCardDebt }, { false }),
         Metric("期末總負債", { MoneyFormat.currency(it.endTotalDebt) }, { it.endTotalDebt == c.bestTotalDebt }, { false }),
         Metric("循環利息合計", { MoneyFormat.currency(it.cardInterest) }, { it.cardInterest == c.bestInterest }, { false }),
@@ -204,6 +205,14 @@ private fun ComparisonTable(c: Comparison) {
                 }
             }
             if (multi) Text("粗體是各列最好的數字", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "最低水位：以半月為單位、同半月內支出先於收入的估算，不是精確某一天的銀行餘額。" +
+                    "期間年化缺口＝(收入 − 支出 − 貸款本金) × 24 ÷ 期數，支出含利息與分期手續費。" +
+                    "期末總負債含未入帳的分期本金。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp),
+            )
         }
     }
 }
@@ -256,6 +265,8 @@ private fun SeekCard(
             val percent = seek.cutPercent
             if (percent != null) {
                 val text = when {
+                    seek.nothingToCut -> "選的項目在這段期間沒有可以減的計畫金額（既有分期與延期款不會被減），請換別的項目。"
+                    seek.lowBeforeStart -> "最低點發生在下個月開始減少之前，怎麼減都來不及；要先處理這個月的現金（例如延後付款或轉入存款）。"
                     percent == 0.0 -> "現況已經達成，不用減。"
                     !seek.achievable -> "這些項目全部停掉也達不到，要搭配其他做法（例如整合貸款、增加收入）。"
                     else -> "從下個月起，這些項目一起減少 ${String.format(Locale.US, "%.1f", percent)}% 才能達成。"

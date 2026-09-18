@@ -143,7 +143,10 @@ object EntryRules {
         PaymentMethod.CREDIT_CARD -> if (snapshot.settings.pickCard) cardId else null
     }
 
-    /** 建立一筆記帳；金額為 0 時回傳 null（「記下」按鈕不可按）。 */
+    /**
+     * 建立一筆記帳；金額為 0 時回傳 null（「記下」按鈕不可按）。
+     * [refund] 為 true 時存成負數（R-ENT-13）：退款、退貨，會減少這個項目的花費並退回原付款帳戶或卡片。
+     */
     fun buildEntry(
         snapshot: FinanceSnapshot,
         item: PlanItem,
@@ -152,9 +155,11 @@ object EntryRules {
         amountInput: String,
         note: String,
         date: LocalDate = snapshot.today,
+        refund: Boolean = false,
     ): LedgerEntry? {
-        val amount = AmountInput.value(amountInput)
-        if (amount <= 0) return null
+        val value = AmountInput.value(amountInput)
+        if (value <= 0) return null
+        val amount = if (refund && item.type == FlowType.EXPENSE) -value else value
         return when (item.type) {
             FlowType.EXPENSE -> {
                 val resolvedMethod = method ?: PaymentMethod.CASH

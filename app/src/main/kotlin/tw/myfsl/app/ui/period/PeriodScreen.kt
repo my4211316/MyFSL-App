@@ -103,11 +103,12 @@ fun PeriodScreen(
                         interactive = false,
                     )
                     Text(
-                        "最低水位 ${MoneyFormat.currency(o.lowest)}" + (o.lowestLabel?.let { "（$it）" } ?: ""),
+                        "最低水位（半月估算）${MoneyFormat.currency(o.lowest)}" + (o.lowestLabel?.let { "（$it）" } ?: ""),
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (o.lowest < o.safetyLevel) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                     )
                 }
+                o.shortfall?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = StatusColors.warningText) }
                 TextButton(onClick = onOpenForecast) { Text("看試算與情境") }
             }
         }

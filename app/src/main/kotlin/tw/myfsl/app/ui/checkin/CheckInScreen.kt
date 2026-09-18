@@ -39,6 +39,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import tw.myfsl.app.core.domain.ConfirmChoice
 import tw.myfsl.app.core.domain.DiffKind
+import tw.myfsl.app.core.domain.DueCheck
 import tw.myfsl.app.core.domain.Resolution
 import tw.myfsl.app.core.model.MoneyFormat
 import tw.myfsl.app.core.model.PlanItem
@@ -53,9 +54,11 @@ fun CheckInScreen(
     onClose: () -> Unit,
     onStep: (CheckInStep) -> Unit,
     onNext: () -> Unit,
-    onChoose: (PlanLine, ConfirmChoice) -> Unit,
-    onConfirmAmount: (PlanLine, String) -> Unit,
+    onChoose: (String, ConfirmChoice) -> Unit,
+    onConfirmAmount: (String, String) -> Unit,
     onReport: (PlanLine, String) -> Unit,
+    onDueChoose: (String, DueCheck) -> Unit,
+    onDueAmount: (String, String) -> Unit,
     onBalance: (Long, String) -> Unit,
     onMatch: (Long) -> Unit,
     onResolution: (Long, Resolution) -> Unit,
@@ -100,7 +103,7 @@ fun CheckInScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             when (state.step) {
-                CheckInStep.CONFIRM -> ConfirmStep(state, onChoose, onConfirmAmount, onReport)
+                CheckInStep.CONFIRM -> ConfirmStep(state, onChoose, onConfirmAmount, onReport, onDueChoose, onDueAmount)
                 CheckInStep.RECONCILE -> ReconcileStep(state, onBalance, onMatch, onResolution, onItem)
                 CheckInStep.REVIEW -> ReviewStep(state)
             }
@@ -125,11 +128,41 @@ fun CheckInScreen(
 @Composable
 private fun ConfirmStep(
     state: CheckInUiState,
-    onChoose: (PlanLine, ConfirmChoice) -> Unit,
-    onAmount: (PlanLine, String) -> Unit,
+    onChoose: (String, ConfirmChoice) -> Unit,
+    onAmount: (String, String) -> Unit,
     onReport: (PlanLine, String) -> Unit,
+    onDueChoose: (String, DueCheck) -> Unit,
+    onDueAmount: (String, String) -> Unit,
 ) {
-    if (state.confirms.isEmpty()) {
+    if (state.dues.isNotEmpty()) {
+        Text("到期還沒記下", style = MaterialTheme.typography.titleSmall)
+        Hint("先處理這些，對帳時才不會被當成漏記。平常也可以在記帳畫面的「本月到期」點一下記下。")
+        state.dues.forEach { row ->
+            RowCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(row.due.title, style = MaterialTheme.typography.titleSmall)
+                        Hint(row.dateLabel)
+                    }
+                    Text(MoneyFormat.currency(row.due.amount), style = MaterialTheme.typography.bodyMedium)
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DueCheck.entries.forEach { choice ->
+                        if (choice == DueCheck.DIFFERENT_AMOUNT && !row.due.amountEditable) return@forEach
+                        FilterChip(
+                            selected = row.choice == choice,
+                            onClick = { onDueChoose(row.due.key, choice) },
+                            label = { Text(choice.labelFor(row.due.isIncome)) },
+                        )
+                    }
+                }
+                if (row.choice == DueCheck.DIFFERENT_AMOUNT) {
+                    MoneyField("實際金額", row.amountText, if (row.amountError) "請輸入實際金額" else null) { onDueAmount(row.due.key, it) }
+                }
+            }
+        }
+    }
+    if (state.confirms.isEmpty() && state.dues.isEmpty()) {
         Hint("本月沒有要確認的到期項目。")
     }
     state.confirms.forEach { row ->
@@ -143,13 +176,13 @@ private fun ConfirmStep(
                 ConfirmChoice.entries.forEach { choice ->
                     FilterChip(
                         selected = row.choice == choice,
-                        onClick = { onChoose(row.line.line, choice) },
+                        onClick = { onChoose(row.line.key, choice) },
                         label = { Text(choice.labelFor(row.line.item.type)) },
                     )
                 }
             }
             if (row.choice == ConfirmChoice.DIFFERENT_AMOUNT) {
-                MoneyField("實際金額", row.amountText, if (row.amountError) "請輸入實際金額" else null) { onAmount(row.line.line, it) }
+                MoneyField("實際金額", row.amountText, if (row.amountError) "請輸入實際金額" else null) { onAmount(row.line.key, it) }
             }
         }
     }
@@ -192,7 +225,10 @@ private fun ReconcileStep(
                 MoneyField(if (row.isCard) "${account.name} 欠款" else "實際餘額", rec.inputs[account.id].orEmpty(), null) { onBalance(account.id, it) }
             }
             if (row.isCard && row.accounts.size > 1) Hint("每一張卡都要填，少一張就整列跳過")
-            AssistChip(onClick = { onMatch(row.id) }, label = { Text("和推算相符") })
+            AssistChip(onClick = { onMatch(row.id) }, label = { Text(if (row.isCard) "填入各卡推算欠款" else "和推算相符") })
+            if (row.isCard && row.computed != row.accounts.sumOf { it.balance }) {
+                Hint("推算裡有未指定卡片的刷卡 ${MoneyFormat.currency(row.computed - row.accounts.sumOf { it.balance })}，請看銀行 App 加到實際刷的那張卡")
+            }
 
             if (rec.kind != null && rec.message != null) {
                 val warn = rec.kind == DiffKind.MISSED || rec.kind == DiffKind.OVER_RECORDED

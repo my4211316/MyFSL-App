@@ -22,8 +22,11 @@ data class RecordDraft(
 ) {
     val isInstallment: Boolean get() = original.installmentId != null
 
-    /** 對帳差額可以是負數（多記差額）；自己記的一定是正數。 */
-    val allowsNegative: Boolean get() = original.source != EntrySource.MANUAL
+    /** 對帳差額、到期確認可以是負數；自己記的只有退款（原本就是負數）可以。 */
+    val allowsNegative: Boolean get() = original.source != EntrySource.MANUAL || original.amount < 0
+
+    /** 到期確認與到期記下的項目綁著某個月份的某個計畫列，只能改金額、日期（同月）與備註（R-REC-EDIT-06）。 */
+    val isLinked: Boolean get() = original.source == EntrySource.CONFIRMED || original.source == EntrySource.DUE
 }
 
 object RecordEditForm {
@@ -65,6 +68,14 @@ object RecordEditForm {
         if (draft.isInstallment) {
             if (amount != original.amount) errors[Field.AMOUNT] = "分期消費的金額不能改；要改請刪掉重記"
             if (method != original.method) errors[Field.METHOD] = "分期消費的付款方式不能改；要改請刪掉重記"
+        }
+        if (draft.isLinked) {
+            val what = if (original.source == EntrySource.DUE) "到期記下的款項" else "到期確認"
+            if (item != null && item.id != original.itemId) errors[Field.ITEM] = "${what}綁著原本的項目，不能換；要換請刪掉再自己記一筆"
+            if (method != original.method) errors[Field.METHOD] = "${what}不能改付款方式；要改請刪掉再自己記一筆"
+            if (draft.date.year != original.date.year || draft.date.monthValue != original.date.monthValue) {
+                errors[Field.DATE] = "${what}只能在同一個月內改日期"
+            }
         }
 
         val cardId = draft.cardId?.takeIf { method == PaymentMethod.CREDIT_CARD }

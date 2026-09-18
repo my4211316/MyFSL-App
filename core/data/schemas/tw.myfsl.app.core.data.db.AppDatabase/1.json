@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "8df3c313e32f6b659bcf184323abd5d2",
+    "identityHash": "bb115360fac430d7784e1d2d485d82d3",
     "entities": [
       {
         "tableName": "accounts",
@@ -222,7 +222,7 @@
       },
       {
         "tableName": "plan_items",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `groupId` INTEGER NOT NULL, `type` TEXT NOT NULL, `accountId` INTEGER, `toAccountId` INTEGER, `timing` TEXT NOT NULL, `flexibility` TEXT NOT NULL, `tracking` TEXT NOT NULL, `note` TEXT NOT NULL, `archived` INTEGER NOT NULL, `sortOrder` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `groupId` INTEGER NOT NULL, `type` TEXT NOT NULL, `accountId` INTEGER, `toAccountId` INTEGER, `timing` TEXT NOT NULL, `flexibility` TEXT NOT NULL, `tracking` TEXT NOT NULL, `note` TEXT NOT NULL, `archived` INTEGER NOT NULL, `sortOrder` INTEGER NOT NULL, `dueDay` INTEGER, `extraRepayment` INTEGER NOT NULL, `archivedFrom` INTEGER)",
         "fields": [
           {
             "fieldPath": "id",
@@ -293,6 +293,22 @@
             "columnName": "sortOrder",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "dueDay",
+            "columnName": "dueDay",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "extraRepayment",
+            "columnName": "extraRepayment",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archivedFrom",
+            "columnName": "archivedFrom",
+            "affinity": "INTEGER"
           }
         ],
         "primaryKey": {
@@ -411,7 +427,7 @@
       },
       {
         "tableName": "ledger_entries",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `epochDay` INTEGER NOT NULL, `type` TEXT NOT NULL, `amount` INTEGER NOT NULL, `itemId` INTEGER, `method` TEXT, `accountId` INTEGER, `toAccountId` INTEGER, `note` TEXT NOT NULL, `source` TEXT NOT NULL, `installmentId` INTEGER, `createdAtMillis` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `epochDay` INTEGER NOT NULL, `type` TEXT NOT NULL, `amount` INTEGER NOT NULL, `itemId` INTEGER, `method` TEXT, `accountId` INTEGER, `toAccountId` INTEGER, `note` TEXT NOT NULL, `source` TEXT NOT NULL, `installmentId` INTEGER, `createdAtMillis` INTEGER NOT NULL, `postingKey` TEXT)",
         "fields": [
           {
             "fieldPath": "id",
@@ -479,6 +495,11 @@
             "columnName": "createdAtMillis",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "postingKey",
+            "columnName": "postingKey",
+            "affinity": "TEXT"
           }
         ],
         "primaryKey": {
@@ -505,6 +526,15 @@
             ],
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_ledger_entries_epochDay` ON `${TABLE_NAME}` (`epochDay`)"
+          },
+          {
+            "name": "index_ledger_entries_postingKey",
+            "unique": true,
+            "columnNames": [
+              "postingKey"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_ledger_entries_postingKey` ON `${TABLE_NAME}` (`postingKey`)"
           }
         ]
       },
@@ -675,11 +705,112 @@
             "createSql": "CREATE INDEX IF NOT EXISTS `index_card_installments_itemId` ON `${TABLE_NAME}` (`itemId`)"
           }
         ]
+      },
+      {
+        "tableName": "posted_keys",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`key` TEXT NOT NULL, `epochDay` INTEGER NOT NULL, PRIMARY KEY(`key`))",
+        "fields": [
+          {
+            "fieldPath": "key",
+            "columnName": "key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "epochDay",
+            "columnName": "epochDay",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "key"
+          ]
+        }
+      },
+      {
+        "tableName": "deferrals",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `itemId` INTEGER NOT NULL, `method` TEXT NOT NULL, `fromYear` INTEGER NOT NULL, `fromMonth` INTEGER NOT NULL, `dueYear` INTEGER NOT NULL, `dueMonth` INTEGER NOT NULL, `amount` INTEGER NOT NULL, `settled` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "itemId",
+            "columnName": "itemId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "method",
+            "columnName": "method",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fromYear",
+            "columnName": "fromYear",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fromMonth",
+            "columnName": "fromMonth",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dueYear",
+            "columnName": "dueYear",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dueMonth",
+            "columnName": "dueMonth",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "amount",
+            "columnName": "amount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "settled",
+            "columnName": "settled",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_deferrals_itemId",
+            "unique": false,
+            "columnNames": [
+              "itemId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_deferrals_itemId` ON `${TABLE_NAME}` (`itemId`)"
+          }
+        ]
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '8df3c313e32f6b659bcf184323abd5d2')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'bb115360fac430d7784e1d2d485d82d3')"
     ]
   }
 }

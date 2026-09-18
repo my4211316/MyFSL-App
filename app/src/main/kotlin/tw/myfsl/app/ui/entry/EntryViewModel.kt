@@ -5,8 +5,13 @@ import androidx.lifecycle.viewModelScope
 import tw.myfsl.app.core.data.FinanceRepository
 import tw.myfsl.app.core.domain.AmountInput
 import tw.myfsl.app.core.domain.BudgetProgressCalculator
+import tw.myfsl.app.core.domain.DueChoice
+import tw.myfsl.app.core.domain.DueItem
+import tw.myfsl.app.core.domain.DueItems
+import tw.myfsl.app.core.domain.DueKind
 import tw.myfsl.app.core.domain.EntryRules
 import tw.myfsl.app.core.domain.InstallmentRules
+import tw.myfsl.app.core.domain.RecordRules
 import tw.myfsl.app.core.model.CardInstallment
 import tw.myfsl.app.core.model.InstallmentFee
 import tw.myfsl.app.core.model.Account
@@ -29,6 +34,41 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+/** 本月到期清單的一列（R-DUE）。 */
+data class DueRow(
+    val key: String,
+    val title: String,
+    val dateLabel: String,
+    val amountText: String,
+    /** 已經到期（今天或之前）。 */
+    val reached: Boolean,
+    /** 上個月以前就到期、還沒記下。 */
+    val overdue: Boolean,
+    val income: Boolean,
+)
+
+/** 點到期項目後的記下視窗。 */
+data class DueDialog(
+    val key: String,
+    val title: String,
+    val subtitle: String,
+    val amountText: String,
+    val amountEditable: Boolean,
+    val choosesMethod: Boolean,
+    val method: PaymentMethod?,
+    /** 計畫的支付方式；選別的時提示。 */
+    val plannedMethod: PaymentMethod?,
+    val showCards: Boolean,
+    val cards: List<Account>,
+    val cardId: Long?,
+    val choosesAccount: Boolean,
+    val accountLabel: String,
+    val accounts: List<Account>,
+    val accountId: Long?,
+    val error: String?,
+    val recordLabel: String,
+)
 
 /** 記帳畫面的狀態；文字與預設值都來自 core.domain 的規則。 */
 data class EntryUiState(
@@ -65,11 +105,24 @@ data class EntryUiState(
     val installmentFee: InstallmentFee = InstallmentFee.NONE,
     val installmentFeeValue: String = "",
     val installmentDescription: String? = null,
+    /** 退款（R-ENT-13）：存成負數，退回原付款帳戶或卡片。 */
+    val refund: Boolean = false,
+    val showRefund: Boolean = false,
+    /** 補登時可能就是之前對帳補的漏記差額（R-REC-03），要問使用者。 */
+    val missedPrompt: String? = null,
+    /** 本月到期、還沒記下的項目（R-DUE）。 */
+    val dues: List<DueRow> = emptyList(),
+    val dueDialog: DueDialog? = null,
 ) {
     val amountText: String get() = AmountInput.display(amountInput)
     val amount: Money get() = AmountInput.value(amountInput)
     val saveEnabled: Boolean get() = amount > 0
-    val saveLabel: String get() = if (amount > 0) "記下 ${MoneyFormat.currency(amount)}" else "輸入金額後記下"
+    val saveLabel: String
+        get() = when {
+            amount <= 0 -> "輸入金額後記下"
+            refund -> "記下退款 ${MoneyFormat.currency(amount)}"
+            else -> "記下 ${MoneyFormat.currency(amount)}"
+        }
 }
 
 @HiltViewModel
@@ -94,6 +147,21 @@ class EntryViewModel @Inject constructor(
         val installmentMonths: Int = 12,
         val installmentFee: InstallmentFee = InstallmentFee.NONE,
         val installmentFeeValue: String = "",
+        val refund: Boolean = false,
+        /** 等使用者回答的補登：(漏記差額, 要記的這筆, 提示文字)。 */
+        val pendingMissed: Triple<LedgerEntry, LedgerEntry, String>? = null,
+        /** 打開中的到期項目；欄位為 null 時用預設值。 */
+        val due: DueSelection? = null,
+    )
+
+    private data class DueSelection(
+        val key: String,
+        val amount: String? = null,
+        val method: PaymentMethod? = null,
+        val cardId: Long? = null,
+        val cardTouched: Boolean = false,
+        val accountId: Long? = null,
+        val error: String? = null,
     )
 
     private val selection = MutableStateFlow(Selection())
@@ -106,6 +174,7 @@ class EntryViewModel @Inject constructor(
         if (snapshot.activeItems.isEmpty()) {
             return EntryUiState(loading = false, empty = true, message = sel.message)
         }
+        val dues = DueItems.list(snapshot)
         val common = commonItems(snapshot, all)
         val item = all.firstOrNull { it.id == sel.itemId } ?: common.firstOrNull() ?: all.firstOrNull()
             ?: return EntryUiState(loading = false, empty = true, message = sel.message)
@@ -174,7 +243,139 @@ class EntryViewModel @Inject constructor(
             } else {
                 null
             },
+            refund = sel.refund && item.type == FlowType.EXPENSE,
+            showRefund = item.type == FlowType.EXPENSE,
+            missedPrompt = sel.pendingMissed?.third,
+            dues = dues.map { dueRow(snapshot, it) },
+            dueDialog = sel.due?.let { due -> dues.firstOrNull { it.key == due.key }?.let { dueDialog(snapshot, it, due) } },
         )
+    }
+
+    // ---- 本月到期（R-DUE） ----
+
+    private fun dueRow(snapshot: FinanceSnapshot, due: DueItem): DueRow {
+        val today = snapshot.today
+        val date = "${due.date.monthValue}/${due.date.dayOfMonth}"
+        return DueRow(
+            key = due.key,
+            title = due.title,
+            dateLabel = when {
+                due.isOverdue(today) -> "$date 逾期"
+                due.isDue(today) -> "$date 到期"
+                else -> date
+            },
+            amountText = (if (due.isIncome) "+" else "") + MoneyFormat.currency(due.amount),
+            reached = due.isDue(today),
+            overdue = due.isOverdue(today),
+            income = due.isIncome,
+        )
+    }
+
+    private fun choiceFor(snapshot: FinanceSnapshot, due: DueItem, sel: DueSelection): DueChoice {
+        val default = DueItems.defaultChoice(snapshot, due)
+        val method = sel.method ?: default.method
+        val cardId = when {
+            method != PaymentMethod.CREDIT_CARD || !snapshot.settings.pickCard -> null
+            sel.cardTouched -> sel.cardId
+            default.method == PaymentMethod.CREDIT_CARD -> default.cardId
+            else -> snapshot.defaultCardId
+        }
+        val amount = when {
+            !due.amountEditable -> due.amount
+            sel.amount == null -> default.amount
+            else -> MoneyFormat.parse(sel.amount) ?: 0L
+        }
+        return DueChoice(amount = amount, method = method, accountId = sel.accountId ?: default.accountId, cardId = cardId)
+    }
+
+    private fun dueDialog(snapshot: FinanceSnapshot, due: DueItem, sel: DueSelection): DueDialog {
+        val choice = choiceFor(snapshot, due, sel)
+        val date = "${due.date.monthValue}/${due.date.dayOfMonth}"
+        val detail = when (due.kind) {
+            DueKind.LOAN -> {
+                val interest = due.entries.firstOrNull { it.type == FlowType.EXPENSE }?.amount ?: 0L
+                "本金 ${MoneyFormat.currency(due.amount - interest)} ＋ 利息 ${MoneyFormat.currency(interest)}；改金額時利息不變"
+            }
+            DueKind.CARD_INTEREST -> "依目前欠款估算，請以帳單金額為準"
+            DueKind.CARD_PAYMENT -> "依卡片的繳款方式估算，請以實際繳款金額為準"
+            DueKind.INSTALLMENT -> {
+                val fee = due.entries.firstOrNull { it.postingKey?.startsWith("instfee:") == true }?.amount ?: 0L
+                "本金 ${MoneyFormat.currency(due.amount - fee)}" + if (fee > 0) " ＋ 手續費 ${MoneyFormat.currency(fee)}" else ""
+            }
+            DueKind.PLAN -> due.item?.let { item ->
+                val planned = snapshot.planAmount(tw.myfsl.app.core.model.PlanLine(item.id, due.method), due.date.year, due.date.monthValue)
+                "本月計畫 ${MoneyFormat.currency(planned)}"
+            }.orEmpty()
+        }
+        val whenText = if (due.isDue(snapshot.today)) "$date 到期" else "$date 到期；提早記下時日期用今天"
+        return DueDialog(
+            key = due.key,
+            title = due.title,
+            subtitle = listOf(whenText, detail).filter { it.isNotEmpty() }.joinToString("\n"),
+            amountText = if (due.amountEditable) sel.amount ?: due.amount.toString() else MoneyFormat.currency(due.amount),
+            amountEditable = due.amountEditable,
+            choosesMethod = due.choosesMethod,
+            method = choice.method,
+            plannedMethod = due.method,
+            showCards = due.choosesMethod && choice.method == PaymentMethod.CREDIT_CARD && snapshot.settings.pickCard,
+            cards = snapshot.activeCards,
+            cardId = choice.cardId,
+            choosesAccount = due.choosesAccount,
+            accountLabel = if (due.isIncome) "入帳帳戶" else "扣款帳戶",
+            accounts = snapshot.activeAccounts.filter { it.kind.isLiquid },
+            accountId = choice.accountId,
+            error = sel.error,
+            recordLabel = if (choice.amount > 0) "記下 ${MoneyFormat.currency(choice.amount)}" else "記下",
+        )
+    }
+
+    fun openDue(key: String) = selection.update { it.copy(due = DueSelection(key)) }
+
+    fun closeDue() = selection.update { it.copy(due = null) }
+
+    fun setDueAmount(text: String) = selection.update { s -> s.copy(due = s.due?.copy(amount = text.filter(Char::isDigit).take(9), error = null)) }
+
+    fun setDueMethod(method: PaymentMethod) = selection.update { s -> s.copy(due = s.due?.copy(method = method, cardTouched = false, error = null)) }
+
+    fun setDueCard(id: Long?) = selection.update { s -> s.copy(due = s.due?.copy(cardId = id, cardTouched = true, error = null)) }
+
+    fun setDueAccount(id: Long) = selection.update { s -> s.copy(due = s.due?.copy(accountId = id, error = null)) }
+
+    /** 記下打開中的到期項目。 */
+    fun recordDue() {
+        val sel = selection.value.due ?: return
+        viewModelScope.launch {
+            val snapshot = repository.snapshot.first()
+            val due = DueItems.list(snapshot).firstOrNull { it.key == sel.key }
+            if (due == null) {
+                selection.update { it.copy(due = null, message = "這筆已經記過了") }
+                return@launch
+            }
+            val choice = choiceFor(snapshot, due, sel)
+            val error = DueItems.validate(snapshot, due, choice)
+            if (error != null) {
+                selection.update { s -> s.copy(due = s.due?.copy(error = error)) }
+                return@launch
+            }
+            val id = repository.recordDue(DueItems.record(snapshot, due, choice))
+            selection.update {
+                it.copy(
+                    due = null,
+                    message = if (id != null) "已記下 ${due.title} ${MoneyFormat.currency(choice.amount)}" else "這筆已經記過了",
+                    lastSavedId = id,
+                    lastInstallmentId = null,
+                )
+            }
+        }
+    }
+
+    /** 這個月沒有這筆：不記帳，之後不再列出。 */
+    fun skipDue() {
+        val sel = selection.value.due ?: return
+        viewModelScope.launch {
+            repository.skipDue(sel.key)
+            selection.update { it.copy(due = null, message = "已略過，這個月不再列出", lastSavedId = null, lastInstallmentId = null) }
+        }
     }
 
     private fun draftInstallment(snapshot: FinanceSnapshot, item: PlanItem, cardId: Long?, sel: Selection): CardInstallment {
@@ -193,7 +394,9 @@ class EntryViewModel @Inject constructor(
         )
     }
 
-    fun toggleInstallment() = selection.update { it.copy(installmentOn = !it.installmentOn) }
+    fun toggleInstallment() = selection.update { it.copy(installmentOn = !it.installmentOn, refund = false) }
+
+    fun toggleRefund() = selection.update { it.copy(refund = !it.refund, installmentOn = false) }
 
     fun setInstallmentMonths(months: Int) = selection.update { it.copy(installmentMonths = months) }
 
@@ -262,8 +465,22 @@ class EntryViewModel @Inject constructor(
             val item = items.firstOrNull { it.id == sel.itemId } ?: items.firstOrNull() ?: return@launch
             val method = if (sel.methodTouched) sel.method else EntryRules.defaultMethod(snapshot, item)
             val cardId = if (sel.cardTouched) sel.cardId else EntryRules.defaultCard(snapshot, item)
-            val entry = EntryRules.buildEntry(snapshot, item, method, cardId, sel.amount, sel.note) ?: return@launch
-            val message = EntryRules.savedMessage(snapshot, item, method, entry.amount, sel.note)
+            val refund = sel.refund && item.type == FlowType.EXPENSE
+            val entry = EntryRules.buildEntry(snapshot, item, method, cardId, sel.amount, sel.note, refund = refund) ?: return@launch
+            val message = if (refund) {
+                "已記下退款 ${sel.note.trim().ifEmpty { item.name }} ${MoneyFormat.currency(-entry.amount)}"
+            } else {
+                EntryRules.savedMessage(snapshot, item, method, entry.amount, sel.note)
+            }
+            // 補登的單據可能就是之前對帳補的漏記差額：先問，避免同一筆算兩次（R-REC-03）。
+            if (!refund && !sel.installmentOn && item.type == FlowType.EXPENSE) {
+                RecordRules.missedMatch(snapshot, item.id, entry.method, snapshot.today)?.let { missed ->
+                    val prompt = "${missed.date.monthValue}/${missed.date.dayOfMonth} 對帳時補過「${item.name}・${entry.method?.label.orEmpty()}」" +
+                        "漏記 ${MoneyFormat.currency(missed.amount)}。這筆是不是那時漏記的？"
+                    selection.update { it.copy(pendingMissed = Triple(missed, entry, prompt)) }
+                    return@launch
+                }
+            }
             if (sel.installmentOn && method == PaymentMethod.CREDIT_CARD && item.type == FlowType.EXPENSE) {
                 val installment = draftInstallment(snapshot, item, cardId, sel)
                 val installmentId = repository.addInstallmentPurchase(entry, installment)
@@ -277,9 +494,31 @@ class EntryViewModel @Inject constructor(
                 return@launch
             }
             val id = repository.addLedgerEntry(entry)
-            selection.update { it.copy(amount = "", note = "", message = message, lastSavedId = id, lastInstallmentId = null) }
+            selection.update { it.copy(amount = "", note = "", refund = false, message = message, lastSavedId = id, lastInstallmentId = null) }
         }
     }
+
+    /** 回答補登提示：是 → 用這筆明細取代漏記差額；不是 → 當成新的一筆。 */
+    fun answerMissed(replace: Boolean) {
+        val (missed, entry, _) = selection.value.pendingMissed ?: return
+        viewModelScope.launch {
+            if (replace) {
+                repository.replaceMissed(missed.id, entry)
+                selection.update {
+                    it.copy(amount = "", note = "", pendingMissed = null, lastSavedId = null, lastInstallmentId = null,
+                        message = "已用這筆明細取代漏記差額，餘額不會重複扣")
+                }
+            } else {
+                val id = repository.addLedgerEntry(entry)
+                selection.update {
+                    it.copy(amount = "", note = "", pendingMissed = null, lastSavedId = id, lastInstallmentId = null,
+                        message = "已記下 ${MoneyFormat.currency(entry.amount)}（另外一筆，不影響之前的漏記差額）")
+                }
+            }
+        }
+    }
+
+    fun cancelMissed() = selection.update { it.copy(pendingMissed = null) }
 
     fun undo() {
         val sel = selection.value

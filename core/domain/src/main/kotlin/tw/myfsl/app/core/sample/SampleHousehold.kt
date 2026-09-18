@@ -23,7 +23,7 @@ import tw.myfsl.app.core.model.TrackingMode
 import java.time.LocalDate
 
 /**
- * 示意家庭資料：設計稿所有數字都由這份計畫算出（與 design/mockups/sample-model.mjs 相同）。
+ * 示意家庭資料：設計稿所有數字都由這份計畫算出（DesignNumbersDump 寫入 design/mockups/sample-numbers.json）。
  * 金額為虛構，不代表任何真實帳務。
  */
 object SampleHousehold {
@@ -57,7 +57,6 @@ object SampleHousehold {
     const val BIRTHDAY = 702L
     const val CAR_SERVICE = 703L
     const val TRIP = 704L
-    const val PAY_CARD_A = 801L
     const val PAY_CARD_B = 802L
 
     val accounts = listOf(
@@ -66,13 +65,14 @@ object SampleHousehold {
         Account(
             CARD_A, "信用卡 A", AccountKind.CREDIT_CARD, balance = 60_000, balanceAsOf = today,
             creditLimit = 150_000, paymentDueDay = 15,
-            card = CardTerms(revolvingRatePercent = 15.0, payMode = CardPayMode.FIXED, payAccountId = BANK, payDay = 15),
+            // A 卡依合約每月固定繳 18,000（自動扣款），計畫裡不另外列繳卡費。
+            card = CardTerms(revolvingRatePercent = 15.0, payMode = CardPayMode.FIXED, fixedPayment = 18_000, payAccountId = BANK, payDay = 15),
             sortOrder = 3,
         ),
         Account(
             CARD_B, "信用卡 B", AccountKind.CREDIT_CARD, balance = 45_000, balanceAsOf = today,
             creditLimit = 80_000, paymentDueDay = 25,
-            card = CardTerms(revolvingRatePercent = 13.5, payMode = CardPayMode.FIXED, payAccountId = BANK, payDay = 25),
+            // B 卡沒設循環條件：不計息，繳款照計畫裡的「繳信用卡 B」。
             sortOrder = 4,
         ),
         Account(
@@ -100,7 +100,7 @@ object SampleHousehold {
         PlanItem(id, name, group, FlowType.EXPENSE, timing = timing, flexibility = if (flexible) Flexibility.FLEXIBLE else Flexibility.FIXED, tracking = tracking)
 
     val items = listOf(
-        income(SALARY, "薪資", Timing.FIRST_HALF, TrackingMode.AUTO),
+        income(SALARY, "薪資", Timing.FIRST_HALF, TrackingMode.AUTO).copy(dueDay = 15),
         income(BONUS, "年終獎金", Timing.FIRST_HALF, TrackingMode.CONFIRM),
         income(SUBSIDY, "教育補助", Timing.FIRST_HALF, TrackingMode.CONFIRM),
         expense(INCOME_TAX, "所得稅", 2, Timing.SECOND_HALF),
@@ -120,7 +120,6 @@ object SampleHousehold {
         expense(BIRTHDAY, "生日", 7, Timing.SECOND_HALF, flexible = true, tracking = TrackingMode.CONFIRM),
         expense(CAR_SERVICE, "汽車保養", 7, Timing.SECOND_HALF, tracking = TrackingMode.CONFIRM),
         expense(TRIP, "家族旅遊", 7, Timing.SECOND_HALF, flexible = true, tracking = TrackingMode.CONFIRM),
-        PlanItem(PAY_CARD_A, "繳信用卡 A", 8, FlowType.TRANSFER, accountId = BANK, toAccountId = CARD_A, timing = Timing.FIRST_HALF),
         PlanItem(PAY_CARD_B, "繳信用卡 B", 8, FlowType.TRANSFER, accountId = BANK, toAccountId = CARD_B, timing = Timing.SECOND_HALF),
     )
 
@@ -152,7 +151,6 @@ object SampleHousehold {
         PlanLine(BIRTHDAY, PaymentMethod.CASH) to months(2 to 5_000, 6 to 5_000, 11 to 5_000),
         PlanLine(CAR_SERVICE, PaymentMethod.CREDIT_CARD) to months(3 to 12_000, 9 to 12_000),
         PlanLine(TRIP, PaymentMethod.CREDIT_CARD) to months(8 to 52_180),
-        PlanLine(PAY_CARD_A) to everyMonth(18_000),
         PlanLine(PAY_CARD_B) to everyMonth(9_000),
     )
 

@@ -133,6 +133,20 @@ fun SettingsScreen(
             AccountPicker("轉帳時扣哪個帳戶", draft.transferAccountId, state.liquidAccounts, state.autoTransfer, errors[Field.TRANSFER_ACCOUNT]) { id ->
                 onChange { it.copy(transferAccountId = id) }
             }
+            if (state.cards.isNotEmpty()) {
+                AccountPicker(
+                    "沒指定卡片的刷卡算在哪張卡",
+                    draft.defaultCardId,
+                    state.cards,
+                    state.cards.firstOrNull()?.name,
+                    errors[Field.DEFAULT_CARD],
+                ) { id -> onChange { it.copy(defaultCardId = id) } }
+                Text(
+                    "記帳沒選卡片、計畫裡的刷卡、沒指定卡片的分期，試算時都算在這張卡（利息與繳款也照這張卡的條件）。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
 
             Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) { Text(if (state.saved) "已儲存" else "儲存設定") }
 
@@ -155,7 +169,7 @@ fun SettingsScreen(
             Section("關於")
             Text("MyFSL ${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）", style = MaterialTheme.typography.bodyMedium)
             Text(
-                "資料只存在這支手機，App 不連網、不上傳任何資料。試算與反推只是依你輸入的計畫和假設推算，不是財務建議。",
+                "App 本身不連網、不上傳任何資料。若手機開啟了 Google 備份，Android 系統會把 App 資料（加密）備份到你的 Google 帳號，換手機時可以帶過去。試算與反推只是依你輸入的計畫和假設推算，不是財務建議。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -179,18 +193,25 @@ fun SettingsScreen(
         val time = java.time.Instant.ofEpochMilli(summary.exportedAtMillis).atZone(java.time.ZoneId.systemDefault())
         AlertDialog(
             onDismissRequest = onCancelRestore,
-            title = { Text("用這份備份取代目前資料？") },
+            title = { Text(if (summary.needsRescue) "救援還原：有些資料對不上" else "用這份備份取代目前資料？") },
             text = {
                 Text(
                     buildString {
                         append("備份時間：${time.year}/${time.monthValue}/${time.dayOfMonth} ${"%02d:%02d".format(time.hour, time.minute)}\n")
                         append(summary.text)
                         append("\n\n目前 App 裡的所有資料會被這份備份取代。")
-                        summary.warnings.forEach { append("\n注意：$it") }
+                        if (summary.needsRescue) {
+                            append("\n\n這份備份裡有資料彼此對不上，只能用救援方式還原，下面這些會被略過或對不上：")
+                            summary.warnings.forEach { append("\n· $it") }
+                        }
                     },
                 )
             },
-            confirmButton = { TextButton(onClick = onConfirmRestore) { Text("還原", color = MaterialTheme.colorScheme.error) } },
+            confirmButton = {
+                TextButton(onClick = onConfirmRestore) {
+                    Text(if (summary.needsRescue) "仍要救援還原" else "還原", color = MaterialTheme.colorScheme.error)
+                }
+            },
             dismissButton = { TextButton(onClick = onCancelRestore) { Text("取消") } },
         )
     }

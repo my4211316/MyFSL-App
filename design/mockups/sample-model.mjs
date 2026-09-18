@@ -1,3 +1,5 @@
+// 【已停用】這是 v1「所有卡片合併計算」時期的模型，v2.1 起改為逐卡計算，這份的數字已不再正確。
+// 設計稿與規格書的數字以 sample-numbers.json（由 DesignNumbersDump 從 App 引擎產生）為準。
 // 以 App 計算引擎相同的半月邏輯，替設計稿的示意資料算出一致的數字。
 const LIQUID = new Set(['bank', 'cash']);
 const CARD = new Set(['cardA', 'cardB']);

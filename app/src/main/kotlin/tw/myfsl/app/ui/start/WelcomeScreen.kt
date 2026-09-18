@@ -56,6 +56,32 @@ class StartViewModel @Inject constructor(
             repository.setOnboarded()
         }
     }
+
+    /** 第一次開啟時設定到期項目的起算日（R-DUE）；不會自動記任何帳。 */
+    fun startDueTracking() {
+        viewModelScope.launch { runCatching { repository.startDueTracking() } }
+    }
+}
+
+/** 手機上的資料是較新版 App 寫的：不打開、不清除，請使用者裝回新版（R-DATA-02）。 */
+@Composable
+fun NewerDataScreen(modifier: Modifier = Modifier) {
+    Column(
+        modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Spacer(Modifier.height(32.dp))
+        Text("這支手機上的資料比這個版本新", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "你的帳務資料是用較新版的 MyFSL 存的，這個版本讀不懂。為了不弄壞資料，App 不會打開它，也不會清除它。",
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        Text(
+            "請安裝最新版的 MyFSL（不要先解除安裝，解除安裝會刪掉資料），資料會原封不動地回來。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 @Composable
@@ -81,7 +107,7 @@ fun WelcomeScreen(
         Step(3, "每天記帳、每週檢查", "打開 App 直接記一筆；每週一次對錢包、銀行與卡片的金額，補上漏記。")
 
         Text(
-            "所有資料只存在這支手機，不會上傳。記得定期到「設定」匯出完整備份。試算結果只是依你輸入的數字推算，不是財務建議。",
+            "App 不連網、不會上傳你的資料（若手機開啟 Google 備份，系統會一併加密備份）。記得定期到「設定」匯出完整備份。試算結果只是依你輸入的數字推算，不是財務建議。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

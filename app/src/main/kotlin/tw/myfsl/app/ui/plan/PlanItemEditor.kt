@@ -33,6 +33,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -106,9 +107,18 @@ fun PlanItemEditorForm(
         Label("類型")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FlowType.entries.forEach { type ->
-                FilterChip(selected = draft.type == type, onClick = { onType(type) }, label = { Text(type.label) })
+                FilterChip(
+                    selected = draft.type == type,
+                    onClick = { onType(type) },
+                    enabled = !editor.typeLocked || draft.type == type,
+                    label = { Text(type.label) },
+                )
             }
         }
+        if (editor.typeLocked) {
+            Text("已經有記帳，類型不能改；要改請新增一個項目。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        errors[Field.TYPE]?.let { ErrorText(it) }
 
         Input("項目名稱", draft.name, errors[Field.NAME]) { v -> onChange { it.copy(name = v) } }
 
@@ -142,6 +152,20 @@ fun PlanItemEditorForm(
                 AccountPicker("轉入帳戶（例如繳卡費時選信用卡）", draft.toAccountId, accounts, errors[Field.TO_ACCOUNT]) { id ->
                     onChange { it.copy(toAccountId = id) }
                 }
+                val target = accounts.firstOrNull { it.id == draft.toAccountId }
+                if (target != null && (target.card != null || target.loan != null)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("額外還款", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "「${target.name}」已依合約自動繳款。一般月繳不用再列；只有多還的部分才打開這個開關。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = draft.extraRepayment, onCheckedChange = { v -> onChange { it.copy(extraRepayment = v) } })
+                    }
+                }
             }
 
             FlowType.EXPENSE -> Unit
@@ -153,6 +177,18 @@ fun PlanItemEditorForm(
                 FilterChip(selected = draft.timing == timing, onClick = { onChange { it.copy(timing = timing) } }, label = { Text(timing.label) })
             }
         }
+        OutlinedTextField(
+            value = draft.dueDay,
+            onValueChange = { v -> onChange { it.copy(dueDay = v.filter(Char::isDigit).take(2)) } },
+            label = { Text("每月幾號（選填）") },
+            supportingText = {
+                Text(errors[Field.DUE_DAY] ?: "填了就以這天為準：每月固定的項目這天出現在「本月到期」，試算也放在這天。短月份取月底。")
+            },
+            isError = errors[Field.DUE_DAY] != null,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+        )
         Label("固定或可調")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Flexibility.entries.forEach { f ->

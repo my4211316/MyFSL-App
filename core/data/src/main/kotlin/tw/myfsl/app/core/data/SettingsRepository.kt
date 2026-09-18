@@ -30,6 +30,8 @@ class SettingsRepository @Inject constructor(
             transferAccountId = prefs[TRANSFER_ACCOUNT],
             cardPostingDays = prefs[CARD_POSTING_DAYS] ?: defaults.cardPostingDays,
             lastBackupEpochDay = prefs[LAST_BACKUP_DAY],
+            defaultCardId = prefs[DEFAULT_CARD],
+            autoPostFrom = prefs[AUTO_POST_FROM],
         )
     }
 
@@ -71,6 +73,15 @@ class SettingsRepository @Inject constructor(
         dataStore.edit { it[LAST_BACKUP_DAY] = epochDay }
     }
 
+    /** 設定到期項目的起算日；已經設過就不改（只在第一次開始使用時設定）。 */
+    suspend fun startAutoPostingIfNeeded(epochDay: Long) {
+        dataStore.edit { if (it[AUTO_POST_FROM] == null) it[AUTO_POST_FROM] = epochDay }
+    }
+
+    suspend fun setAutoPostFrom(epochDay: Long?) {
+        dataStore.edit { if (epochDay == null) it.remove(AUTO_POST_FROM) else it[AUTO_POST_FROM] = epochDay }
+    }
+
     /** 一次寫入設定畫面上的所有欄位。 */
     suspend fun save(settings: AppSettings) {
         dataStore.edit {
@@ -83,6 +94,8 @@ class SettingsRepository @Inject constructor(
             val transfer = settings.transferAccountId
             if (transfer == null) it.remove(TRANSFER_ACCOUNT) else it[TRANSFER_ACCOUNT] = transfer
             it[CARD_POSTING_DAYS] = settings.cardPostingDays
+            val card = settings.defaultCardId
+            if (card == null) it.remove(DEFAULT_CARD) else it[DEFAULT_CARD] = card
         }
     }
 
@@ -96,5 +109,7 @@ class SettingsRepository @Inject constructor(
         val TRANSFER_ACCOUNT = longPreferencesKey("transfer_account_id")
         val CARD_POSTING_DAYS = intPreferencesKey("card_posting_days")
         val LAST_BACKUP_DAY = longPreferencesKey("last_backup_epoch_day")
+        val DEFAULT_CARD = longPreferencesKey("default_card_id")
+        val AUTO_POST_FROM = longPreferencesKey("auto_post_from_epoch_day")
     }
 }

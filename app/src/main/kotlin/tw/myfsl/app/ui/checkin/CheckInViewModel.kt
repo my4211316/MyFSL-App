@@ -10,6 +10,9 @@ import tw.myfsl.app.core.domain.ConfirmChoice
 import tw.myfsl.app.core.domain.ConfirmDecision
 import tw.myfsl.app.core.domain.ConfirmLine
 import tw.myfsl.app.core.domain.DiffKind
+import tw.myfsl.app.core.domain.DueCheck
+import tw.myfsl.app.core.domain.DueDecision
+import tw.myfsl.app.core.domain.DueItem
 import tw.myfsl.app.core.domain.Reconcile
 import tw.myfsl.app.core.domain.ReconcileDecision
 import tw.myfsl.app.core.domain.ReportLine
@@ -44,7 +47,19 @@ data class ConfirmRow(
     val amountText: String,
     val amountError: Boolean,
 ) {
-    val title: String get() = line.item.name + (line.method?.let { " · ${it.label}" } ?: "")
+    val title: String
+        get() = line.item.name + (line.method?.let { " · ${it.label}" } ?: "") +
+            (line.deferral?.let { "（${it.fromMonth} 月延期）" } ?: "")
+}
+
+/** 到期還沒記下的項目（R-DUE-05）。 */
+data class DueCheckRow(
+    val due: DueItem,
+    val choice: DueCheck?,
+    val amountText: String,
+    val amountError: Boolean,
+) {
+    val dateLabel: String get() = "${due.date.monthValue}/${due.date.dayOfMonth} 到期"
 }
 
 data class ReportRow(val line: ReportLine, val text: String) {
@@ -68,6 +83,7 @@ data class CheckInUiState(
     val step: CheckInStep = CheckInStep.CONFIRM,
     val steps: List<CheckInStep> = CheckInStep.entries,
     val confirms: List<ConfirmRow> = emptyList(),
+    val dues: List<DueCheckRow> = emptyList(),
     val reports: List<ReportRow> = emptyList(),
     val reconciles: List<ReconcileRow> = emptyList(),
     val itemChoices: List<PlanItem> = emptyList(),
@@ -85,8 +101,10 @@ class CheckInViewModel @Inject constructor(
 
     private data class Local(
         val step: CheckInStep = CheckInStep.CONFIRM,
-        val confirmChoice: Map<PlanLine, ConfirmChoice> = emptyMap(),
-        val confirmAmount: Map<PlanLine, String> = emptyMap(),
+        val confirmChoice: Map<String, ConfirmChoice> = emptyMap(),
+        val confirmAmount: Map<String, String> = emptyMap(),
+        val dueChoice: Map<String, DueCheck> = emptyMap(),
+        val dueAmount: Map<String, String> = emptyMap(),
         val reports: Map<PlanLine, String> = emptyMap(),
         val balances: Map<Long, String> = emptyMap(),
         val resolutions: Map<Long, Resolution> = emptyMap(),
@@ -116,11 +134,20 @@ class CheckInViewModel @Inject constructor(
             val balances = row.accounts.mapNotNull { account -> parse(local.balances[account.id])?.let { account.id to it } }.toMap()
             row.id to ReconcileDecision(balances, local.resolutions[row.id], local.items[row.id])
         }
-        return CheckInInput(reports, confirms, reconciles)
+        val dues = local.dueChoice.mapNotNull { (key, choice) ->
+            if (choice == DueCheck.DIFFERENT_AMOUNT) {
+                val amount = parse(local.dueAmount[key]) ?: return@mapNotNull null
+                key to DueDecision(choice, amount)
+            } else {
+                key to DueDecision(choice)
+            }
+        }.toMap()
+        return CheckInInput(reports, confirms, reconciles, dues)
     }
 
     private fun build(snapshot: FinanceSnapshot, local: Local): CheckInUiState {
         val confirmLines = CheckInRules.confirmLines(snapshot)
+        val dueLines = CheckInRules.dueLines(snapshot)
         val reportLines = CheckInRules.reportLines(snapshot)
         val fullInput = input(snapshot, local)
 
@@ -147,7 +174,7 @@ class CheckInViewModel @Inject constructor(
         }
         val result = CheckInRules.build(snapshot, fullInput)
 
-        val steps = if (confirmLines.isEmpty() && reportLines.isEmpty()) {
+        val steps = if (confirmLines.isEmpty() && reportLines.isEmpty() && dueLines.isEmpty()) {
             listOf(CheckInStep.RECONCILE, CheckInStep.REVIEW)
         } else {
             CheckInStep.entries
@@ -159,12 +186,21 @@ class CheckInViewModel @Inject constructor(
             step = step,
             steps = steps,
             confirms = confirmLines.map { line ->
-                val choice = local.confirmChoice[line.line]
+                val choice = local.confirmChoice[line.key]
                 ConfirmRow(
                     line = line,
                     choice = choice,
-                    amountText = local.confirmAmount[line.line] ?: "",
-                    amountError = choice == ConfirmChoice.DIFFERENT_AMOUNT && parse(local.confirmAmount[line.line]) == null,
+                    amountText = local.confirmAmount[line.key] ?: "",
+                    amountError = choice == ConfirmChoice.DIFFERENT_AMOUNT && parse(local.confirmAmount[line.key]) == null,
+                )
+            },
+            dues = dueLines.map { due ->
+                val choice = local.dueChoice[due.key]
+                DueCheckRow(
+                    due = due,
+                    choice = choice,
+                    amountText = local.dueAmount[due.key] ?: "",
+                    amountError = choice == DueCheck.DIFFERENT_AMOUNT && parse(local.dueAmount[due.key]) == null,
                 )
             },
             reports = reportLines.map { ReportRow(it, local.reports[it.line] ?: "") },
@@ -189,6 +225,18 @@ class CheckInViewModel @Inject constructor(
         val postponed = result.actuals.count { it.status == ActualStatus.POSTPONED }
         if (done > 0) add("到期確認完成 $done 項" + if (confirmed.isNotEmpty()) "，補記 ${MoneyFormat.currency(confirmed.sumOf { it.amount })}" else "")
         if (postponed > 0) add("延到下月 $postponed 項")
+        val dueEntries = result.dueEntries
+        if (dueEntries.isNotEmpty()) {
+            val count = dueEntries.mapNotNull { it.postingKey?.removeSuffix(":interest")?.replace("instfee:", "inst:") }.distinct().size
+            add("記下到期項目 $count 筆，合計 ${MoneyFormat.currency(dueEntries.sumOf { it.amount })}")
+        }
+        if (result.skippedKeys.isNotEmpty()) add("這個月沒有 ${result.skippedKeys.size} 筆（不記帳）")
+        val newDeferrals = result.deferrals.filter { it.id == 0L }
+        if (newDeferrals.isNotEmpty()) add("新增延期款 ${newDeferrals.size} 筆，合計 ${MoneyFormat.currency(newDeferrals.sumOf { it.amount })}")
+        val settled = result.deferrals.count { it.id != 0L && it.settled }
+        if (settled > 0) add("付清延期款 $settled 筆")
+        val moved = result.deferrals.count { it.id != 0L && !it.settled }
+        if (moved > 0) add("延期款再延一個月 $moved 筆")
         if (result.balances.isNotEmpty()) {
             add("校正餘額 ${result.balances.size} 個帳戶")
             result.balances.forEach { (id, value) -> add("　· ${snapshot.account(id)?.name.orEmpty()} ${MoneyFormat.currency(value)}") }
@@ -213,25 +261,37 @@ class CheckInViewModel @Inject constructor(
         return true
     }
 
-    fun choose(line: PlanLine, choice: ConfirmChoice) = local.update {
-        val current = it.confirmChoice[line]
-        it.copy(confirmChoice = if (current == choice) it.confirmChoice - line else it.confirmChoice + (line to choice))
+    fun choose(key: String, choice: ConfirmChoice) = local.update {
+        val current = it.confirmChoice[key]
+        it.copy(confirmChoice = if (current == choice) it.confirmChoice - key else it.confirmChoice + (key to choice))
     }
 
-    fun setConfirmAmount(line: PlanLine, text: String) = local.update { it.copy(confirmAmount = it.confirmAmount + (line to digits(text))) }
+    fun chooseDue(key: String, choice: DueCheck) = local.update {
+        val current = it.dueChoice[key]
+        it.copy(dueChoice = if (current == choice) it.dueChoice - key else it.dueChoice + (key to choice))
+    }
+
+    fun setDueAmount(key: String, text: String) = local.update { it.copy(dueAmount = it.dueAmount + (key to digits(text))) }
+
+    fun setConfirmAmount(key: String, text: String) = local.update { it.copy(confirmAmount = it.confirmAmount + (key to digits(text))) }
 
     fun setReport(line: PlanLine, text: String) = local.update { it.copy(reports = it.reports + (line to digits(text))) }
 
     fun setBalance(accountId: Long, text: String) = local.update { it.copy(balances = it.balances + (accountId to digits(text))) }
 
-    /** 「相符」：填入系統推算。信用卡合計把差額放在第一張卡，其他卡填各自的欠款。 */
+    /**
+     * 「和推算相符」：每個帳戶填入它自己的推算餘額。
+     * 信用卡合計不會把合計差額硬塞到某一張卡（不能用總額推定各卡真實欠款）；
+     * 未指定卡片的刷卡請看銀行 App 後自己加到對應的卡。
+     */
     fun matchComputed(rowId: Long) {
         val row = state.value.reconciles.firstOrNull { it.row.id == rowId }?.row ?: return
         local.update { current ->
-            val others = row.accounts.drop(1)
-            val first = row.accounts.first()
-            val fills = others.associate { it.id to it.balance.toString() } +
-                (first.id to (row.computed - others.sumOf { it.balance }).toString())
+            val fills = if (row.isCard) {
+                row.accounts.associate { it.id to it.balance.toString() }
+            } else {
+                row.accounts.associate { it.id to row.computed.toString() }
+            }
             current.copy(balances = current.balances + fills)
         }
     }

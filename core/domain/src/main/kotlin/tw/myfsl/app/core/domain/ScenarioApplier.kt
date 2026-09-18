@@ -8,13 +8,18 @@ import tw.myfsl.app.core.model.ScenarioChange
 /** 把情境變動依序套用到基準線輸入上，產生新的模擬輸入。純函式。 */
 object ScenarioApplier {
 
-    /** 情境中新增的貸款帳戶使用負數 id，避免與資料庫 id 及信用卡合計衝突。 */
+    /** 情境中新增的貸款帳戶使用負數 id，避免與資料庫 id 及替代卡片衝突。 */
     const val SCENARIO_ACCOUNT_BASE = -1000L
 
     fun apply(base: ForecastInput, changes: List<ScenarioChange>): ForecastInput {
         var events = base.events
         var accounts = base.accounts
+        var beyond = base.installmentsBeyond
         val endIndex = base.start.index + base.periodCount
+
+        // 調整、停止、改支付方式只作用在計畫產生的事件；既有分期、延期款與合約繳款是已經發生的義務，
+        // 不會因為「之後少花一點」而變少（R-SC-01）。
+        fun isPlan(event: FlowEvent) = event.source == EventSource.PLAN
 
         changes.forEachIndexed { index, change ->
             when (change) {
@@ -22,7 +27,7 @@ object ScenarioApplier {
                     val ids = change.itemIds.toSet()
                     val factor = 1 + change.percent / 100.0
                     events = events.map {
-                        if (it.itemId in ids && it.period.index >= change.fromIndex) {
+                        if (isPlan(it) && it.itemId in ids && it.period.index >= change.fromIndex) {
                             it.copy(amount = Math.round(it.amount * factor).coerceAtLeast(0))
                         } else {
                             it
@@ -31,14 +36,14 @@ object ScenarioApplier {
                 }
 
                 is ScenarioChange.StopItem -> events = events.filterNot {
-                    it.itemId == change.itemId && it.period.index >= change.fromIndex
+                    isPlan(it) && it.itemId == change.itemId && it.period.index >= change.fromIndex
                 }
 
                 is ScenarioChange.ChangeMethod -> {
                     val ids = change.itemIds.toSet()
                     val target = base.methodAccounts[change.toMethod]
                     events = events.map {
-                        if (it.itemId in ids && it.kind == EventKind.EXPENSE && it.method == change.fromMethod &&
+                        if (isPlan(it) && it.itemId in ids && it.kind == EventKind.EXPENSE && it.method == change.fromMethod &&
                             it.period.index >= change.fromIndex
                         ) {
                             it.copy(method = change.toMethod, fromAccountId = target)
@@ -71,8 +76,11 @@ object ScenarioApplier {
                                 it.period.index >= change.atIndex &&
                                 it.fromAccountId in ids
                         }
-                        installmentPrincipal = future.filterNot { it.countAsExpense }.sumOf { it.amount }
+                        // 試算期間之後才入帳的本金也一次結清。
+                        installmentPrincipal = future.filterNot { it.countAsExpense }.sumOf { it.amount } +
+                            ids.sumOf { beyond[it] ?: 0L }
                         events = events - future.toSet()
+                        beyond = beyond - ids
                     }
                     if (change.stopScheduledPayments) {
                         events = events.filterNot {
@@ -145,7 +153,7 @@ object ScenarioApplier {
                 }
             }
         }
-        return base.copy(accounts = accounts, events = events)
+        return base.copy(accounts = accounts, events = events, installmentsBeyond = beyond)
     }
 
     fun run(base: ForecastInput, changes: List<ScenarioChange>): ForecastResult =

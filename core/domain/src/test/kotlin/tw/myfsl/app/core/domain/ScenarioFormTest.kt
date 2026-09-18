@@ -54,10 +54,10 @@ class ScenarioFormTest {
             changes,
         )
         val comparison = ForecastComparisonCalculator.compare(snapshot, listOf(result.scenario), 24)
-        assertEquals(2_880L, comparison.outcomes[1].lowest)
+        assertEquals(13_786L, comparison.outcomes[1].lowest)
         assertEquals(0L, comparison.outcomes[1].endCardDebt)
-        assertEquals(-48_639L, comparison.outcomes[0].lowest)
-        assertEquals(2_880L, comparison.bestLowest)
+        assertEquals(18_465L, comparison.outcomes[0].lowest)
+        assertEquals(18_465L, comparison.bestLowest)
     }
 
     @Test fun `存回草稿：新增貸款與同期清償合併回貸款整合`() {
@@ -113,8 +113,10 @@ class ScenarioFormTest {
         assertEquals(7L, overview.checkIn.daysSinceLast)
         assertTrue(overview.checkIn.due)
         assertEquals("本月漏記 1 筆 · $120", overview.checkIn.missedLabel)
-        assertEquals(-48_639L, overview.lowest)
+        assertEquals(18_465L, overview.lowest)
         assertEquals(24, overview.monthlyLows.size)
+        // 零用現金只出不進：12,350 → 9,700 → 10 月上 4,700 → 10 月下 −6,300（R-FC-12）
+        assertEquals("「零用現金」約 2026/10 會不夠扣款，記得先從其他帳戶轉入", overview.shortfall)
         assertEquals("9/14 ÷ 30 天", 47, overview.timePercent)
         assertTrue("到期清單不含刷卡消費", overview.upcoming.none { it.label.contains("生活費") })
         assertTrue(overview.upcoming.isNotEmpty())
