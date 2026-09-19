@@ -3,7 +3,6 @@ package tw.myfsl.app.core.domain
 import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.AppSettings
-import tw.myfsl.app.core.model.CardPayMode
 import tw.myfsl.app.core.model.FinanceSnapshot
 import tw.myfsl.app.core.model.FlowType
 import tw.myfsl.app.core.model.Flexibility
@@ -117,7 +116,7 @@ object PlanSummaryCalculator {
         val interest = LongArray(12)
         snapshot.activeCards.filter { it.hasCardSchedule }.forEach { account ->
             val terms = account.card!!
-            val outlook = CardRules.outlook(account.balance, terms, monthlySpending = 0)
+            val outlook = CardRules.outlook(account.balance, terms, CardRules.assumption(snapshot, account), monthlySpending = 0)
             val monthlyInterest = outlook.interest
             val payment = outlook.payment
             for (m in 0 until 12) {
@@ -233,8 +232,9 @@ object PlanValidator {
         val monthlySpending = Math.round(summary.totalCardSpending / 12.0)
         snapshot.activeCards.forEach { card ->
             val terms = card.card ?: return@forEach
+            if (!card.hasCardSchedule) return@forEach
             val spending = if (card.id == snapshot.defaultCardId) monthlySpending else 0L
-            CardRules.warning(CardRules.outlook(card.balance, terms, spending))?.let {
+            CardRules.warning(CardRules.outlook(card.balance, terms, CardRules.assumption(snapshot, card), spending))?.let {
                 issues += PlanIssue(Severity.WARNING, "「${card.name}」$it")
             }
         }

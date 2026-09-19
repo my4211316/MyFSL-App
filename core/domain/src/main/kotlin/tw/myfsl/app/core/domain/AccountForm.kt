@@ -2,7 +2,6 @@ package tw.myfsl.app.core.domain
 
 import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
-import tw.myfsl.app.core.model.CardPayMode
 import tw.myfsl.app.core.model.CardTerms
 import tw.myfsl.app.core.model.LoanTerms
 import tw.myfsl.app.core.model.Money
@@ -25,13 +24,10 @@ data class AccountDraft(
     val creditLimit: String = "",
     val statementDay: String = "",
     val payDay: String = "",
-    /** 依帳單繳款：每期在截止日列出繳款（R-CARD-20）。 */
+    /** 依帳單繳款：每期在截止日列出繳款，由使用者選怎麼繳（R-CARD-20）。 */
     val scheduleEnabled: Boolean = false,
-    val payMode: CardPayMode = CardPayMode.FULL,
-    /** 循環年利率：自由、最低必填；全額選填。 */
+    /** 循環年利率（選填）：沒繳清時計息用。 */
     val revolvingRate: String = "",
-    /** 自由、最低的預估每月繳款。 */
-    val estimatedPayment: String = "",
     // ---- 貸款進階 ----
     val loanEnabled: Boolean = false,
     val loanRate: String = "",
@@ -57,7 +53,6 @@ object AccountForm {
         const val STATEMENT_DAY = "statementDay"
         const val PAY_DAY = "payDay"
         const val RATE = "rate"
-        const val ESTIMATE = "estimate"
         const val LOAN_RATE = "loanRate"
         const val LOAN_MONTHS = "loanMonths"
         const val LOAN_ORIGINAL = "loanOriginal"
@@ -83,9 +78,7 @@ object AccountForm {
         statementDay = account.statementDay?.toString().orEmpty(),
         payDay = (account.loan?.payDay ?: account.paymentDueDay)?.toString().orEmpty(),
         scheduleEnabled = account.card != null,
-        payMode = account.card?.payMode ?: CardPayMode.FULL,
         revolvingRate = account.card?.revolvingRatePercent?.let(::trim).orEmpty(),
-        estimatedPayment = account.card?.estimatedPayment?.toString().orEmpty(),
         loanEnabled = account.loan != null,
         loanRate = account.loan?.annualRatePercent?.let(::trim).orEmpty(),
         loanMonths = account.loan?.remainingMonths?.toString().orEmpty(),
@@ -131,26 +124,13 @@ object AccountForm {
             if (draft.scheduleEnabled) {
                 if (draft.statementDay.isBlank()) errors[Field.STATEMENT_DAY] = "依帳單繳款要填結帳日"
                 if (draft.payDay.isBlank()) errors[Field.PAY_DAY] = "依帳單繳款要填繳款截止日"
-                val partial = draft.payMode != CardPayMode.FULL
-                // 全額繳清不計息，利率選填；自由、最低沒繳清的部分要計息，利率與預估繳款必填。
-                val rate = if (partial || draft.revolvingRate.isNotBlank()) {
-                    requiredPercent(draft.revolvingRate, Field.RATE, "自由或最低繳款要填循環年利率", errors)
+                // 利率選填：沒填就不計息（全額繳清的卡用不到）。
+                val rate = if (draft.revolvingRate.isNotBlank()) {
+                    requiredPercent(draft.revolvingRate, Field.RATE, "請輸入循環年利率", errors)
                 } else {
                     null
                 }
-                val estimate = if (partial || draft.estimatedPayment.isNotBlank()) {
-                    MoneyFormat.parse(draft.estimatedPayment).also {
-                        if (it == null || it <= 0) errors[Field.ESTIMATE] = "自由或最低繳款要填預估每月繳款"
-                    }
-                } else {
-                    null
-                }
-                card = CardTerms(
-                    payMode = draft.payMode,
-                    revolvingRatePercent = rate,
-                    estimatedPayment = estimate,
-                    payAccountId = draft.payAccountId,
-                )
+                card = CardTerms(revolvingRatePercent = rate, payAccountId = draft.payAccountId)
             }
             cardStatementDay = statementDay
         }

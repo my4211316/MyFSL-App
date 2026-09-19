@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "3ac79df7369634d14d08d94801a41703",
+    "identityHash": "39743de0a198c0f028003c419f50c7e5",
     "entities": [
       {
         "tableName": "accounts",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `kind` TEXT NOT NULL, `creditLimit` INTEGER, `paymentDueDay` INTEGER, `loanRatePercent` REAL, `loanRemainingMonths` INTEGER, `loanMethod` TEXT, `loanPayAccountId` INTEGER, `loanPayDay` INTEGER, `loanOriginalPrincipal` INTEGER, `cardPayMode` TEXT, `cardRatePercent` REAL, `cardEstimatedPayment` INTEGER, `cardPayAccountId` INTEGER, `cardStatementDay` INTEGER, `issuer` TEXT NOT NULL, `archived` INTEGER NOT NULL, `sortOrder` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `kind` TEXT NOT NULL, `creditLimit` INTEGER, `paymentDueDay` INTEGER, `loanRatePercent` REAL, `loanRemainingMonths` INTEGER, `loanMethod` TEXT, `loanPayAccountId` INTEGER, `loanPayDay` INTEGER, `loanOriginalPrincipal` INTEGER, `cardSchedule` INTEGER NOT NULL, `cardRatePercent` REAL, `cardPayAccountId` INTEGER, `cardStatementDay` INTEGER, `issuer` TEXT NOT NULL, `archived` INTEGER NOT NULL, `sortOrder` INTEGER NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -67,19 +67,15 @@
             "affinity": "INTEGER"
           },
           {
-            "fieldPath": "cardPayMode",
-            "columnName": "cardPayMode",
-            "affinity": "TEXT"
+            "fieldPath": "cardSchedule",
+            "columnName": "cardSchedule",
+            "affinity": "INTEGER",
+            "notNull": true
           },
           {
             "fieldPath": "cardRatePercent",
             "columnName": "cardRatePercent",
             "affinity": "REAL"
-          },
-          {
-            "fieldPath": "cardEstimatedPayment",
-            "columnName": "cardEstimatedPayment",
-            "affinity": "INTEGER"
           },
           {
             "fieldPath": "cardPayAccountId",
@@ -863,7 +859,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '3ac79df7369634d14d08d94801a41703')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '39743de0a198c0f028003c419f50c7e5')"
     ]
   }
 }

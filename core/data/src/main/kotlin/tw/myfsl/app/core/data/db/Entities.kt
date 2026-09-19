@@ -22,10 +22,9 @@ data class AccountEntity(
     val loanPayAccountId: Long?,
     val loanPayDay: Int?,
     val loanOriginalPrincipal: Long?,
-    /** 依帳單繳款的繳款方式（FULL／FREE／MINIMUM）；null = 沒有設定依帳單繳款（R-CARD-20）。 */
-    val cardPayMode: String? = null,
+    /** 依帳單繳款（R-CARD-20）；false 時卡片只是一個餘額。 */
+    val cardSchedule: Boolean = false,
     val cardRatePercent: Double? = null,
-    val cardEstimatedPayment: Long? = null,
     val cardPayAccountId: Long? = null,
     val cardStatementDay: Int? = null,
     val issuer: String = "",

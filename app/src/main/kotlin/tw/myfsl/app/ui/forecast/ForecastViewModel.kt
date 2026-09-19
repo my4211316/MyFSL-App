@@ -80,6 +80,8 @@ data class ForecastUiState(
     val flexibleItems: List<PlanItem> = emptyList(),
     val message: String? = null,
     val today: LocalDate = LocalDate.now(),
+    /** 每張依帳單繳款的卡，試算怎麼推估繳款（R-CARD-26）。 */
+    val cardNotes: List<String> = emptyList(),
 )
 
 @HiltViewModel
@@ -136,6 +138,7 @@ class ForecastViewModel @Inject constructor(
             flexibleItems = flexible,
             message = l.message,
             today = c.snapshot.today,
+            cardNotes = tw.myfsl.app.core.domain.CardRules.assumptionNotes(c.snapshot),
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ForecastUiState())
 

@@ -399,7 +399,7 @@ private fun DueRecordDialog(
                             FilterChip(
                                 selected = dialog.payMode == mode,
                                 onClick = { onPayMode(mode) },
-                                label = { Text(if (amount > 0) "${mode.label} ${MoneyFormat.currency(amount)}" else "${mode.label}（自己輸入）") },
+                                label = { Text(if (amount != null) "${mode.label} ${MoneyFormat.currency(amount)}" else "${mode.label}（自己輸入）") },
                             )
                         }
                     }
@@ -448,6 +448,7 @@ private fun DueRecordDialog(
                         FilterChip(selected = dialog.useDueDate, onClick = { onUseDueDate(true) }, label = { Text(dueLabel) })
                     }
                 }
+                dialog.warning?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = StatusColors.warningText) }
                 dialog.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
             }
         },

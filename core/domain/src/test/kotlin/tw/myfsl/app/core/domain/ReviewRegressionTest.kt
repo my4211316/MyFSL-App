@@ -8,18 +8,24 @@ import java.time.LocalDate
 /**
  * Independent review cases (v2.2 審閱). Assertions describe expected accounting behavior.
  *
- * v2.9 起信用卡改成依帳單繳款（R-CARD-20–22）：卡片固定用「10 日結帳、次月 5 日截止、自由繳 2,000、年利率 12%」。
+ * v2.9 起信用卡改成依帳單繳款（R-CARD-20–22）：卡片固定用「10 日結帳、次月 5 日截止、年利率 12%」。
+ * v3.2 起卡片不設預設繳款方式，建議金額由繳款紀錄推估（R-CARD-26）：這裡放一筆 8/5 只繳 2,000 的紀錄（7/10 那期沒繳清），
+ * 所以之後每期推估繳 2,000，和原本「自由繳 2,000」的預期值相同。
  * 起算 9/1、今天 9/18：8/10 那期的截止日 9/5 在起算之後 → 9/5 繳 2,000；9/10 結帳時 8/10 那期帳單 10,000 還剩 8,000 沒繳，
  * 計利息 8,000 × 1% = 80。原本「以整筆欠款計息」的預期值依新規則手算改寫，測試的用意不變。
  */
 class ReviewRegressionTest {
     private val today = LocalDate.of(2026, 9, 18)
+    /** 8/5 繳 7/10 那期的 2,000（沒繳清）：推估之後每期繳 2,000。 */
+    private val history = LedgerEntry(id = 99, date = LocalDate.of(2026, 8, 5), type = FlowType.TRANSFER, amount = 2000,
+        accountId = 1, toAccountId = 2, source = EntrySource.DUE, postingKey = "cardpay:2:2026-07")
     private fun base(): FinanceSnapshot = FinanceSnapshot.empty(today).copy(
         accounts = listOf(
             Account(1, "Bank", AccountKind.BANK, balance = 100000),
             Account(2, "Card", AccountKind.CREDIT_CARD, balance = 10000, statementDay = 10, paymentDueDay = 5,
-                card = CardTerms(CardPayMode.FREE, revolvingRatePercent = 12.0, estimatedPayment = 2000, payAccountId = 1))
+                card = CardTerms(revolvingRatePercent = 12.0, payAccountId = 1))
         ),
+        ledger = listOf(history),
         settings = AppSettings(autoPostFrom = LocalDate.of(2026, 9, 1).toEpochDay(), transferAccountId = 1)
     )
 
@@ -64,32 +70,32 @@ class ReviewRegressionTest {
     }
 
     @Test fun skipInterestRecomputesFullPaymentInCheckIn() {
-        // 10/6 本週檢查：9/5 已經記下繳 2,000（欠款 8,000）；9/10 利息 80 與 10/5 全額繳款都還沒記
+        // 10/6 本週檢查：9/5 已經記下繳 2,000（欠款 8,000）；9/10 利息 80 與 10/5 的繳款都還沒記
         val original = base()
         val paid = LedgerEntry(id = 1, date = LocalDate.of(2026, 9, 5), type = FlowType.TRANSFER, amount = 2000,
             accountId = 1, toAccountId = 2, source = EntrySource.DUE, postingKey = "cardpay:2:2026-08")
         val s = original.copy(
             today = LocalDate.of(2026, 10, 6),
             ledger = listOf(paid),
-            accounts = original.accounts.map { if (it.id == 2L) it.copy(balance = 8000, card = it.card!!.copy(payMode = CardPayMode.FULL)) else it },
+            accounts = original.accounts.map { if (it.id == 2L) it.copy(balance = 8000) else it },
         )
         val dues = DueItems.list(s, through = s.today)
         val interest = dues.single { it.kind == DueKind.CARD_INTEREST }
         val payment = dues.single { it.kind == DueKind.CARD_PAYMENT }
         assertEquals(80L, interest.amount)
-        assertEquals("全額 = 9/10 帳單 8,000 + 80", 8080L, payment.amount)
-        val result = CheckInRules.build(s, CheckInInput(dues = mapOf(
-            interest.key to DueDecision(DueCheck.SKIP), payment.key to DueDecision(DueCheck.PAID)
-        )))
+        assertEquals("全額 = 9/10 帳單 8,000 + 80", 8080L, payment.payOptions!!.full)
+        // 本週檢查略過利息：後面的全額跟著少那筆利息
+        val skipped = CheckInRules.dueLines(s, input = CheckInInput(dues = mapOf(interest.key to DueDecision(DueCheck.SKIP))))
         assertEquals("Skipping interest leaves only 8000 payable", 8000L,
-            result.entries.single { it.type == FlowType.TRANSFER }.amount)
+            skipped.single { it.kind == DueKind.CARD_PAYMENT }.payOptions!!.full)
     }
 
     @Test fun installmentIsPostedBeforeInterestInSamePeriod() {
-        // 全額繳：9/5 繳清 8/10 的帳單 10,000；分期第一期在 10 月上半月入帳，和 10/10 結帳同一個半月 → 算進 10/10 帳單，11/5 繳
+        // 還沒有繳款紀錄 → 推估全額（R-CARD-26）：9/5 繳清 8/10 的帳單 10,000；分期第一期在 10 月上半月入帳，
+        // 和 10/10 結帳同一個半月 → 算進 10/10 帳單，11/5 繳
         val original = base()
         val s = original.copy(
-            accounts = original.accounts.map { if (it.id == 2L) it.copy(card = it.card!!.copy(payMode = CardPayMode.FULL)) else it },
+            ledger = emptyList(),
             installments = listOf(CardInstallment(
                 id = 7, cardAccountId = 2, purchaseDate = LocalDate.of(2026, 9, 20),
                 amount = 12000, months = 12, firstPeriodIndex = Period(2026, 10, Half.FIRST).index

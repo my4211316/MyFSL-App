@@ -7,7 +7,6 @@ import org.junit.Test
 import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.AppSettings
-import tw.myfsl.app.core.model.CardPayMode
 import tw.myfsl.app.core.model.CardStatement
 import tw.myfsl.app.core.model.CardTerms
 import tw.myfsl.app.core.model.EntrySource
@@ -32,7 +31,7 @@ class ReminderTest {
     private fun snapshot(today: LocalDate, days: List<Int> = listOf(7, 3)) = FinanceSnapshot.empty(today).copy(
         accounts = listOf(
             Account(BANK, "銀行", AccountKind.BANK, balance = 300_000),
-            Account(CARD, "台新", AccountKind.CREDIT_CARD, balance = 12_000, statementDay = 22, paymentDueDay = 7, card = CardTerms(CardPayMode.FULL, payAccountId = BANK)),
+            Account(CARD, "台新", AccountKind.CREDIT_CARD, balance = 12_000, statementDay = 22, paymentDueDay = 7, card = CardTerms(payAccountId = BANK)),
             Account(LOAN, "永豐", AccountKind.LOAN, balance = 2_000_000, loan = LoanTerms(8.7, 84, RepaymentMethod.EQUAL_PAYMENT, BANK, 18, 2_000_000)),
         ),
         settings = AppSettings(autoPostFrom = LocalDate.of(2026, 9, 20).toEpochDay(), transferAccountId = BANK, reminderDays = days),
@@ -42,7 +41,7 @@ class ReminderTest {
         Reminders.forDate(snapshot(LocalDate.of(2026, 9, 30))).single { it.id.startsWith("cardpay:") }.run {
             assertEquals("cardpay:2:2026-09:7", id)
             assertEquals("繳 台新 還有 7 天截止", title)
-            assertTrue(text, text.startsWith("10/7 截止，本期要繳 $12,000（全額）"))
+            assertTrue(text, text.startsWith("10/7 截止，本期帳單 $12,000。"))
             assertNull(billCardId)
         }
         assertEquals("cardpay:2:2026-09:3", Reminders.forDate(snapshot(LocalDate.of(2026, 10, 4))).single { it.id.startsWith("cardpay:") }.id)

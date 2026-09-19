@@ -17,7 +17,7 @@ enum class RepaymentMethod(val label: String) {
     INTEREST_ONLY("只繳利息"),
 }
 
-/** 信用卡的繳款方式（R-CARD-20）。每張卡設一個預設，每期到期時可以臨時換（R-CARD-21）。 */
+/** 繳卡費時「這一期」選的繳款方式（R-CARD-21）。卡片本身不設預設，每期到期時由使用者選。 */
 enum class CardPayMode(val label: String) {
     /** 繳帳單金額（結帳日以前的欠款）；截止日前繳清不計息。 */
     FULL("全額"),
@@ -30,15 +30,13 @@ enum class CardPayMode(val label: String) {
 }
 
 /**
- * 信用卡的繳款條件（R-CARD-20）。有設定時，這張卡依結帳日與繳款截止日（[Account.statementDay]、[Account.paymentDueDay]）
- * 在本月到期列出繳款；沒有設定時卡片只是一個餘額，不計息，繳款完全由計畫中的「繳卡費」項目決定。
+ * 信用卡「依帳單繳款」的條件（R-CARD-20）。有設定時，這張卡依結帳日與繳款截止日（[Account.statementDay]、[Account.paymentDueDay]）
+ * 在本月到期列出繳款，每期由使用者選怎麼繳；試算從實際的繳款紀錄推估（R-CARD-26）。
+ * 沒有設定時卡片只是一個餘額，不計息，繳款完全由計畫中的「繳卡費」項目決定。
  */
 data class CardTerms(
-    val payMode: CardPayMode = CardPayMode.FULL,
-    /** 循環年利率：沒繳清的帳單計息用；沒填時不計息（全額的卡可以不填）。 */
+    /** 循環年利率：沒繳清的帳單計息用；沒填時不計息。 */
     val revolvingRatePercent: Double? = null,
-    /** 自由、最低的預估每月繳款（試算與建議金額用）；最低在帳單校正輸入最低應繳後，那一期改用帳單上的。 */
-    val estimatedPayment: Money? = null,
     /** 繳款的扣款帳戶；未設定時用支付方式「轉帳」的帳戶。 */
     val payAccountId: Long? = null,
 )

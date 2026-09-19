@@ -8,6 +8,7 @@ import tw.myfsl.app.core.model.FinanceSnapshot
 import tw.myfsl.app.core.model.FlowType
 import tw.myfsl.app.core.model.LedgerEntry
 import tw.myfsl.app.core.model.Money
+import tw.myfsl.app.core.model.MoneyFormat
 import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.Period
 import tw.myfsl.app.core.model.PlanItem
@@ -41,10 +42,10 @@ data class DueItem(
     val method: PaymentMethod? = null,
     /** 相關的卡片或貸款帳戶。 */
     val relatedAccountId: Long? = null,
-    /** 繳卡費：三種繳款方式各自的建議金額（R-CARD-20），使用者可以臨時換（R-CARD-21）。 */
+    /** 繳卡費：這一期可以繳的金額（全額、帳單上的最低），由使用者選方式（R-CARD-21）。 */
     val payOptions: CardRules.PaymentOptions? = null,
-    /** 繳卡費：這張卡預設的繳款方式。 */
-    val payMode: CardPayMode? = null,
+    /** 繳卡費：[entries] 的建議金額是怎麼推估的（R-CARD-26）。 */
+    val assumption: CardRules.PaymentAssumption? = null,
     /** 繳卡費：這一期的結帳日（帳單校正用）。 */
     val statementDate: LocalDate? = null,
 ) {
@@ -81,7 +82,7 @@ data class DueChoice(
     val cardId: Long? = null,
     /** 實際付款日；null 為今天（R-DUE-03）。已經在到期日付過、只是現在才記時選到期日。 */
     val date: LocalDate? = null,
-    /** 繳卡費這一期選的繳款方式（R-CARD-21）；null 為卡片預設。 */
+    /** 繳卡費這一期選的繳款方式（R-CARD-21）；不預選，由使用者選。 */
     val payMode: CardPayMode? = null,
 )
 
@@ -145,7 +146,6 @@ object DueItems {
         method = due.method,
         accountId = if (due.choosesAccount) due.defaultAccountId else null,
         cardId = if (due.method == PaymentMethod.CREDIT_CARD) due.entries.firstOrNull()?.accountId else null,
-        payMode = due.payMode,
     )
 
     /** 已經處理過：同一組識別碼任何一個已經記下或選了「這個月沒有」（只繳利息的貸款只有利息那一筆，F03）。 */
@@ -156,11 +156,25 @@ object DueItems {
         if (choice.amount <= 0) return "金額要大於 0"
         if (choice.date?.isAfter(snapshot.today) == true) return "付款日不能晚於今天"
         if (due.choosesMethod && choice.method == null) return "請選支付方式"
+        if (due.kind == DueKind.CARD_PAYMENT && choice.payMode == null) return "請選這一期的繳款方式"
         if (due.choosesAccount) {
             val account = snapshot.activeAccounts.firstOrNull { it.id == choice.accountId }
             if (account == null || !account.kind.isLiquid) return if (due.isIncome) "請選入帳帳戶" else "請選扣款帳戶"
         }
         return null
+    }
+
+    /**
+     * 不擋存檔的提醒：繳卡費少於帳單上的最低應繳時（R-CARD-24）。
+     */
+    fun warning(snapshot: FinanceSnapshot, due: DueItem, choice: DueChoice): String? {
+        if (due.kind != DueKind.CARD_PAYMENT) return null
+        val minimum = due.payOptions?.minimum ?: return null
+        return if (choice.amount in 1 until minimum) {
+            "少於帳單上的最低應繳 ${MoneyFormat.currency(minimum)}，可能被收違約金並影響信用紀錄"
+        } else {
+            null
+        }
     }
 
     /**
@@ -184,7 +198,7 @@ object DueItems {
             }
 
             DueKind.CARD_PAYMENT -> {
-                val mode = choice.payMode ?: due.payMode
+                val mode = choice.payMode
                 val card = snapshot.account(due.relatedAccountId)?.name.orEmpty()
                 due.entries.map {
                     it.copy(
@@ -362,6 +376,7 @@ object DueItems {
     private fun cardTasks(snapshot: FinanceSnapshot, through: LocalDate, inWindow: (LocalDate) -> Boolean, tasks: MutableList<Task>) {
         snapshot.activeCards.forEach { card ->
             val terms = card.card ?: return@forEach
+            val assumption = CardRules.assumption(snapshot, card)
             val payAccount = terms.payAccountId?.takeIf { id -> snapshot.activeAccounts.any { it.id == id && it.kind.isLiquid } }
                 ?: snapshot.methodAccountId(PaymentMethod.TRANSFER)
             val base = CardRules.baseBalance(snapshot, card)
@@ -384,17 +399,17 @@ object DueItems {
                     tasks += Task(cycle.due, 2, payKey) { state ->
                         val from = payAccount ?: return@Task null
                         val options = paymentOptions(snapshot, card, base, cycle, state.entries, state.balance(card.id))
-                        // 照預設方式；帳單上的最低應繳是 0 時這一期不用繳，不列（不會換成全額，V3-04）。
-                        val amount = options.of(terms.payMode)
+                        // 建議金額依推估（R-CARD-26），和試算一致；帳單上的最低應繳是 0 而推估照最低時，這一期不用繳、不列（V3-04）。
+                        val amount = CardRules.suggested(assumption, options)
                         if (options.full <= 0 || amount <= 0) return@Task null
                         val title = "繳 ${card.name}"
                         val entry = LedgerEntry(
                             date = cycle.due, type = FlowType.TRANSFER, amount = amount, accountId = from, toAccountId = card.id,
-                            note = "$title（${terms.payMode.label}）", source = EntrySource.DUE, postingKey = payKey,
+                            note = title, source = EntrySource.DUE, postingKey = payKey,
                         )
                         DueItem(
                             payKey, DueKind.CARD_PAYMENT, cycle.due, title, listOf(entry), relatedAccountId = card.id,
-                            payOptions = options, payMode = terms.payMode, statementDate = cycle.statement,
+                            payOptions = options, assumption = assumption, statementDate = cycle.statement,
                         )
                     }
                 }
@@ -432,12 +447,11 @@ object DueItems {
         extra: List<LedgerEntry>,
         debt: Money,
     ): CardRules.PaymentOptions {
-        val terms = requireNotNull(card.card)
         val billed = billedAmount(snapshot, card, base, cycle, extra)
         val (s, d) = requireNotNull(CardRules.cycleDays(card))
         val next = CardRules.cycle(cycle.yearMonth.plusMonths(1), s, d)
         val paid = CardRules.paidBetween(card, snapshot.ledger, extra, cycle.statement, next.statement)
-        return CardRules.options(terms, billed - paid, debt, snapshot.statementOf(card.id, cycle.yearMonth)?.minimumPayment)
+        return CardRules.options(billed - paid, debt, snapshot.statementOf(card.id, cycle.yearMonth)?.minimumPayment)
     }
 
     /** 有攤還條件的貸款：本金轉入貸款帳戶、利息算支出。 */

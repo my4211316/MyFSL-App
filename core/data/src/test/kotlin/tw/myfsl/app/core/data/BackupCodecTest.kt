@@ -5,7 +5,6 @@ import tw.myfsl.app.core.data.db.PostedKeyEntity
 import tw.myfsl.app.core.data.db.toColumn
 import tw.myfsl.app.core.data.db.toEntity
 import tw.myfsl.app.core.sample.SampleHousehold
-import tw.myfsl.app.core.model.CardPayMode
 import tw.myfsl.app.core.model.CardStatement
 import tw.myfsl.app.core.model.Deferral
 import tw.myfsl.app.core.model.Scenario
@@ -21,7 +20,7 @@ class BackupCodecTest {
     private val sample = BackupFile(
         exportedAtMillis = 1_789_000_000_000,
         accounts = SampleHousehold.accounts.map {
-            if (it.id == SampleHousehold.CARD_A) it.copy(card = it.card!!.copy(payMode = CardPayMode.MINIMUM, estimatedPayment = 12_000)) else it
+            if (it.id == SampleHousehold.CARD_A) it.copy(card = it.card!!.copy(revolvingRatePercent = 14.88)) else it
         }.map { it.toEntity() },
         groups = SampleHousehold.groups.map { it.toEntity() },
         items = SampleHousehold.items.map { it.toEntity() },
@@ -51,8 +50,8 @@ class BackupCodecTest {
         val result = BackupCodec.decode(text) as BackupReadResult.Ok
         assertEquals(sample, result.file)
         result.file.accounts.first { it.id == SampleHousehold.CARD_A }.run {
-            assertEquals("MINIMUM", cardPayMode)
-            assertEquals(12_000L, cardEstimatedPayment)
+            assertTrue(cardSchedule)
+            assertEquals(14.88, cardRatePercent!!, 0.0)
             assertEquals(1, cardStatementDay)
         }
         assertEquals(52_000L, result.file.cardStatements.single().amount)

@@ -81,6 +81,8 @@ data class CardView(
     val cycle: CardRules.Cycle? = null,
     /** 目前這一期已經輸入帳單（帳單校正）。 */
     val billEntered: Boolean = false,
+    /** 試算與建議金額用的繳款推估（R-CARD-26）；不是依帳單繳款的卡為 null。 */
+    val assumption: CardRules.PaymentAssumption? = null,
     /** 未入帳的分期本金：已經佔用額度，但還沒變成要繳的卡債。 */
     val pendingInstallmentPrincipal: Money = 0,
     /** 未結清的分期筆數。 */
@@ -153,6 +155,7 @@ object AccountSummaryCalculator {
             val installments = InstallmentRules.summary(snapshot, own)
             val pending = installments.pendingPrincipal
             val cycle = if (card.hasCardSchedule) CardRules.latestCycle(card, snapshot.today) else null
+            val assumption = if (card.hasCardSchedule) CardRules.assumption(snapshot, card) else null
             val bill = cycle?.let {
                 DueItems.paymentOptions(snapshot, card, CardRules.baseBalance(snapshot, card), it, emptyList(), card.balance)
                     .takeIf { _ -> !DueItems.isRecorded(snapshot, DueItems.cardPaymentKey(card.id, it.yearMonth)) }
@@ -169,14 +172,15 @@ object AccountSummaryCalculator {
                         it.date.year == year && it.date.monthValue == month
                 }.sumOf { it.amount },
                 // 依帳單繳款：本期帳單照預設繳款方式＋標成額外還款的計畫轉帳；沒有：計畫中繳這張卡的轉帳（R-PAY-01）。
-                fixedPayment = (bill?.of(card.card!!.payMode) ?: 0L) +
+                fixedPayment = (bill?.let { CardRules.suggested(assumption!!, it) } ?: 0L) +
                     transfers.filter { it.toAccountId == card.id && (!card.hasCardSchedule || it.extraRepayment) }
                         .sumOf { snapshot.planAmount(PlanLine(it.id, null), year, month) },
-                interest = card.card?.let { CardRules.outlook(card.balance, it, monthlySpending = 0).interest } ?: 0,
+                interest = if (assumption != null) CardRules.outlook(card.balance, card.card!!, assumption, monthlySpending = 0).interest else 0,
                 minimumPayment = cycle?.let { snapshot.statementOf(card.id, it.yearMonth)?.minimumPayment },
                 currentBill = bill?.full,
                 cycle = cycle,
                 billEntered = cycle?.let { snapshot.statementOf(card.id, it.yearMonth) } != null,
+                assumption = assumption,
                 pendingInstallmentPrincipal = pending,
                 installmentCount = installments.count,
                 nextInstallmentAmount = installments.nextAmount,

@@ -6,7 +6,6 @@ import org.junit.Test
 import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.AppSettings
-import tw.myfsl.app.core.model.CardPayMode
 import tw.myfsl.app.core.model.CardStatement
 import tw.myfsl.app.core.model.CardTerms
 import tw.myfsl.app.core.model.EntrySource
@@ -30,8 +29,9 @@ class CardBillEdgeTest {
     private val BANK = 1L
     private val CARD = 3L
 
+    /** [paying] 不是 null 時放一筆 7/5 只繳這麼多的紀錄（6/20 那期沒繳清）：之後每期推估繳這麼多（R-CARD-26）；null 為沒有紀錄。 */
     private fun snapshot(
-        mode: CardPayMode = CardPayMode.FULL,
+        paying: Long? = null,
         debt: Long = 30_000,
         ledger: List<LedgerEntry> = emptyList(),
         unassigned: Long = 0,
@@ -41,9 +41,12 @@ class CardBillEdgeTest {
         accounts = listOf(
             Account(BANK, "銀行", AccountKind.BANK, balance = 100_000),
             Account(CARD, "卡", AccountKind.CREDIT_CARD, balance = debt, statementDay = 20, paymentDueDay = 5,
-                card = CardTerms(mode, 12.0, 5_000, payAccountId = BANK)),
+                card = CardTerms(12.0, payAccountId = BANK)),
         ),
-        ledger = ledger,
+        ledger = listOfNotNull(paying?.let {
+            LedgerEntry(id = 900, date = LocalDate.of(2026, 7, 5), type = FlowType.TRANSFER, amount = it, accountId = BANK, toAccountId = CARD,
+                source = EntrySource.DUE, postingKey = "cardpay:3:2026-06")
+        }) + ledger,
         unassignedCardSpending = unassigned,
         fullCardReconcile = mark,
         cardStatements = statements,
@@ -92,9 +95,9 @@ class CardBillEdgeTest {
     }
 
     @Test fun `帳單校正：下一期的利息也以輸入的帳單為準`() {
-        // 自由繳 5,000；9/20 帳單輸入 29,500；10/5 繳 5,000 → 10/20 利息 (29,500 − 5,000) × 1% = 245
+        // 照上一期繳 5,000；9/20 帳單輸入 29,500；10/5 繳 5,000 → 10/20 利息 (29,500 − 5,000) × 1% = 245
         val bill = CardStatement(CARD, 2026, 9, 29_500, coversInterest = true)
-        val s = snapshot(CardPayMode.FREE, statements = listOf(bill))
+        val s = snapshot(paying = 5_000, statements = listOf(bill))
         val dues = DueItems.list(s, through = LocalDate.of(2026, 10, 31))
         assertEquals(5_000L, dues.single { it.key == "cardpay:3:2026-09" }.amount)
         assertEquals(245L, dues.single { it.key == "cardint:3:2026-10" }.amount)
@@ -102,26 +105,26 @@ class CardBillEdgeTest {
 
     // ---------- V3-01：試算的自由與最低也不超過帳單 ----------
 
-    @Test fun `試算：自由、最低不會提早繳還沒出帳的刷卡；全額照舊`() {
-        fun octPayment(mode: CardPayMode, statements: List<CardStatement> = emptyList()): Long {
-            val s = snapshot(mode, ledger = listOf(spend(21, 29_000, CARD)), statements = statements)
+    @Test fun `試算：推估只繳一部分時不會提早繳還沒出帳的刷卡；全額照舊`() {
+        fun octPayment(paying: Long?, statements: List<CardStatement> = emptyList()): Long {
+            val s = snapshot(paying, ledger = listOf(spend(21, 29_000, CARD)), statements = statements)
             return CashFlowEngine.run(BaselineBuilder.build(s, 4)).periods.single { it.period == Period.of(LocalDate.of(2026, 10, 5)) }.cardPayments
         }
-        assertEquals("9/20 帳單只有 1,000", 1_000L, octPayment(CardPayMode.FREE))
-        assertEquals(1_000L, octPayment(CardPayMode.MINIMUM))
-        assertEquals(1_000L, octPayment(CardPayMode.FULL))
-        // 帳單比預估大時，自由照預估繳 5,000
-        assertEquals(5_000L, octPayment(CardPayMode.FREE, listOf(CardStatement(CARD, 2026, 9, 20_000))))
+        assertEquals("9/20 帳單只有 1,000", 1_000L, octPayment(5_000))
+        assertEquals("帳單上的最低 3,000 也不超過帳單", 1_000L, octPayment(null, listOf(CardStatement(CARD, 2026, 8, 30_000, 3_000))))
+        assertEquals("沒有紀錄：全額", 1_000L, octPayment(null))
+        // 帳單比推估大時，照上一期繳 5,000
+        assertEquals(5_000L, octPayment(5_000, listOf(CardStatement(CARD, 2026, 9, 20_000))))
     }
 
     // ---------- V3-04：帳單上的最低應繳是 0 ----------
 
-    @Test fun `最低應繳 0：本期不用繳、不列也不提醒；沒輸入帳單時照預估`() {
-        val zero = snapshot(CardPayMode.MINIMUM, statements = listOf(CardStatement(CARD, 2026, 9, 30_000, 0, coversInterest = true)))
+    @Test fun `最低應繳 0：推估照帳單最低時本期不用繳、不列也不提醒；有繳款紀錄時照紀錄`() {
+        val zero = snapshot(statements = listOf(CardStatement(CARD, 2026, 9, 30_000, 0, coversInterest = true)))
         assertTrue(DueItems.list(zero, through = cycle.due).none { it.kind == DueKind.CARD_PAYMENT })
         assertTrue(Reminders.forDate(zero, LocalDate.of(2026, 9, 28)).none { it.id.startsWith("cardpay:") })
-        assertEquals("沒輸入帳單：最低用預估 5,000", 5_000L,
-            DueItems.list(snapshot(CardPayMode.MINIMUM), through = cycle.due).single { it.kind == DueKind.CARD_PAYMENT }.amount)
+        assertEquals("有繳款紀錄：照上一期 5,000", 5_000L,
+            DueItems.list(snapshot(paying = 5_000), through = cycle.due).single { it.kind == DueKind.CARD_PAYMENT }.amount)
         // 試算也不繳
         val payments = CashFlowEngine.run(BaselineBuilder.build(zero, 4)).periods.single { it.period == Period.of(cycle.due) }.cardPayments
         assertEquals(0L, payments)

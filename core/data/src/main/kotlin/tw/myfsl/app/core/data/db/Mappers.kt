@@ -4,7 +4,6 @@ import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.ActualStatus
 import tw.myfsl.app.core.model.CardInstallment
-import tw.myfsl.app.core.model.CardPayMode
 import tw.myfsl.app.core.model.CardStatement
 import tw.myfsl.app.core.model.InstallmentFee
 import tw.myfsl.app.core.model.CardTerms
@@ -49,14 +48,7 @@ fun AccountEntity.toModel() = Account(
     paymentDueDay = paymentDueDay,
     issuer = issuer,
     statementDay = cardStatementDay,
-    card = cardPayMode?.let { mode ->
-        CardTerms(
-            payMode = CardPayMode.valueOf(mode),
-            revolvingRatePercent = cardRatePercent,
-            estimatedPayment = cardEstimatedPayment,
-            payAccountId = cardPayAccountId,
-        )
-    },
+    card = if (cardSchedule) CardTerms(revolvingRatePercent = cardRatePercent, payAccountId = cardPayAccountId) else null,
     loan = if (loanRatePercent != null && loanRemainingMonths != null && loanMethod != null &&
         loanPayAccountId != null && loanPayDay != null
     ) {
@@ -87,9 +79,8 @@ fun Account.toEntity() = AccountEntity(
     loanPayAccountId = loan?.payAccountId,
     loanPayDay = loan?.payDay,
     loanOriginalPrincipal = loan?.originalPrincipal,
-    cardPayMode = card?.payMode?.name,
+    cardSchedule = card != null,
     cardRatePercent = card?.revolvingRatePercent,
-    cardEstimatedPayment = card?.estimatedPayment,
     cardPayAccountId = card?.payAccountId,
     cardStatementDay = statementDay,
     issuer = issuer,

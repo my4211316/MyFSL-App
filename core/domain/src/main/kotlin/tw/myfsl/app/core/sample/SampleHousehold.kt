@@ -3,7 +3,6 @@ package tw.myfsl.app.core.sample
 import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.AppSettings
-import tw.myfsl.app.core.model.CardPayMode
 import tw.myfsl.app.core.model.CardTerms
 import tw.myfsl.app.core.model.FinanceSnapshot
 import tw.myfsl.app.core.model.EntrySource
@@ -65,8 +64,8 @@ object SampleHousehold {
         Account(
             CARD_A, "信用卡 A", AccountKind.CREDIT_CARD, balance = 60_000, balanceAsOf = today,
             creditLimit = 150_000, paymentDueDay = 15, statementDay = 1,
-            // A 卡依帳單繳款、每月自由繳 18,000（自動扣款），沒繳清的部分計息；計畫裡不另外列繳卡費。
-            card = CardTerms(payMode = CardPayMode.FREE, revolvingRatePercent = 15.0, estimatedPayment = 18_000, payAccountId = BANK),
+            // A 卡依帳單繳款，沒繳清的部分計息；上一期（8/15）只繳了 18,000，試算照這個繳法推估（R-CARD-26）。計畫裡不另外列繳卡費。
+            card = CardTerms(revolvingRatePercent = 15.0, payAccountId = BANK),
             sortOrder = 3,
         ),
         Account(
@@ -184,6 +183,12 @@ object SampleHousehold {
         entry(9, 14, LIVING, PaymentMethod.CASH, 85, CASH, "早餐"),
     )
 
+    /** 8/15 在本月到期記下的 A 卡繳款（8/1 那期帳單沒繳清，只繳 18,000）；試算從這筆推估之後每期的繳法。 */
+    val augustCardPayment = LedgerEntry(
+        id = 100, date = LocalDate.of(2026, 8, 15), type = FlowType.TRANSFER, amount = 18_000, accountId = BANK, toAccountId = CARD_A,
+        note = "繳 信用卡 A", source = EntrySource.DUE, postingKey = "cardpay:$CARD_A:2026-08",
+    )
+
     val settings = AppSettings(safetyLevel = 30_000, horizonMonths = 24, pickCard = true, cashAccountId = CASH, transferAccountId = BANK)
 
     fun snapshot(): FinanceSnapshot = FinanceSnapshot(
@@ -193,7 +198,7 @@ object SampleHousehold {
         items = items,
         amountsByYear = mapOf(2026 to yearlyPlan, 2027 to yearlyPlan, 2028 to yearlyPlan),
         actuals = emptyList(),
-        ledger = septemberLedger,
+        ledger = septemberLedger + augustCardPayment,
         settings = settings,
     )
 }

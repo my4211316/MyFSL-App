@@ -73,9 +73,11 @@ data class DueDialog(
     /** 到期日在今天以前時可以選付款日：今天，或到期日當天已經付過（F02）。 */
     val dueDateLabel: String?,
     val useDueDate: Boolean,
-    /** 繳卡費：三種繳款方式與各自的建議金額（R-CARD-21）；其他項目為空。 */
-    val payModes: List<Pair<CardPayMode, Money>> = emptyList(),
+    /** 繳卡費：三種繳款方式與各自的金額（R-CARD-21；null = 自己輸入）；其他項目為空。不預選。 */
+    val payModes: List<Pair<CardPayMode, Money?>> = emptyList(),
     val payMode: CardPayMode? = null,
+    /** 不擋存檔的提醒，例如繳得比帳單上的最低應繳少（R-CARD-24）。 */
+    val warning: String? = null,
 )
 
 /** 記帳畫面的狀態；文字與預設值都來自 core.domain 的規則。 */
@@ -305,12 +307,17 @@ class EntryViewModel @Inject constructor(
             default.method == PaymentMethod.CREDIT_CARD -> default.cardId
             else -> snapshot.defaultCardId
         }
-        val payMode = sel.payMode ?: due.payMode
+        val payMode = sel.payMode
+        val options = due.payOptions
         val amount = when {
             !due.amountEditable -> due.amount
             sel.amount != null -> MoneyFormat.parse(sel.amount) ?: 0L
-            // 繳卡費：照這一期選的繳款方式帶入建議金額（R-CARD-21）
-            payMode != null && due.payOptions != null -> due.payOptions!!.of(payMode)
+            // 繳卡費：不預選；選了全額或最低才帶入金額，自由與還沒輸入的最低由使用者填（R-CARD-21）
+            options != null -> when (payMode) {
+                CardPayMode.FULL -> options.full
+                CardPayMode.MINIMUM -> options.minimum ?: 0L
+                CardPayMode.FREE, null -> 0L
+            }
             else -> default.amount
         }
         val date = if (sel.useDueDate && due.date.isBefore(snapshot.today)) due.date else null
@@ -328,7 +335,8 @@ class EntryViewModel @Inject constructor(
             DueKind.CARD_INTEREST -> "上一期帳單沒繳清的部分 × 循環年利率 ÷ 12 估算；輸入帳單後以帳單為準"
             DueKind.CARD_PAYMENT -> {
                 val statement = due.statementDate?.let { "${it.monthValue}/${it.dayOfMonth} 結帳" }.orEmpty()
-                "本期帳單還要繳 ${MoneyFormat.currency(due.payOptions?.full ?: due.amount)}（$statement）；繳款方式只換這一期，金額可以改"
+                val minimum = due.payOptions?.minimum?.let { "，帳單最低 ${MoneyFormat.currency(it)}" } ?: "；還沒輸入帳單的最低應繳"
+                "本期帳單還要繳 ${MoneyFormat.currency(due.payOptions?.full ?: due.amount)}（$statement）$minimum\n請選這一期怎麼繳，金額可以改"
             }
             DueKind.INSTALLMENT -> {
                 val fee = due.entries.firstOrNull { it.postingKey?.startsWith("instfee:") == true }?.amount ?: 0L
@@ -348,7 +356,12 @@ class EntryViewModel @Inject constructor(
             key = due.key,
             title = due.title,
             subtitle = listOf(whenText, detail).filter { it.isNotEmpty() }.joinToString("\n"),
-            amountText = if (due.amountEditable) sel.amount ?: choice.amount.toString() else MoneyFormat.currency(due.amount),
+            amountText = when {
+                !due.amountEditable -> MoneyFormat.currency(due.amount)
+                sel.amount != null -> sel.amount
+                due.kind == DueKind.CARD_PAYMENT -> choice.amount.takeIf { it > 0 }?.toString().orEmpty()
+                else -> choice.amount.toString()
+            },
             amountEditable = due.amountEditable,
             choosesMethod = due.choosesMethod,
             method = choice.method,
@@ -364,8 +377,11 @@ class EntryViewModel @Inject constructor(
             recordLabel = if (choice.amount > 0) "記下 ${MoneyFormat.currency(choice.amount)}" else "記下",
             dueDateLabel = if (due.date.isBefore(snapshot.today)) "到期日 $date" else null,
             useDueDate = choice.date != null,
-            payModes = due.payOptions?.let { options -> CardPayMode.entries.map { it to options.of(it) } }.orEmpty(),
+            payModes = due.payOptions?.let { options ->
+                listOf(CardPayMode.FULL to options.full, CardPayMode.MINIMUM to options.minimum, CardPayMode.FREE to null)
+            }.orEmpty(),
             payMode = choice.payMode,
+            warning = DueItems.warning(snapshot, due, choice),
         )
     }
 

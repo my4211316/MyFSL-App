@@ -6,6 +6,12 @@ import org.junit.Assert.*
 import org.junit.Test
 import tw.myfsl.app.core.model.*
 
+/**
+ * cde604d 複審的原始案例。v3.2 起卡片不設預設繳款方式（R-CARD-26），為了保持案例的用意，把原本的方式換成等價的資料：
+ * - FREE（原本預估 5,000）→ 一筆 7/5 只繳 5,000 的紀錄（6/20 那期沒繳清），推估之後每期繳 5,000；
+ * - MINIMUM、FULL → 沒有繳款紀錄（有輸入帳單最低時照帳單最低，都沒有時全額）。
+ * 建議金額改讀 CardRules.suggested（原本是 PaymentOptions.of(mode)）。斷言的數字與用意不變。
+ */
 class ReviewCardV3Test {
     private val today = LocalDate.of(2026, 9, 22)
     private val cycle = CardRules.cycle(YearMonth.of(2026, 9), 20, 5)
@@ -15,9 +21,11 @@ class ReviewCardV3Test {
             Account(1, "Bank", AccountKind.BANK, balance = 100000),
             Account(3, "Card", AccountKind.CREDIT_CARD, balance = debt, balanceAsOf = today,
                 statementDay = 20, paymentDueDay = 5,
-                card = CardTerms(mode, 12.0, 5000L, payAccountId = 1)),
+                card = CardTerms(12.0, payAccountId = 1)),
         ),
-        groups = emptyList(), items = emptyList(), amountsByYear = emptyMap(), actuals = emptyList(), ledger = ledger,
+        groups = emptyList(), items = emptyList(), amountsByYear = emptyMap(), actuals = emptyList(),
+        ledger = (if (mode == CardPayMode.FREE) listOf(LedgerEntry(id = 900, date = LocalDate.of(2026, 7, 5), type = FlowType.TRANSFER,
+            amount = 5000, accountId = 1, toAccountId = 3, source = EntrySource.DUE, postingKey = "cardpay:3:2026-06")) else emptyList()) + ledger,
         unassignedCardSpending = unassigned,
         settings = AppSettings(autoPostFrom = today.toEpochDay(), transferAccountId = 1),
     )
@@ -27,7 +35,7 @@ class ReviewCardV3Test {
         val spending = LedgerEntry(date = today.minusDays(1), type = FlowType.EXPENSE, amount = 29000,
             accountId = 3, method = PaymentMethod.CREDIT_CARD)
         val s = snapshot(mode, ledger = listOf(spending))
-        val expected = DueItems.paymentOptions(s, s.accounts[1], 30000, cycle, emptyList(), 30000).of(mode)
+        val expected = CardRules.suggested(CardRules.assumption(s, s.accounts[1]), DueItems.paymentOptions(s, s.accounts[1], 30000, cycle, emptyList(), 30000))
         assertEquals(1000L, expected)
         val result = CashFlowEngine.run(BaselineBuilder.build(s, 4))
         val actual = result.periods.single { it.period == Period.of(LocalDate.of(2026, 10, 5)) }.cardPayments

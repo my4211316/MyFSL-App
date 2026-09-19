@@ -111,6 +111,15 @@ fun ForecastScreen(
 
             item { ComparisonTable(comparison) }
 
+            if (state.cardNotes.isNotEmpty()) {
+                item {
+                    Text("信用卡怎麼推估", style = MaterialTheme.typography.titleSmall)
+                    state.cardNotes.forEach {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("我的情境", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))

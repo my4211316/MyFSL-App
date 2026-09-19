@@ -47,7 +47,6 @@ import tw.myfsl.app.core.domain.CardView
 import tw.myfsl.app.core.domain.LoanView
 import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
-import tw.myfsl.app.core.model.CardPayMode
 import tw.myfsl.app.core.model.MoneyFormat
 import tw.myfsl.app.core.model.RepaymentMethod
 import tw.myfsl.app.ui.theme.StatusColors
@@ -184,13 +183,11 @@ private fun cardDetails(card: CardView): List<String> = buildList {
     val days = listOfNotNull(card.account.statementDay?.let { "結帳日 $it 日" }, card.account.paymentDueDay?.let { "截止日 $it 日" })
     if (days.isNotEmpty()) add(days.joinToString(" · "))
     card.account.card?.let { terms ->
-        add(
-            listOfNotNull(
-                "繳款方式：${terms.payMode.label}",
-                terms.revolvingRatePercent?.let { "循環年利率 ${trim(it)}%" },
-                card.interest.takeIf { it > 0 }?.let { "下期利息約 ${MoneyFormat.currency(it)}" },
-            ).joinToString(" · "),
-        )
+        listOfNotNull(
+            terms.revolvingRatePercent?.let { "循環年利率 ${trim(it)}%" },
+            card.interest.takeIf { it > 0 }?.let { "下期利息約 ${MoneyFormat.currency(it)}" },
+        ).takeIf { it.isNotEmpty() }?.let { add(it.joinToString(" · ")) }
+        card.assumption?.let { add("試算：" + it.describe(card.account.name).substringAfter("：")) }
         val cycle = card.cycle
         val bill = card.currentBill
         if (cycle != null && bill != null && bill > 0) {
@@ -325,31 +322,15 @@ private fun AccountEditorForm(
             }
             SwitchRow("依帳單繳款（到期列在本月到期）", draft.scheduleEnabled) { checked -> onChange { it.copy(scheduleEnabled = checked) } }
             if (draft.scheduleEnabled) {
-                Text("繳款方式（每期到期時還可以臨時換）", style = MaterialTheme.typography.labelLarge)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    CardPayMode.entries.forEach { mode ->
-                        FilterChip(selected = draft.payMode == mode, onClick = { onChange { it.copy(payMode = mode) } }, label = { Text(mode.label) })
-                    }
-                }
                 Text(
-                    when (draft.payMode) {
-                        CardPayMode.FULL -> "每期繳清帳單金額，不會有循環利息。"
-                        CardPayMode.FREE -> "每期自己決定繳多少；沒繳清的部分會計循環利息。"
-                        CardPayMode.MINIMUM -> "照帳單上的最低應繳（帳單來時輸入）；沒繳清的部分會計循環利息。"
-                    },
+                    "每期到期時在「本月到期」選怎麼繳（全額、最低或自己填金額）；試算照你實際的繳法推估。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                val partial = draft.payMode != CardPayMode.FULL
-                TextInput(if (partial) "循環年利率（%）" else "循環年利率（%，選填）", draft.revolvingRate, errors[Field.RATE], number = true) { value ->
+                TextInput("循環年利率（%，選填）", draft.revolvingRate, errors[Field.RATE], number = true) { value ->
                     onChange { it.copy(revolvingRate = value) }
                 }
-                if (partial) {
-                    TextInput("預估每月繳款", draft.estimatedPayment, errors[Field.ESTIMATE], number = true) { value ->
-                        onChange { it.copy(estimatedPayment = value) }
-                    }
-                    Text("試算用；帳單來時可以輸入實際的最低應繳。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                Text("沒繳清時計息用；每期都全額繳清的卡可以不填。有欠款的卡，建好後請輸入最近一期帳單。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 PayAccountPicker(draft.payAccountId, payAccounts, null) { id -> onChange { it.copy(payAccountId = id) } }
             }
         }

@@ -288,6 +288,7 @@ object BaselineBuilder {
         val endDate = Period.fromIndex(endIndex).startDate
         snapshot.activeCards.filter { it.hasCardSchedule }.forEach { card ->
             val terms = card.card!!
+            val assumption = CardRules.assumption(snapshot, card)
             val payAccount = terms.payAccountId?.takeIf { id -> input.accounts.any { it.id == id && it.kind.isLiquid } }
                 ?: snapshot.methodAccountId(PaymentMethod.TRANSFER)
             CardRules.latestCycle(card, today)?.let { current ->
@@ -316,16 +317,17 @@ object BaselineBuilder {
                 if (payAccount != null && cycle.due.isAfter(today) && Period.of(cycle.due).index < endIndex &&
                     !DueItems.isRecorded(snapshot, DueItems.cardPaymentKey(card.id, ym))
                 ) {
-                    val label = "繳 ${card.name}（${terms.payMode.label}）"
+                    val label = "繳 ${card.name}"
                     val base = FlowEvent(
                         period = Period.of(cycle.due), kind = EventKind.TRANSFER, amount = 0, label = label,
                         fromAccountId = payAccount, toAccountId = card.id, relatedAccountId = card.id, source = EventSource.CARD_SCHEDULE,
                     )
-                    events += when (terms.payMode) {
-                        CardPayMode.FULL -> base.copy(payStatement = true)
-                        CardPayMode.FREE -> base.copy(amount = terms.estimatedPayment ?: 0L, capToStatement = true)
-                        CardPayMode.MINIMUM -> base.copy(
-                            amount = snapshot.statementOf(card.id, ym)?.minimumPayment ?: terms.estimatedPayment ?: 0L,
+                    // 依繳款推估（R-CARD-26）：全額繳帳單；只繳一部分時繳推估的金額，都不超過這一期帳單還沒繳的部分。
+                    events += when (assumption.source) {
+                        CardRules.PaymentAssumption.Source.LAST_FULL, CardRules.PaymentAssumption.Source.NO_RECORD -> base.copy(payStatement = true)
+                        CardRules.PaymentAssumption.Source.LAST_AMOUNT -> base.copy(amount = assumption.amount, capToStatement = true)
+                        CardRules.PaymentAssumption.Source.STATEMENT_MINIMUM -> base.copy(
+                            amount = snapshot.statementOf(card.id, ym)?.minimumPayment ?: assumption.amount,
                             capToStatement = true,
                         )
                     }

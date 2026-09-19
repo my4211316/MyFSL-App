@@ -36,12 +36,17 @@ object Reminders {
                     val left = ChronoUnit.DAYS.between(date, due.date).toInt()
                     if (left !in days) return@forEach
                     val whenText = "${due.date.monthValue}/${due.date.dayOfMonth}"
-                    val mode = due.payMode?.let { "（${it.label}）" }.orEmpty()
+                    val options = due.payOptions
                     val verb = if (due.kind == DueKind.CARD_PAYMENT) "截止" else "到期"
+                    val amountText = if (options != null) {
+                        "本期帳單 ${MoneyFormat.currency(options.full)}" + (options.minimum?.let { "，帳單最低 ${MoneyFormat.currency(it)}" } ?: "")
+                    } else {
+                        "本期要繳 ${MoneyFormat.currency(due.amount)}"
+                    }
                     result += Reminder(
                         id = "${due.key}:$left",
                         title = "${due.title} 還有 $left 天$verb",
-                        text = "$whenText $verb，本期要繳 ${MoneyFormat.currency(due.amount)}$mode。付了之後到記帳畫面的「本月到期」點一下記下。",
+                        text = "$whenText $verb，$amountText。付了之後到記帳畫面的「本月到期」點一下記下。",
                     )
                 }
         }

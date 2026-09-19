@@ -53,9 +53,13 @@ class DueItemsTest {
     private val PAY_B = 301L
     private val PAY_CARD = 302L
 
-    /** 5 日結帳、次月 3 日截止、照帳單繳最低（沒輸入帳單時預估 4,000）、年利率 12%。 */
-    private val cardTerms = CardTerms(
-        payMode = CardPayMode.MINIMUM, revolvingRatePercent = 12.0, estimatedPayment = 4_000, payAccountId = BANK,
+    /** 5 日結帳、次月 3 日截止、年利率 12%。 */
+    private val cardTerms = CardTerms(revolvingRatePercent = 12.0, payAccountId = BANK)
+
+    /** 6/3 繳 5/5 那期 4,000（沒繳清）：之後每期推估繳 4,000（R-CARD-26）。在所有測試期間之前，不影響其他計算。 */
+    private val history = LedgerEntry(
+        id = 900, date = LocalDate.of(2026, 6, 3), type = FlowType.TRANSFER, amount = 4_000, accountId = BANK, toAccountId = CARD,
+        source = EntrySource.DUE, postingKey = "cardpay:3:2026-05",
     )
 
     private val installment = CardInstallment(
@@ -102,7 +106,7 @@ class DueItemsTest {
             ),
             amountsByYear = mapOf(2026 to amounts),
             actuals = actuals,
-            ledger = ledger,
+            ledger = listOf(history) + ledger,
             installments = listOf(installment),
             settings = AppSettings(transferAccountId = BANK, autoPostFrom = from?.toEpochDay()),
             postedKeys = postedKeys,
@@ -124,7 +128,7 @@ class DueItemsTest {
 
     @Test fun `8／31 起算，到 9／14 已到期的項目與建議金額：每筆都可以手算`() {
         val dues = reached(snapshot())
-        assertTrue("不會自動寫入任何記帳", snapshot().ledger.isEmpty())
+        assertEquals("不會自動寫入任何記帳", listOf(history), snapshot().ledger)
 
         // 9/1 分期第 1 期：本金 12,000 ÷ 6 = 2,000 入 B 卡（不重算預算）、手續費 100（算支出），同一個項目
         dues.item("inst:7:1").run {
@@ -147,11 +151,11 @@ class DueItemsTest {
             assertEquals(EntrySource.DUE, entries.single().source)
         }
 
-        // 9/3 繳 8/5 那期帳單：還沒輸入帳單，最低用預估 4,000；三種方式的金額都帶著（全額 = 帳單 40,000）
+        // 9/3 繳 8/5 那期帳單：建議金額照上一期的繳法 4,000（R-CARD-26）；全額 = 帳單 40,000，還沒輸入帳單所以沒有最低
         dues.entry("cardpay:3:2026-08").run { assertEquals(4_000L, amount); assertEquals(BANK, accountId); assertEquals(CARD, toAccountId) }
         dues.item("cardpay:3:2026-08").run {
-            assertEquals(CardPayMode.MINIMUM, payMode)
-            assertEquals(CardRules.PaymentOptions(full = 40_000, free = 4_000, minimum = 4_000), payOptions)
+            assertEquals(CardRules.PaymentAssumption(CardRules.PaymentAssumption.Source.LAST_AMOUNT, 4_000), assumption)
+            assertEquals(CardRules.PaymentOptions(full = 40_000, minimum = null), payOptions)
             assertEquals(LocalDate.of(2026, 8, 5), statementDate)
         }
         // 9/5 結帳：8/5 那期帳單 40,000 繳了 4,000，沒繳清的 36,000 × 12% ÷ 12 = 360
@@ -230,25 +234,30 @@ class DueItemsTest {
         assertTrue(reached(snapshot()).none { it.key == "cardint:3:2026-08" })
     }
 
-    @Test fun `帳單上的最低應繳：輸入後這一期「最低」改用帳單上的金額；每期可以臨時換方式`() {
+    @Test fun `帳單上的最低應繳：輸入後「最低」選項用帳單上的金額；每期自己選方式，記下後推估跟著變`() {
         val statement = CardStatement(CARD, 2026, 8, amount = 40_000, minimumPayment = 2_500)
         val s = snapshot().copy(cardStatements = listOf(statement))
         val pay = reached(s).item("cardpay:3:2026-08")
-        assertEquals(CardRules.PaymentOptions(full = 40_000, free = 4_000, minimum = 2_500), pay.payOptions)
-        assertEquals("預設「最低」→ 帳單上的 2,500", 2_500L, pay.amount)
+        assertEquals(CardRules.PaymentOptions(full = 40_000, minimum = 2_500), pay.payOptions)
+        assertEquals("建議金額照上一期的 4,000", 4_000L, pay.amount)
+        assertEquals("請選這一期的繳款方式", DueItems.validate(s, pay, DueChoice(4_000, accountId = BANK)))
+        assertEquals(
+            "少於帳單上的最低應繳 $2,500，可能被收違約金並影響信用紀錄",
+            DueItems.warning(s, pay, DueChoice(2_000, accountId = BANK, payMode = CardPayMode.FREE)),
+        )
         // 這一期臨時改全額：記下的金額與備註照選的方式
         val full = DueChoice(40_000, accountId = BANK, date = LocalDate.of(2026, 9, 3), payMode = CardPayMode.FULL)
         DueItems.record(s, pay, full).entries.single().run {
             assertEquals(40_000L, amount)
             assertEquals("繳 依帳單繳款的卡（全額）", note)
         }
-        // 9/3 全額繳清 → 9/5 結帳不計息；卡片的預設方式不變
+        // 9/3 全額繳清 → 9/5 結帳不計息；之後推估改成全額繳清
         val paidFull = s.copy(
             ledger = DueItems.record(s, pay, full).entries,
             accounts = s.accounts.map { if (it.id == CARD) it.copy(balance = 0) else it },
         )
         assertTrue(reached(paidFull).none { it.key == "cardint:3:2026-09" })
-        assertEquals(CardPayMode.MINIMUM, paidFull.account(CARD)!!.card!!.payMode)
+        assertEquals(CardRules.PaymentAssumption.Source.LAST_FULL, CardRules.assumption(paidFull, paidFull.account(CARD)!!).source)
     }
 
     // ---------- 點下去：選支付方式、改金額 ----------
