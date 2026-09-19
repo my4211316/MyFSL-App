@@ -323,8 +323,11 @@ object BaselineBuilder {
                     )
                     events += when (terms.payMode) {
                         CardPayMode.FULL -> base.copy(payStatement = true)
-                        CardPayMode.FREE -> base.copy(amount = terms.estimatedPayment ?: 0L)
-                        CardPayMode.MINIMUM -> base.copy(amount = snapshot.statementOf(card.id, ym)?.minimumPayment ?: terms.estimatedPayment ?: 0L)
+                        CardPayMode.FREE -> base.copy(amount = terms.estimatedPayment ?: 0L, capToStatement = true)
+                        CardPayMode.MINIMUM -> base.copy(
+                            amount = snapshot.statementOf(card.id, ym)?.minimumPayment ?: terms.estimatedPayment ?: 0L,
+                            capToStatement = true,
+                        )
                     }
                 }
             }

@@ -229,6 +229,7 @@ class FinanceRepository @Inject constructor(
             settings = settings,
             lastCheckIn = d.checkIns.maxWithOrNull(compareBy({ it.epochDay }, { it.id }))?.toModel(),
             unassignedCardSpending = BalanceRules.unassignedCardSpending(entries, fullCardReconcile),
+            fullCardReconcile = fullCardReconcile,
             postedKeys = d.postedKeys.map { it.key }.toSet() + entries.mapNotNull { it.postingKey },
             deferrals = d.deferrals.map { it.toModel() },
             cardStatements = d.statements.map { it.toModel() },

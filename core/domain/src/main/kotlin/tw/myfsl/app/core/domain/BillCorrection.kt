@@ -76,7 +76,7 @@ object BillCorrection {
     fun estimate(snapshot: FinanceSnapshot, card: Account, cycle: CardRules.Cycle): Money {
         val (clean, base) = withoutCorrection(snapshot, card, cycle.yearMonth)
         val ledger = clean.ledger
-        val atStatement = CardRules.balanceAt(card, base, ledger, emptyList(), cycle.statement)
+        val atStatement = CardRules.balanceAt(clean, card, base, ledger, emptyList(), cycle.statement)
         val interestKey = DueItems.cardInterestKey(card.id, cycle.yearMonth)
         val pendingInterest = if (DueItems.isRecorded(clean, interestKey)) 0L else DueItems.interestFor(clean, card, base, cycle, emptyList())
         return atStatement + pendingInterest
@@ -94,7 +94,7 @@ object BillCorrection {
         val ym = cycle.yearMonth
         val key = key(card.id, ym)
         val (clean, base) = withoutCorrection(snapshot, card, ym)
-        val atStatement = CardRules.balanceAt(card, base, clean.ledger, emptyList(), cycle.statement)
+        val atStatement = CardRules.balanceAt(clean, card, base, clean.ledger, emptyList(), cycle.statement)
         val interestKey = DueItems.cardInterestKey(card.id, ym)
         val existing = snapshot.statementOf(card.id, ym)
         // 這一期的利息還沒記下（或是前一次校正包含的）：視為已經在帳單裡。

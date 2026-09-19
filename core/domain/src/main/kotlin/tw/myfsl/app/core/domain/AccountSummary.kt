@@ -41,13 +41,15 @@ object BalanceRules {
      * 分期消費不算（由各期入帳到預設卡片）。
      */
     fun unassignedCardSpending(ledger: List<LedgerEntry>, fullCardReconcile: RecordMark?): Money =
-        ledger.filter {
-            it.type == FlowType.EXPENSE &&
-                it.method == PaymentMethod.CREDIT_CARD &&
-                it.accountId == null &&
-                !it.isInstallmentPurchase &&
-                (fullCardReconcile == null || it.isAfter(fullCardReconcile))
-        }.sumOf { it.amount }
+        ledger.filter { isUnassignedCardSpending(it, fullCardReconcile) }.sumOf { it.amount }
+
+    /** 這筆記帳是不是還沒被「全部卡片一起對帳」吸收的未指定卡片刷卡（算在預設卡片上）。 */
+    fun isUnassignedCardSpending(entry: LedgerEntry, fullCardReconcile: RecordMark?): Boolean =
+        entry.type == FlowType.EXPENSE &&
+            entry.method == PaymentMethod.CREDIT_CARD &&
+            entry.accountId == null &&
+            !entry.isInstallmentPurchase &&
+            (fullCardReconcile == null || entry.isAfter(fullCardReconcile))
 
     /**
      * 最近一次「全部卡片一起對帳」的時點：所有未封存卡片都有同一個寫入時間的校正。

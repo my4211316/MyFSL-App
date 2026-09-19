@@ -32,6 +32,8 @@ data class FlowEvent(
     val payFullBalance: Boolean = false,
     /** true 時忽略 [amount]，改繳目的卡片目前這一期帳單還沒繳的部分（全額，R-CARD-20）。 */
     val payStatement: Boolean = false,
+    /** true 時 [amount] 最多繳到目的卡片這一期帳單還沒繳的部分（自由、最低，R-CARD-20；不會提早繳還沒出帳的刷卡）。 */
+    val capToStatement: Boolean = false,
     /** 設定時忽略 [amount]，改以來源卡片上一期帳單沒繳清的部分計算循環利息（年利率，R-CARD-22）。 */
     val interestRatePercent: Double? = null,
     /** 設定時這是卡片的結帳：記下這張卡當時的欠款成為新的一期帳單（金額為 0，不影響餘額）。 */
@@ -228,6 +230,11 @@ object CashFlowEngine {
                     event.payStatement -> {
                         val debt = (event.toAccountId?.let { balances[it] } ?: 0L).coerceAtLeast(0)
                         minOf(unpaidOf(event.toAccountId), debt)
+                    }
+
+                    event.capToStatement -> {
+                        val debt = (event.toAccountId?.let { balances[it] } ?: 0L).coerceAtLeast(0)
+                        minOf(event.amount, unpaidOf(event.toAccountId), debt)
                     }
 
                     // 還款最多還到欠款為 0，多的錢留在原帳戶（R-PAY-02）。

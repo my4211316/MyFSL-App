@@ -384,8 +384,9 @@ object DueItems {
                     tasks += Task(cycle.due, 2, payKey) { state ->
                         val from = payAccount ?: return@Task null
                         val options = paymentOptions(snapshot, card, base, cycle, state.entries, state.balance(card.id))
-                        if (options.full <= 0) return@Task null
-                        val amount = options.of(terms.payMode).takeIf { it > 0 } ?: options.full
+                        // 照預設方式；帳單上的最低應繳是 0 時這一期不用繳，不列（不會換成全額，V3-04）。
+                        val amount = options.of(terms.payMode)
+                        if (options.full <= 0 || amount <= 0) return@Task null
                         val title = "繳 ${card.name}"
                         val entry = LedgerEntry(
                             date = cycle.due, type = FlowType.TRANSFER, amount = amount, accountId = from, toAccountId = card.id,
@@ -409,12 +410,20 @@ object DueItems {
         val terms = card.card ?: return 0
         val previous = CardRules.previous(card, cycle) ?: return 0
         if (!previous.due.isAfter(snapshot.trackingFrom)) return 0
-        val billed = CardRules.balanceAt(card, base, snapshot.ledger, extra, previous.statement)
+        val billed = billedAmount(snapshot, card, base, previous, extra)
         val paid = CardRules.paidBetween(card, snapshot.ledger, extra, previous.statement, cycle.statement)
         return CardRules.monthlyInterest(billed - paid, terms.revolvingRatePercent)
     }
 
-    /** 某一期的繳款選項：帳單金額（結帳日的欠款）扣掉結帳後已經繳的，再依繳款方式（R-CARD-20）。 */
+    /**
+     * 某一期的帳單金額：使用者輸入過帳單就以帳單為準（R-CARD-23）；沒有時用結帳日（含）的欠款估計。
+     * 帳單差額的記帳在比它新的餘額校正之後不影響目前欠款，所以這裡直接讀帳單，不從目前欠款回推（V3-03）。
+     */
+    fun billedAmount(snapshot: FinanceSnapshot, card: Account, base: Money, cycle: CardRules.Cycle, extra: List<LedgerEntry>): Money =
+        snapshot.statementOf(card.id, cycle.yearMonth)?.amount
+            ?: CardRules.balanceAt(snapshot, card, base, snapshot.ledger, extra, cycle.statement)
+
+    /** 某一期的繳款選項：帳單金額扣掉結帳後已經繳的，再依繳款方式（R-CARD-20）。 */
     fun paymentOptions(
         snapshot: FinanceSnapshot,
         card: Account,
@@ -424,7 +433,7 @@ object DueItems {
         debt: Money,
     ): CardRules.PaymentOptions {
         val terms = requireNotNull(card.card)
-        val billed = CardRules.balanceAt(card, base, snapshot.ledger, extra, cycle.statement)
+        val billed = billedAmount(snapshot, card, base, cycle, extra)
         val (s, d) = requireNotNull(CardRules.cycleDays(card))
         val next = CardRules.cycle(cycle.yearMonth.plusMonths(1), s, d)
         val paid = CardRules.paidBetween(card, snapshot.ledger, extra, cycle.statement, next.statement)

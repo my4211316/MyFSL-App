@@ -51,6 +51,8 @@ data class FinanceSnapshot(
     val lastCheckIn: CheckIn? = null,
     /** 刷卡但未指定卡片、且晚於最近一次「全部卡片一起對帳」的金額合計。 */
     val unassignedCardSpending: Money = 0,
+    /** 最近一次「全部卡片一起對帳」的時點；在它之後的未指定卡片刷卡才算在預設卡片上。沒有為 null。 */
+    val fullCardReconcile: RecordMark? = null,
     /** 選了「這個月沒有」的到期項目識別碼；記下的項目看記帳上的識別碼（[recordedKeys]）。 */
     val postedKeys: Set<String> = emptySet(),
     /** 延期款項（含已付清的）。 */

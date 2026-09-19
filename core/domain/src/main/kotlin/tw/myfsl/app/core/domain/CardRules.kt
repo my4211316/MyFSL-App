@@ -72,10 +72,20 @@ object CardRules {
     /**
      * 結帳日當天（含）的欠款 = 目前欠款 − 結帳日之後的記帳對這張卡的影響。
      * [extra] 是還沒寫入、但要當成已經記下的記帳（本月到期依序模擬用）；[baseBalance] 是目前欠款（見 [baseBalance]）。
+     *
+     * 預設卡片的起始欠款含未指定卡片的刷卡（[FinanceSnapshot.unassignedCardSpending]），回推時要用同一條規則扣回去：
+     * 結帳日之後、還沒被全部卡片對帳吸收的未指定刷卡，最多扣到那個合計（只扣真的加進起始欠款的部分，R-ACT-05）。
      */
-    fun balanceAt(card: Account, baseBalance: Money, ledger: List<LedgerEntry>, extra: List<LedgerEntry>, date: LocalDate): Money {
+    fun balanceAt(snapshot: FinanceSnapshot, card: Account, baseBalance: Money, ledger: List<LedgerEntry>, extra: List<LedgerEntry>, date: LocalDate): Money {
         val current = baseBalance + extra.sumOf { BalanceRules.effect(it, card.id, card.kind) }
-        return current - (ledger + extra).filter { it.date.isAfter(date) }.sumOf { BalanceRules.effect(it, card.id, card.kind) }
+        val later = (ledger + extra).filter { it.date.isAfter(date) }.sumOf { BalanceRules.effect(it, card.id, card.kind) }
+        val unassignedLater = if (card.id == snapshot.defaultCardId) {
+            val after = ledger.filter { it.date.isAfter(date) && BalanceRules.isUnassignedCardSpending(it, snapshot.fullCardReconcile) }.sumOf { it.amount }
+            minOf(after, snapshot.unassignedCardSpending.coerceAtLeast(0))
+        } else {
+            0L
+        }
+        return current - later - unassignedLater
     }
 
     /** 在 (after, through] 之間繳進這張卡的金額。 */
