@@ -1,41 +1,22 @@
 package tw.myfsl.app.ui.plan
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,7 +25,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import tw.myfsl.app.core.domain.PlanItemDraft
 import tw.myfsl.app.core.domain.PlanItemForm.Field
@@ -56,23 +36,23 @@ import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.PlanGroup
 import tw.myfsl.app.core.model.Timing
 import tw.myfsl.app.core.model.TrackingMode
-import tw.myfsl.app.ui.theme.MethodColors
-import tw.myfsl.app.ui.theme.StatusColors
+import tw.myfsl.app.ui.components.ChoiceChips
+import tw.myfsl.app.ui.components.DangerButton
+import tw.myfsl.app.ui.components.ErrorText
+import tw.myfsl.app.ui.components.FieldLabel
+import tw.myfsl.app.ui.components.FormScaffold
+import tw.myfsl.app.ui.components.HintText
+import tw.myfsl.app.ui.components.MethodIcon
+import tw.myfsl.app.ui.components.SectionCard
+import tw.myfsl.app.ui.components.SectionHeader
+import tw.myfsl.app.ui.components.SegmentedChoice
+import tw.myfsl.app.ui.components.SwitchRow
+import tw.myfsl.app.ui.components.TextInput
+import tw.myfsl.app.ui.components.WarningText
+import tw.myfsl.app.ui.components.methodIcon
+import tw.myfsl.app.ui.theme.Spacing
 
-fun PaymentMethod?.color(): Color = when (this) {
-    PaymentMethod.CREDIT_CARD -> MethodColors.card
-    PaymentMethod.CASH -> MethodColors.cash
-    PaymentMethod.TRANSFER -> MethodColors.transfer
-    null -> Color.Transparent
-}
-
-@Composable
-fun MethodDot(method: PaymentMethod?, modifier: Modifier = Modifier) {
-    if (method == null) return
-    Box(modifier.size(10.dp).background(method.color(), CircleShape))
-}
-
-/** 計畫項目的新增／編輯。每一列支付方式由使用者自己選。 */
+/** 計畫項目的新增／編輯（設計稿：全畫面改版 v1）。每一列支付方式由使用者自己選。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PlanItemEditorForm(
@@ -97,128 +77,92 @@ fun PlanItemEditorForm(
     val errors = editor.errors
     var addingGroup by remember(editor.isNew) { mutableStateOf(draft.groupId == null && draft.newGroupName.isNotEmpty()) }
 
-    Column(
-        modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+    FormScaffold(
+        title = if (editor.isNew) "新增項目" else "編輯項目",
+        subtitle = "金額存到 $year 年",
+        onClose = onCancel,
+        onSave = onSave,
+        modifier = modifier,
     ) {
-        Text(if (editor.isNew) "新增項目" else "編輯項目", style = MaterialTheme.typography.titleLarge)
-        Text("金額存到 $year 年", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-        Label("類型")
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FlowType.entries.forEach { type ->
-                FilterChip(
-                    selected = draft.type == type,
-                    onClick = { onType(type) },
-                    enabled = !editor.typeLocked || draft.type == type,
-                    label = { Text(type.label) },
-                )
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            FieldLabel("類型")
+            if (editor.typeLocked) {
+                Text(draft.type.label, style = MaterialTheme.typography.titleSmall)
+                HintText("已經有記帳，類型不能改；要改請新增一個項目。")
+            } else {
+                SegmentedChoice(FlowType.entries, draft.type, { it.label }, onType)
             }
+            errors[Field.TYPE]?.let { ErrorText(it) }
         }
-        if (editor.typeLocked) {
-            Text("已經有記帳，類型不能改；要改請新增一個項目。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        errors[Field.TYPE]?.let { ErrorText(it) }
 
-        Input("項目名稱", draft.name, errors[Field.NAME]) { v -> onChange { it.copy(name = v) } }
+        TextInput("項目名稱", draft.name, { v -> onChange { it.copy(name = v) } }, error = errors[Field.NAME])
 
-        Label("群組")
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            groups.forEach { group ->
-                FilterChip(
-                    selected = !addingGroup && draft.groupId == group.id,
-                    onClick = { addingGroup = false; onChange { it.copy(groupId = group.id, newGroupName = "") } },
-                    label = { Text(group.name) },
-                )
-            }
-            FilterChip(
-                selected = addingGroup,
-                onClick = { addingGroup = true; onChange { it.copy(groupId = null) } },
-                label = { Text("＋ 新群組") },
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            FieldLabel("群組")
+            val options: List<PlanGroup?> = groups + null
+            ChoiceChips(
+                options,
+                { g -> if (g == null) addingGroup else !addingGroup && draft.groupId == g.id },
+                { it?.name ?: "＋ 新群組" },
+                { g ->
+                    if (g == null) {
+                        addingGroup = true; onChange { it.copy(groupId = null) }
+                    } else {
+                        addingGroup = false; onChange { it.copy(groupId = g.id, newGroupName = "") }
+                    }
+                },
             )
+            if (addingGroup) TextInput("新群組名稱", draft.newGroupName, { v -> onChange { it.copy(newGroupName = v, groupId = null) } })
+            errors[Field.GROUP]?.let { ErrorText(it) }
         }
-        if (addingGroup) {
-            Input("新群組名稱", draft.newGroupName, null) { v -> onChange { it.copy(newGroupName = v, groupId = null) } }
-        }
-        errors[Field.GROUP]?.let { ErrorText(it) }
 
         when (draft.type) {
-            FlowType.INCOME -> AccountPicker("入帳帳戶", draft.accountId, accounts.filter { it.kind.isLiquid }, errors[Field.ACCOUNT]) { id ->
-                onChange { it.copy(accountId = id) }
-            }
-
+            FlowType.INCOME -> AccountChoice("入帳帳戶", draft.accountId, accounts.filter { it.kind.isLiquid }, errors[Field.ACCOUNT]) { id -> onChange { it.copy(accountId = id) } }
             FlowType.TRANSFER -> {
-                AccountPicker("轉出帳戶", draft.accountId, accounts, errors[Field.ACCOUNT]) { id -> onChange { it.copy(accountId = id) } }
-                AccountPicker("轉入帳戶（例如繳卡費時選信用卡）", draft.toAccountId, accounts, errors[Field.TO_ACCOUNT]) { id ->
-                    onChange { it.copy(toAccountId = id) }
-                }
+                AccountChoice("轉出帳戶", draft.accountId, accounts, errors[Field.ACCOUNT]) { id -> onChange { it.copy(accountId = id) } }
+                AccountChoice("轉入帳戶（例如繳卡費時選信用卡）", draft.toAccountId, accounts, errors[Field.TO_ACCOUNT]) { id -> onChange { it.copy(toAccountId = id) } }
                 val target = accounts.firstOrNull { it.id == draft.toAccountId }
                 if (target != null && (target.card != null || target.loan != null)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("額外還款", style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                "「${target.name}」已依合約自動繳款。一般月繳不用再列；只有多還的部分才打開這個開關。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(checked = draft.extraRepayment, onCheckedChange = { v -> onChange { it.copy(extraRepayment = v) } })
-                    }
+                    SwitchRow(
+                        "額外還款",
+                        draft.extraRepayment,
+                        { v -> onChange { it.copy(extraRepayment = v) } },
+                        detail = "「${target.name}」已依合約自動繳款。一般月繳不用再列；只有多還的部分才打開。",
+                    )
                 }
             }
-
             FlowType.EXPENSE -> Unit
         }
 
-        Label("時點")
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Timing.entries.forEach { timing ->
-                FilterChip(selected = draft.timing == timing, onClick = { onChange { it.copy(timing = timing) } }, label = { Text(timing.label) })
-            }
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            FieldLabel("時點")
+            ChoiceChips(Timing.entries, { draft.timing == it }, { it.label }, { t -> onChange { it.copy(timing = t) } })
         }
-        OutlinedTextField(
-            value = draft.dueDay,
-            onValueChange = { v -> onChange { it.copy(dueDay = v.filter(Char::isDigit).take(2)) } },
-            label = { Text("每月幾號（選填）") },
-            supportingText = {
-                Text(errors[Field.DUE_DAY] ?: "填了就以這天為準：每月固定的項目這天出現在「本月到期」，試算也放在這天。短月份取月底。")
-            },
-            isError = errors[Field.DUE_DAY] != null,
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth(),
+        TextInput(
+            "每月幾號（選填）",
+            draft.dueDay,
+            { v -> onChange { it.copy(dueDay = v.filter(Char::isDigit).take(2)) } },
+            error = errors[Field.DUE_DAY],
+            supporting = "填了就以這天為準：每月固定的項目這天出現在「本月到期」，試算也放在這天。短月份取月底。",
+            number = true,
         )
-        Label("固定或可調")
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Flexibility.entries.forEach { f ->
-                FilterChip(selected = draft.flexibility == f, onClick = { onChange { it.copy(flexibility = f) } }, label = { Text(f.label) })
-            }
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            FieldLabel("固定或可調")
+            SegmentedChoice(Flexibility.entries, draft.flexibility, { it.label }, { f -> onChange { it.copy(flexibility = f) } })
         }
-        Label("追蹤方式")
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TrackingMode.entries.forEach { mode ->
-                FilterChip(selected = draft.tracking == mode, onClick = { onChange { it.copy(tracking = mode) } }, label = { Text(mode.label) })
-            }
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            FieldLabel("追蹤方式")
+            ChoiceChips(TrackingMode.entries, { draft.tracking == it }, { it.label }, { m -> onChange { it.copy(tracking = m) } })
+            HintText(draft.tracking.hint)
         }
-        Text(draft.tracking.hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-        // ---- 金額列 ----
-        Text(
-            if (draft.type == FlowType.EXPENSE) "每月金額（依支付方式分列）" else "每月金額",
-            style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.padding(top = 8.dp),
-        )
+        SectionHeader(if (draft.type == FlowType.EXPENSE) "每月金額（依支付方式分列）" else "每月金額")
         if (draft.type == FlowType.EXPENSE) {
-            Text(
-                "同一個項目可以同時有現金列和信用卡列；某幾個月刷卡、其他月付現，就在各列填該月的金額。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            HintText("同一個項目可以同時有現金列和信用卡列；某幾個月刷卡、其他月付現，就在各列填該月的金額。")
         }
         errors[Field.LINES]?.let { ErrorText(it) }
 
-        draft.lines.forEachIndexed { index, line ->
+        draft.lines.forEachIndexed { index, _ ->
             LineCard(
                 index = index,
                 draft = draft,
@@ -232,32 +176,22 @@ fun PlanItemEditorForm(
             )
         }
         if (draft.type == FlowType.EXPENSE && draft.unusedMethods.isNotEmpty()) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 draft.unusedMethods.forEach { method ->
                     AssistChip(
                         onClick = { onAddLine(method) },
                         label = { Text("加${method.label}列") },
-                        leadingIcon = { Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        leadingIcon = { Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp)) },
                     )
                 }
             }
         }
 
-        Input("備註（選填）", draft.note, null) { v -> onChange { it.copy(note = v) } }
+        TextInput("備註（選填）", draft.note, { v -> onChange { it.copy(note = v) } })
 
-        editor.warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = StatusColors.warningText) }
+        editor.warnings.forEach { WarningText(it) }
         if (errors.isNotEmpty()) ErrorText("有 ${errors.size} 個欄位要修正")
-
-        Spacer(Modifier.height(4.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("取消") }
-            Button(onClick = onSave, modifier = Modifier.weight(1f)) { Text("儲存") }
-        }
-        if (!editor.isNew) {
-            TextButton(onClick = onArchive, modifier = Modifier.fillMaxWidth()) {
-                Text("封存這個項目", color = MaterialTheme.colorScheme.error)
-            }
-        }
+        if (!editor.isNew) DangerButton("封存這個項目", onClick = onArchive, icon = Icons.Rounded.Archive)
     }
 }
 
@@ -276,115 +210,62 @@ private fun LineCard(
 ) {
     val line = draft.lines[index]
     val hasError = errors.keys.any { it.startsWith("line$index-") }
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                MethodDot(line.method, Modifier.padding(end = 8.dp))
+    SectionCard {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            MethodIcon(line.method)
+            Column(Modifier.weight(1f)) {
                 Text(
-                    line.method?.label ?: draft.type.label,
+                    (line.method?.label ?: draft.type.label) + "列",
                     style = MaterialTheme.typography.titleSmall,
                     color = if (hasError) MaterialTheme.colorScheme.error else Color.Unspecified,
                 )
-                Text(
-                    "  全年 " + MoneyFormat.currency(draft.lineTotal(index)),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
-                )
-                if (draft.lines.size > 1) {
-                    IconButton(onClick = onRemove) { Icon(Icons.Default.Delete, contentDescription = "刪除這一列") }
-                }
-                IconButton(onClick = onToggle) {
-                    Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = if (expanded) "收起" else "展開")
-                }
+                Text("全年 " + MoneyFormat.currency(draft.lineTotal(index)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            if (draft.lines.size > 1) {
+                IconButton(onClick = onRemove) { Icon(Icons.Rounded.Delete, contentDescription = "刪除這一列") }
+            }
+            IconButton(onClick = onToggle) {
+                Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = if (expanded) "收起每月金額" else "展開每月金額")
+            }
+        }
 
-            if (draft.type == FlowType.EXPENSE) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PaymentMethod.entries.forEach { method ->
-                        FilterChip(
-                            selected = line.method == method,
-                            onClick = { onMethod(method) },
-                            label = { Text(method.label) },
-                            leadingIcon = { MethodDot(method) },
+        if (draft.type == FlowType.EXPENSE) {
+            SegmentedChoice(PaymentMethod.entries, line.method, { it.label }, onMethod, icon = ::methodIcon)
+            errors[Field.method(index)]?.let { ErrorText(it) }
+        }
+
+        if (expanded) {
+            var quick by remember { mutableStateOf("") }
+            TextInput("快速填入金額", quick, { quick = it }, number = true)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                QuickFill.entries.forEach { kind -> AssistChip(onClick = { onQuickFill(kind, quick) }, label = { Text(kind.label) }) }
+            }
+            (0 until 12).chunked(3).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    row.forEach { m ->
+                        TextInput(
+                            "${m + 1} 月",
+                            line.months[m],
+                            { onMonth(m + 1, it) },
+                            modifier = Modifier.weight(1f),
+                            error = errors[Field.month(index, m + 1)]?.let { "" },
+                            number = true,
                         )
                     }
                 }
-                errors[Field.method(index)]?.let { ErrorText(it) }
             }
-
-            if (expanded) {
-                var quick by remember { mutableStateOf("") }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = quick,
-                        onValueChange = { quick = it },
-                        label = { Text("快速填入金額") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    QuickFill.entries.forEach { kind ->
-                        AssistChip(onClick = { onQuickFill(kind, quick) }, label = { Text(kind.label) })
-                    }
-                }
-                (0 until 12).chunked(3).forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        row.forEach { m ->
-                            val key = Field.month(index, m + 1)
-                            OutlinedTextField(
-                                value = line.months[m],
-                                onValueChange = { onMonth(m + 1, it) },
-                                label = { Text("${m + 1} 月") },
-                                isError = errors[key] != null,
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                    }
-                }
-                errors.filterKeys { it.startsWith("line$index-month") }.values.forEach { ErrorText(it) }
-            }
+            errors.filterKeys { it.startsWith("line$index-month") }.values.forEach { ErrorText(it) }
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+/** 選一個帳戶（晶片），沒有帳戶時提示先新增。 */
 @Composable
-private fun AccountPicker(label: String, selected: Long?, accounts: List<Account>, error: String?, onSelect: (Long) -> Unit) {
-    Label(label)
-    if (accounts.isEmpty()) {
-        Text("還沒有帳戶，先到「帳戶」新增", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun AccountChoice(label: String, selected: Long?, accounts: List<Account>, error: String?, onSelect: (Long) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+        FieldLabel(label)
+        if (accounts.isEmpty()) HintText("還沒有帳戶，先到「帳戶」新增")
+        ChoiceChips(accounts, { selected == it.id }, { it.name }, { onSelect(it.id) })
+        error?.let { ErrorText(it) }
     }
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        accounts.forEach { account ->
-            FilterChip(selected = selected == account.id, onClick = { onSelect(account.id) }, label = { Text(account.name) })
-        }
-    }
-    error?.let { ErrorText(it) }
-}
-
-@Composable
-private fun Label(text: String) = Text(text, style = MaterialTheme.typography.labelLarge)
-
-@Composable
-private fun ErrorText(text: String) = Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-
-@Composable
-private fun Input(label: String, value: String, error: String?, onValueChange: (String) -> Unit) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        label = { Text(label) },
-        isError = error != null,
-        supportingText = error?.let { { Text(it) } },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
 }

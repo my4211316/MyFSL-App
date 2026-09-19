@@ -2,24 +2,13 @@ package tw.myfsl.app.ui.records
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,7 +20,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.unit.dp
 import tw.myfsl.app.core.domain.RecordDraft
 import tw.myfsl.app.core.domain.RecordEditForm.Field
 import tw.myfsl.app.core.model.Account
@@ -39,14 +27,24 @@ import tw.myfsl.app.core.model.EntrySource
 import tw.myfsl.app.core.model.FlowType
 import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.PlanItem
-import tw.myfsl.app.ui.plan.MethodDot
-import tw.myfsl.app.ui.theme.StatusColors
+import tw.myfsl.app.ui.components.ChoiceChips
+import tw.myfsl.app.ui.components.DangerButton
+import tw.myfsl.app.ui.components.ErrorText
+import tw.myfsl.app.ui.components.FieldLabel
+import tw.myfsl.app.ui.components.FormScaffold
+import tw.myfsl.app.ui.components.HintText
+import tw.myfsl.app.ui.components.MoneyField
+import tw.myfsl.app.ui.components.SegmentedChoice
+import tw.myfsl.app.ui.components.TextInput
+import tw.myfsl.app.ui.components.WarningText
+import tw.myfsl.app.ui.components.methodIcon
+import tw.myfsl.app.ui.theme.Spacing
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 
-/** 修改一筆記帳：日期、金額、項目、付款方式、卡片、備註。 */
-@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+/** 修改一筆記帳：日期、金額、項目、付款方式、卡片、備註；最後是刪除。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RecordEditorForm(
     editor: RecordEditor,
@@ -57,102 +55,90 @@ fun RecordEditorForm(
     onChange: ((RecordDraft) -> RecordDraft) -> Unit,
     onSave: () -> Unit,
     onCancel: () -> Unit,
+    onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val draft = editor.draft
     val errors = editor.errors
     val original = draft.original
     var picking by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
 
-    Column(
-        modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("修改${original.type.label}", style = MaterialTheme.typography.titleLarge)
+    FormScaffold(title = "修改${original.type.label}", onClose = onCancel, onSave = onSave, modifier = modifier) {
         when {
-            original.source == EntrySource.MISSED -> Hint("這筆是本週檢查的對帳差額，負數代表多記。")
-            original.source == EntrySource.CONFIRMED -> Hint("這筆是到期確認的補記。")
-            draft.isInstallment -> Hint("這筆是分期消費：只能改日期、項目和備註。要改金額或期數請刪掉重記。")
+            original.source == EntrySource.MISSED -> HintText("這筆是本週檢查的對帳差額，負數代表多記。")
+            original.source == EntrySource.CONFIRMED -> HintText("這筆是到期確認的補記。")
+            draft.isInstallment -> HintText("這筆是分期消費：只能改日期、項目和備註。要改金額或期數請刪掉重記。")
         }
 
-        Label("日期")
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(0L to "今天", 1L to "昨天", 2L to "前天").forEach { (days, label) ->
-                val date = today.minusDays(days)
-                FilterChip(selected = draft.date == date, onClick = { onChange { it.copy(date = date) } }, label = { Text(label) })
-            }
-            val other = draft.date !in (0L..2L).map { today.minusDays(it) }
-            FilterChip(
-                selected = other,
-                onClick = { picking = true },
-                label = { Text(if (other) "${draft.date.monthValue}/${draft.date.dayOfMonth}" else "其他日期") },
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            FieldLabel("日期")
+            val quick = listOf(0L to "今天", 1L to "昨天", 2L to "前天")
+            val other = draft.date !in quick.map { today.minusDays(it.first) }
+            val options = quick.map { it.second } + (if (other) "${draft.date.monthValue}/${draft.date.dayOfMonth}" else "其他日期")
+            ChoiceChips(
+                options = options,
+                isSelected = { label -> quick.firstOrNull { it.second == label }?.let { draft.date == today.minusDays(it.first) } ?: other },
+                label = { it },
+                onSelect = { label ->
+                    val days = quick.firstOrNull { it.second == label }?.first
+                    if (days != null) onChange { it.copy(date = today.minusDays(days)) } else picking = true
+                },
             )
+            errors[Field.DATE]?.let { ErrorText(it) }
         }
-        errors[Field.DATE]?.let { Error(it) }
 
-        OutlinedTextField(
+        MoneyField(
+            label = "金額",
             value = draft.amount,
             onValueChange = { v -> onChange { it.copy(amount = v.filter { c -> c.isDigit() || c == '-' || c == ',' }) } },
-            label = { Text("金額") },
-            isError = errors[Field.AMOUNT] != null,
-            supportingText = errors[Field.AMOUNT]?.let { { Text(it) } },
+            error = errors[Field.AMOUNT],
             enabled = !draft.isInstallment,
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = if (draft.allowsNegative) KeyboardType.Text else KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth(),
+            keyboardType = if (draft.allowsNegative) KeyboardType.Text else KeyboardType.Number,
         )
 
-        Label("項目")
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            items.filter { it.type == original.type }.forEach { item ->
-                FilterChip(selected = draft.itemId == item.id, onClick = { onChange { it.copy(itemId = item.id) } }, label = { Text(item.name) })
-            }
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            FieldLabel("項目")
+            ChoiceChips(items.filter { it.type == original.type }, { draft.itemId == it.id }, { it.name }, { item -> onChange { it.copy(itemId = item.id) } })
+            errors[Field.ITEM]?.let { ErrorText(it) }
         }
-        errors[Field.ITEM]?.let { Error(it) }
 
         if (original.type == FlowType.EXPENSE && original.method != null) {
-            Label("付款方式")
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PaymentMethod.entries.forEach { method ->
-                    FilterChip(
-                        selected = draft.method == method,
-                        onClick = { onChange { it.copy(method = method) } },
-                        enabled = !draft.isInstallment,
-                        label = { Text(method.label) },
-                        leadingIcon = { MethodDot(method) },
-                    )
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                FieldLabel("付款方式")
+                if (draft.isInstallment) {
+                    Text(draft.method?.label.orEmpty(), style = MaterialTheme.typography.bodyMedium)
+                } else {
+                    SegmentedChoice(PaymentMethod.entries, draft.method, { it.label }, { m -> onChange { it.copy(method = m) } }, icon = ::methodIcon)
                 }
+                errors[Field.METHOD]?.let { ErrorText(it) }
             }
-            errors[Field.METHOD]?.let { Error(it) }
-
             if (draft.method == PaymentMethod.CREDIT_CARD && pickCard && cards.isNotEmpty()) {
-                Label("卡片")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = draft.cardId == null, onClick = { onChange { it.copy(cardId = null) } }, label = { Text("不指定") })
-                    cards.forEach { card ->
-                        FilterChip(selected = draft.cardId == card.id, onClick = { onChange { it.copy(cardId = card.id) } }, label = { Text(card.name) })
-                    }
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    FieldLabel("卡片")
+                    ChoiceChips(listOf<Account?>(null) + cards, { draft.cardId == it?.id }, { it?.name ?: "不指定" }, { card -> onChange { it.copy(cardId = card?.id) } })
+                    errors[Field.CARD]?.let { ErrorText(it) }
                 }
-                errors[Field.CARD]?.let { Error(it) }
             }
         }
 
-        OutlinedTextField(
-            value = draft.note,
-            onValueChange = { v -> onChange { it.copy(note = v) } },
-            label = { Text("備註") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+        TextInput("備註", draft.note, { v -> onChange { it.copy(note = v) } })
+
+        editor.warnings.filter { it != "沒有修改任何東西" }.forEach { WarningText(it) }
+
+        DangerButton("刪除這筆", onClick = { confirmDelete = true }, icon = Icons.Rounded.Delete)
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("刪除這筆？") },
+            text = { Text(deleteExplanation(editor.sourceLabel)) },
+            confirmButton = {
+                TextButton(onClick = { confirmDelete = false; onDelete() }) { Text("刪除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } },
         )
-
-        editor.warnings.filter { it != "沒有修改任何東西" }.forEach {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = StatusColors.warningText)
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("取消") }
-            Button(onClick = onSave, modifier = Modifier.weight(1f)) { Text("儲存") }
-        }
     }
 
     if (picking) {
@@ -178,12 +164,3 @@ fun RecordEditorForm(
         ) { DatePicker(state = pickerState) }
     }
 }
-
-@Composable
-private fun Label(text: String) = Text(text, style = MaterialTheme.typography.labelLarge)
-
-@Composable
-private fun Hint(text: String) = Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-@Composable
-private fun Error(text: String) = Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)

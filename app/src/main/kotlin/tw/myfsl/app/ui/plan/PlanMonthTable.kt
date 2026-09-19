@@ -18,7 +18,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.layout.size
+import tw.myfsl.app.ui.components.MethodIcon
+import tw.myfsl.app.ui.theme.Spacing
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -49,14 +51,13 @@ fun PlanMonthTable(table: PlanTable, onEditItem: (Long) -> Unit, modifier: Modif
                 Row(
                     Modifier.width(NameWidth).height(RowHeight).background(rowBackground(row))
                         .then(if (clickable) Modifier.clickable { onEditItem(row.itemId!!) } else Modifier)
-                        .padding(horizontal = 4.dp),
+                        .padding(horizontal = Spacing.xs),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (row.kind == TableRowKind.ITEM) MethodDot(row.method, Modifier.padding(end = 6.dp))
+                    if (row.kind == TableRowKind.ITEM) MethodIcon(row.method, Modifier.padding(end = Spacing.sm).size(16.dp))
                     Text(
                         row.label + if (row.flexible) "・可調" else "",
                         style = if (row.kind == TableRowKind.ITEM) MaterialTheme.typography.bodySmall else MaterialTheme.typography.labelMedium,
-                        fontWeight = if (row.kind == TableRowKind.ITEM) null else FontWeight.SemiBold,
                         color = textColor(row),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -85,12 +86,12 @@ fun PlanMonthTable(table: PlanTable, onEditItem: (Long) -> Unit, modifier: Modif
             }
         }
     }
-    HorizontalDivider()
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     Text(
         "向左滑看其他月份。點項目可以修改；灰字是依貸款與卡片條件自動估算的。",
-        style = MaterialTheme.typography.labelSmall,
+        style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 4.dp),
+        modifier = Modifier.padding(top = Spacing.xs),
     )
 }
 
@@ -110,7 +111,7 @@ private fun textColor(row: TableRow): Color = when {
 
 @Composable
 private fun HeaderCell(text: String, modifier: Modifier, align: TextAlign = TextAlign.End) {
-    Box(modifier.height(RowHeight).padding(horizontal = 4.dp), contentAlignment = if (align == TextAlign.Start) Alignment.CenterStart else Alignment.CenterEnd) {
+    Box(modifier.height(RowHeight).padding(horizontal = Spacing.xs), contentAlignment = if (align == TextAlign.Start) Alignment.CenterStart else Alignment.CenterEnd) {
         Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = align)
     }
 }
@@ -118,11 +119,10 @@ private fun HeaderCell(text: String, modifier: Modifier, align: TextAlign = Text
 @Composable
 private fun ValueCell(row: TableRow, value: Long, modifier: Modifier, bold: Boolean = false) {
     val negative = row.kind == TableRowKind.CASH_FLOW && value < 0
-    Box(modifier.height(RowHeight).padding(horizontal = 4.dp), contentAlignment = Alignment.CenterEnd) {
+    Box(modifier.height(RowHeight).padding(horizontal = Spacing.xs), contentAlignment = Alignment.CenterEnd) {
         Text(
             if (value == 0L) "—" else MoneyFormat.compact(value),
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = if (bold || row.kind != TableRowKind.ITEM) FontWeight.SemiBold else null,
+            style = if (bold || row.kind != TableRowKind.ITEM) MaterialTheme.typography.labelMedium else MaterialTheme.typography.bodySmall,
             color = when {
                 negative -> MaterialTheme.colorScheme.error
                 value == 0L -> MaterialTheme.colorScheme.outlineVariant

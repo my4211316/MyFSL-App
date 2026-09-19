@@ -48,6 +48,9 @@ data class RecordRow(
     val income: Boolean,
     /** 本週檢查產生的標示：漏記差額／多記差額／到期確認。 */
     val sourceLabel: String?,
+    /** 項目名稱與種類：畫面用來挑圖示。 */
+    val itemName: String = "",
+    val type: FlowType = FlowType.EXPENSE,
 )
 
 data class RecordDay(
@@ -81,6 +84,8 @@ data class RecordEditor(
     val warnings: List<String> = emptyList(),
     /** 打開修改時畫面的資料世代（F11）。 */
     val generation: Long = FinanceSnapshot.NO_GENERATION,
+    /** 這筆的來源標示（刪除確認時說明會連動什麼）。 */
+    val sourceLabel: String? = null,
 )
 
 @HiltViewModel
@@ -190,10 +195,14 @@ class RecordsViewModel @Inject constructor(
             subtitle = subtitle,
             amountText = signed(entry.amount, income),
             income = income,
-            sourceLabel = RecordRules.sourceLabel(entry)
-                ?: entry.installmentId?.let { id -> snapshot.installments.firstOrNull { it.id == id }?.let { "分 ${it.months} 期" } ?: "分期" },
+            sourceLabel = sourceLabel(entry, snapshot),
+            itemName = item?.name ?: entry.type.label,
+            type = entry.type,
         )
     }
+
+    private fun sourceLabel(entry: LedgerEntry, snapshot: FinanceSnapshot): String? = RecordRules.sourceLabel(entry)
+        ?: entry.installmentId?.let { id -> snapshot.installments.firstOrNull { it.id == id }?.let { "分 ${it.months} 期" } ?: "分期" }
 
     private fun signed(amount: Money, income: Boolean): String =
         (if (income) "+" else "−") + MoneyFormat.currency(amount)
@@ -209,12 +218,6 @@ class RecordsViewModel @Inject constructor(
 
     fun setFilter(filter: RecordFilter) = view.update { it.copy(filter = filter) }
 
-    /** 刪除：要連動什麼由 Deletion.plan 決定（分期消費整筆取消、某一期只刪那一期，R-REC-EDIT-05/07）。 */
-    fun delete(id: Long) {
-        val generation = shownGeneration
-        viewModelScope.launch(WriteGuard) { repository.deleteLedgerEntry(id, generation) }
-    }
-
     // ---- 修改 ----
 
     fun edit(id: Long) {
@@ -224,7 +227,20 @@ class RecordsViewModel @Inject constructor(
             // 點的那一列來自畫面上的世代；資料已經換過就不打開，避免改到別筆。
             if (snapshot.generation != generation) return@launch
             val entry = snapshot.ledger.firstOrNull { it.id == id } ?: return@launch
-            editor.value = RecordEditor(RecordDraft(entry), generation = generation)
+            editor.value = RecordEditor(RecordDraft(entry), generation = generation, sourceLabel = sourceLabel(entry, snapshot))
+        }
+    }
+
+    /**
+     * 在修改畫面刪除這一筆（清單上不再每列放垃圾桶，避免誤刪）。
+     * 要連動什麼由 Deletion.plan 決定（分期消費整筆取消、某一期只刪那一期，R-REC-EDIT-05/07）。
+     */
+    fun deleteEditing() {
+        val current = editor.value ?: return
+        viewModelScope.launch(WriteGuard) {
+            repository.deleteLedgerEntry(current.draft.original.id, current.generation)
+            editor.value = null
+            message.value = "已刪除"
         }
     }
 

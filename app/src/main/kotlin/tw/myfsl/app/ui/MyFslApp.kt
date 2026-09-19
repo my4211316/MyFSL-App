@@ -20,6 +20,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -79,6 +80,10 @@ fun MyFslApp() {
     val snackbarHostState = remember { SnackbarHostState() }
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.hierarchy?.mapNotNull { it.route }?.firstOrNull()
+    // 記帳頁下方固定區塊（付款方式、鍵盤、記下）的高度：提示條顯示在它上面，不蓋住鍵盤。
+    var entryDock by remember { mutableStateOf(0.dp) }
+    // 分頁裡打開了編輯畫面（全螢幕表單）時隱藏底部導覽，讓表單的「取消／儲存」在最下面。
+    var fullScreenForm by remember { mutableStateOf(false) }
 
     // 第一次開啟：歡迎頁。選完之後要去的頁面在 NavHost 建好後才導過去。
     val startViewModel: StartViewModel = hiltViewModel()
@@ -138,9 +143,12 @@ fun MyFslApp() {
     }
 
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState, modifier = Modifier.padding(bottom = 64.dp)) },
+        snackbarHost = {
+            val bottom = if (currentRoute == Tab.ENTRY.route && entryDock > 0.dp) entryDock + 8.dp else 64.dp
+            SnackbarHost(snackbarHostState, modifier = Modifier.padding(bottom = bottom))
+        },
         bottomBar = {
-            if (restoreState != tw.myfsl.app.core.data.RestoreState.RESTORING && Tab.entries.any { it.route == currentRoute }) {
+            if (restoreState != tw.myfsl.app.core.data.RestoreState.RESTORING && Tab.entries.any { it.route == currentRoute } && !fullScreenForm) {
                 NavigationBar {
                     Tab.entries.forEach { tab ->
                         NavigationBarItem(
@@ -211,6 +219,7 @@ fun MyFslApp() {
                     onDueUseDueDate = viewModel::setDueUseDueDate,
                     onRecordDue = viewModel::recordDue,
                     onSkipDue = viewModel::skipDue,
+                    onDockHeight = { entryDock = it },
                 )
             }
 
@@ -229,7 +238,6 @@ fun MyFslApp() {
                     onPrevious = viewModel::previousMonth,
                     onNext = viewModel::nextMonth,
                     onFilter = viewModel::setFilter,
-                    onDelete = viewModel::delete,
                     onEdit = viewModel::edit,
                     editorContent = { editor ->
                         RecordEditorForm(
@@ -241,6 +249,7 @@ fun MyFslApp() {
                             onChange = viewModel::change,
                             onSave = viewModel::saveEdit,
                             onCancel = viewModel::cancelEdit,
+                            onDelete = viewModel::deleteEditing,
                         )
                     },
                 )
@@ -314,7 +323,7 @@ fun MyFslApp() {
                 CheckInScreen(
                     state = state,
                     onClose = { navController.popBackStack() },
-                    onStep = viewModel::goTo,
+                    onBack = { viewModel.back() },
                     onNext = viewModel::next,
                     onChoose = viewModel::choose,
                     onConfirmAmount = viewModel::setConfirmAmount,
@@ -340,6 +349,11 @@ fun MyFslApp() {
                     val message = state.message ?: return@LaunchedEffect
                     snackbarHostState.showSnackbar(message)
                     viewModel.dismissMessage()
+                }
+                val formOpen = state.editor != null || state.import != null
+                DisposableEffect(formOpen) {
+                    fullScreenForm = formOpen
+                    onDispose { fullScreenForm = false }
                 }
                 BackHandler(enabled = state.import != null) { viewModel.cancelImport() }
                 BackHandler(enabled = state.editor != null) { viewModel.cancelEdit() }
@@ -417,6 +431,11 @@ fun MyFslApp() {
                     snackbarHostState.showSnackbar(message)
                     viewModel.dismissMessage()
                 }
+                val formOpen = state.editor != null
+                DisposableEffect(formOpen) {
+                    fullScreenForm = formOpen
+                    onDispose { fullScreenForm = false }
+                }
                 BackHandler(enabled = state.editor != null) { viewModel.cancelEdit() }
 
                 ForecastScreen(
@@ -456,6 +475,11 @@ fun MyFslApp() {
                     val message = state.message ?: return@LaunchedEffect
                     snackbarHostState.showSnackbar(message)
                     viewModel.dismissMessage()
+                }
+                val formOpen = state.editor != null
+                DisposableEffect(formOpen) {
+                    fullScreenForm = formOpen
+                    onDispose { fullScreenForm = false }
                 }
                 BackHandler(enabled = state.editor != null) { viewModel.cancel() }
                 // 從結帳提醒打開：直接打開那張卡的帳單校正（R-REM-01）。

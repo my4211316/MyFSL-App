@@ -189,11 +189,61 @@ object EntryRules {
         return if (hint is BudgetHint.Planned) "$base · ${hint.itemName}・${hint.method.label}剩 ${MoneyFormat.currency(hint.after)}" else base
     }
 
+    /**
+     * 常用項目（R-ENT-02）：這個種類最近自己記過的（最多 5 個），加上本月有計畫金額的，最多 8 個；
+     * 其餘收在「更多」裡。
+     */
+    fun commonItems(snapshot: FinanceSnapshot, type: FlowType): List<PlanItem> {
+        val all = itemsOf(snapshot, type)
+        val recent = snapshot.ledger
+            .asSequence()
+            .filter { it.source == EntrySource.MANUAL && it.itemId != null }
+            .sortedWith(compareByDescending<LedgerEntry> { it.date }.thenByDescending { it.id })
+            .mapNotNull { entry -> all.firstOrNull { it.id == entry.itemId } }
+            .distinct()
+            .take(5)
+            .toList()
+        val planned = all.filter { item ->
+            snapshot.plannedMethods(item.id, snapshot.today.year, snapshot.today.monthValue).isNotEmpty()
+        }
+        return (recent + planned).distinct().take(8)
+    }
+
+    /**
+     * 要記在哪個項目（R-ENT-02）：使用者點過的；沒點過用常用項目的第一個。
+     * 畫面顯示與記下都用這一個，才不會畫面選 A、實際記到 B。
+     */
+    fun currentItem(snapshot: FinanceSnapshot, type: FlowType, selectedId: Long?): PlanItem? {
+        val all = itemsOf(snapshot, type)
+        return all.firstOrNull { it.id == selectedId } ?: commonItems(snapshot, type).firstOrNull() ?: all.firstOrNull()
+    }
+
+    private fun itemsOf(snapshot: FinanceSnapshot, type: FlowType) =
+        snapshot.activeItems.filter { it.type == type }.sortedBy { it.sortOrder }
+
     /** 記帳畫面上方提示列，只計算今天的支出。 */
     fun todayStrip(snapshot: FinanceSnapshot, date: LocalDate = snapshot.today): String {
-        val entries = snapshot.ledger.filter {
-            it.date == date && it.type == FlowType.EXPENSE && it.source == EntrySource.MANUAL
-        }
+        val entries = todayExpenses(snapshot, date)
         return "${date.monthValue}/${date.dayOfMonth} 今天已記 ${entries.size} 筆 · ${MoneyFormat.currency(entries.sumOf { it.amount })}"
+    }
+
+    /** 今天已花（R-ENT-12）：今天自己記的支出；退款是負數，會扣回。繳卡費、貸款等到期記下的不算花費。 */
+    fun todaySpent(snapshot: FinanceSnapshot, date: LocalDate = snapshot.today): Money =
+        todayExpenses(snapshot, date).sumOf { it.amount }
+
+    /** 今天記的（R-ENT-12）：自己記的與點到期項目記下的，後記的在前。 */
+    fun todayEntries(snapshot: FinanceSnapshot, date: LocalDate = snapshot.today): List<LedgerEntry> =
+        snapshot.ledger
+            .filter { it.date == date && (it.source == EntrySource.MANUAL || it.source == EntrySource.DUE) }
+            .sortedWith(compareByDescending<LedgerEntry> { it.createdAt }.thenByDescending { it.id })
+
+    /** 這個月還剩（R-ENT-12）：可調支出各項目的本月計畫與剩餘，最緊的在前。 */
+    fun monthRemaining(snapshot: FinanceSnapshot): List<ItemBudget> =
+        BudgetProgressCalculator.byItem(BudgetProgressCalculator.forMonth(snapshot))
+            .filter { it.planned > 0 }
+            .sortedBy { it.remaining.toDouble() / it.planned }
+
+    private fun todayExpenses(snapshot: FinanceSnapshot, date: LocalDate) = snapshot.ledger.filter {
+        it.date == date && it.type == FlowType.EXPENSE && it.source == EntrySource.MANUAL
     }
 }

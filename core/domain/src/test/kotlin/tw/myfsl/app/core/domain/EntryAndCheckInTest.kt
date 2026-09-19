@@ -159,6 +159,37 @@ class EntryAndCheckInTest {
         assertEquals("9/14 今天已記 3 筆 · $655", EntryRules.todayStrip(today))
     }
 
+    @Test fun `沒點過項目時，畫面顯示與記下用同一個項目：常用項目的第一個，不是排序第一個`() {
+        val common = EntryRules.commonItems(snapshot, FlowType.EXPENSE)
+        val first = snapshot.activeItems.filter { it.type == FlowType.EXPENSE }.minBy { it.sortOrder }
+        assertEquals(common.first(), EntryRules.currentItem(snapshot, FlowType.EXPENSE, null))
+        assertTrue("示意資料裡排序第一的支出項目不在常用項目裡，正好重現舊的錯誤", first !in common)
+        assertEquals("點過的優先", item(FUEL), EntryRules.currentItem(snapshot, FlowType.EXPENSE, FUEL))
+        assertEquals("點的是別的種類的項目時退回常用項目", common.first(), EntryRules.currentItem(snapshot, FlowType.EXPENSE, SALARY))
+    }
+
+    @Test fun `今天總覽：今天已花只算自己記的支出，今天記的含到期記下，後記的在前`() {
+        val today = snapshot.copy(
+            ledger = listOf(
+                expense(LIVING, PaymentMethod.CASH, 420, CASH).copy(id = 1, createdAt = 100),
+                expense(LIVING, PaymentMethod.CASH, -120, CASH).copy(id = 2, createdAt = 200, note = "退款"),
+                expense(FUEL, PaymentMethod.CASH, 300, CASH).copy(id = 3, createdAt = 300, source = tw.myfsl.app.core.model.EntrySource.DUE),
+                expense(FUEL, PaymentMethod.CASH, 50, CASH).copy(id = 4, createdAt = 400, source = tw.myfsl.app.core.model.EntrySource.MISSED),
+                expense(FUEL, PaymentMethod.CASH, 999, CASH).copy(id = 5, createdAt = 500, date = LocalDate.of(2026, 9, 13)),
+            ),
+        )
+        assertEquals("420 − 120 退款；到期記下、漏記差額、昨天的都不算", 300L, EntryRules.todaySpent(today))
+        assertEquals(listOf(3L, 2L, 1L), EntryRules.todayEntries(today).map { it.id })
+    }
+
+    @Test fun `這個月還剩：只列有計畫的可調支出，剩得比例最少的在前`() {
+        val rows = EntryRules.monthRemaining(snapshot)
+        assertTrue(rows.isNotEmpty())
+        assertTrue(rows.all { it.planned > 0 && it.item.type == FlowType.EXPENSE })
+        val ratios = rows.map { it.remaining.toDouble() / it.planned }
+        assertEquals(ratios.sorted(), ratios)
+    }
+
     private fun expense(itemId: Long, method: PaymentMethod, amount: Long, account: Long?) =
         LedgerEntry(date = snapshot.today, type = FlowType.EXPENSE, amount = amount, itemId = itemId, method = method, accountId = account)
 }

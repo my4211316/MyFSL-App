@@ -4,7 +4,13 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 
 // 色彩與設計稿（design/mockups）一致：Material 3，主色青綠。
@@ -64,19 +70,74 @@ private val DarkColors = darkColorScheme(
     inversePrimary = Color(0xFF1B6B61),
 )
 
-/** 狀態色（花太快、超支）不隨動態色改變。 */
-object StatusColors {
-    val warningFill = Color(0xFFC69200)
-    val warningContainer = Color(0xFFFFDF9E)
-    val onWarningContainer = Color(0xFF261A00)
-    val warningText = Color(0xFF7A5900)
+/**
+ * 警示色角色（快到期、會超出、少於最低應繳）。M3 沒有內建「警示」，照 material-3 skill 的配對規則補一組：
+ * [warning] 放在 surface 上的字與圖示；[warningContainer] 是底色，上面的字用 [onWarningContainer]。淺色、深色各一套。
+ */
+@Immutable
+data class WarningColors(
+    val warning: Color,
+    val warningContainer: Color,
+    val onWarningContainer: Color,
+)
+
+private val LightWarning = WarningColors(
+    warning = Color(0xFF7A5900),
+    warningContainer = Color(0xFFFFDF9E),
+    onWarningContainer = Color(0xFF261A00),
+)
+
+private val DarkWarning = WarningColors(
+    warning = Color(0xFFF0C048),
+    warningContainer = Color(0xFF5C4300),
+    onWarningContainer = Color(0xFFFFDF9E),
+)
+
+private val LocalWarningColors = staticCompositionLocalOf { LightWarning }
+
+/** 用法：`MaterialTheme.warningColors.warning`。 */
+val MaterialTheme.warningColors: WarningColors
+    @Composable @ReadOnlyComposable get() = LocalWarningColors.current
+
+/**
+ * 圖表的線色（dataviz skill 的參考配色，依固定順序配給情境，隱藏某條線也不換色）。
+ * 淺色與深色各一套，已用 validate_palette 檢查色盲區分度；淺色版有三色對背景低於 3:1，
+ * 所以圖表一定附圖例與比較表（skill 規定的補救）。
+ */
+@Immutable
+data class ChartColors(val series: List<Color>) {
+    fun at(index: Int): Color = series[index % series.size]
 }
 
-/** 支付方式的標示色，沿用常見預算表的底色習慣：信用卡淺藍、現金黃、轉帳灰綠。 */
-object MethodColors {
-    val card = Color(0xFF7FB3E0)
-    val cash = Color(0xFFE8C547)
-    val transfer = Color(0xFF8FB5A8)
+private val LightChart = ChartColors(listOf(Color(0xFF2A78D6), Color(0xFFEB6834), Color(0xFF1BAF7A), Color(0xFFEDA100), Color(0xFFE87BA4)))
+private val DarkChart = ChartColors(listOf(Color(0xFF3987E5), Color(0xFFD95926), Color(0xFF199E70), Color(0xFFC98500), Color(0xFFD55181)))
+
+private val LocalChartColors = staticCompositionLocalOf { LightChart }
+
+val MaterialTheme.chartColors: ChartColors
+    @Composable @ReadOnlyComposable get() = LocalChartColors.current
+
+/** 間距（material-3 skill：4dp 格線）。畫面只用這些值。 */
+object Spacing {
+    val xs = 4.dp
+    val sm = 8.dp
+    val md = 12.dp
+    val lg = 16.dp
+    val xl = 24.dp
+    val xxl = 32.dp
+}
+
+/**
+ * M3 動態的時間與曲線（material-3 skill 的 Duration／Easing 表）。
+ * 目前的 Material3 版本還沒有 MotionScheme，MotionTokens 又不公開，所以照規格值定義在這裡。
+ */
+object Motion {
+    const val SHORT4 = 200
+    const val MEDIUM2 = 300
+    const val FEEDBACK_HOLD_MS = 1_000L
+    val emphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
+    val emphasizedAccelerate = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
+    val standard = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 }
 
 @Composable
@@ -84,8 +145,13 @@ fun MyFslTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
-        content = content,
-    )
+    CompositionLocalProvider(
+        LocalWarningColors provides if (darkTheme) DarkWarning else LightWarning,
+        LocalChartColors provides if (darkTheme) DarkChart else LightChart,
+    ) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkColors else LightColors,
+            content = content,
+        )
+    }
 }

@@ -46,7 +46,7 @@ object Reminders {
                     result += Reminder(
                         id = "${due.key}:$left",
                         title = "${due.title} 還有 $left 天$verb",
-                        text = "$whenText $verb，$amountText。付了之後到記帳畫面的「本月到期」點一下記下。",
+                        text = "$whenText $verb，$amountText。付了之後到記帳頁右上角的今天總覽，在「本月到期」點一下記下。",
                     )
                 }
         }

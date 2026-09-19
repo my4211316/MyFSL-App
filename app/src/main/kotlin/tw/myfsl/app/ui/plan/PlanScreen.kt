@@ -1,51 +1,75 @@
 package tw.myfsl.app.ui.plan
 
-import androidx.compose.foundation.clickable
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.ChevronLeft
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import tw.myfsl.app.core.domain.ImportMode
 import tw.myfsl.app.core.domain.PlanIssue
 import tw.myfsl.app.core.domain.Severity
 import tw.myfsl.app.core.model.MoneyFormat
-import tw.myfsl.app.ui.theme.StatusColors
+import tw.myfsl.app.ui.components.BottomActions
+import tw.myfsl.app.ui.components.GroupLabel
+import tw.myfsl.app.ui.components.HintText
+import tw.myfsl.app.ui.components.ListCard
+import tw.myfsl.app.ui.components.ListDivider
+import tw.myfsl.app.ui.components.ListRow
+import tw.myfsl.app.ui.components.Loading
+import tw.myfsl.app.ui.components.MethodIcon
+import tw.myfsl.app.ui.components.NavAction
+import tw.myfsl.app.ui.components.ScreenTopBar
+import tw.myfsl.app.ui.components.SectionCard
+import tw.myfsl.app.ui.components.SectionHeader
+import tw.myfsl.app.ui.components.SegmentedChoice
+import tw.myfsl.app.ui.components.StatusBadge
+import tw.myfsl.app.ui.components.SummaryTile
+import tw.myfsl.app.ui.components.Tone
+import tw.myfsl.app.ui.theme.Spacing
+import tw.myfsl.app.ui.theme.warningColors
 
-/** 計畫：年度摘要、計畫檢查、匯入與匯出。 */
+/**
+ * 計畫（設計稿：全畫面改版 v1）：年度摘要、計畫檢查、項目清單或月份表格。
+ * 匯入、匯出、下載範本一年只用幾次，收在右上角選單；還沒有計畫時畫面中間直接給「匯入 CSV」。
+ */
 @Composable
 fun PlanScreen(
     state: PlanUiState,
@@ -64,7 +88,7 @@ fun PlanScreen(
     modifier: Modifier = Modifier,
 ) {
     if (state.loading) {
-        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        Loading(modifier)
         return
     }
     state.import?.let {
@@ -75,147 +99,145 @@ fun PlanScreen(
         editorContent(it)
         return
     }
+    var menu by remember { mutableStateOf(false) }
 
     Box(modifier.fillMaxSize()) {
-    LazyColumn(
-        Modifier.fillMaxSize().padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        item {
-            Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("計畫", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                IconButton(onClick = onPreviousYear) { Icon(Icons.Default.ChevronLeft, contentDescription = "上一年") }
-                Text("${state.year} 年", style = MaterialTheme.typography.titleMedium)
-                IconButton(onClick = onNextYear) { Icon(Icons.Default.ChevronRight, contentDescription = "下一年") }
-            }
-        }
-
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onImport, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.Upload, contentDescription = null)
-                    Text(" 匯入 CSV")
-                }
-                OutlinedButton(onClick = onExport, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.Download, contentDescription = null)
-                    Text(" 匯出計畫")
-                }
-            }
-            TextButton(onClick = onTemplate) { Text("下載空白範本") }
-        }
-
-        val summary = state.summary
-        if (summary == null) {
-            item {
-                Text(
-                    "${state.year} 年還沒有計畫。可以匯入 CSV（Excel 另存成 CSV 即可）、下載範本照著填，或按右下「新增項目」一個一個建。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        } else {
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Tile("全年收入", MoneyFormat.currency(summary.totalIncome), Modifier.weight(1f))
-                    Tile("全年支出", MoneyFormat.currency(summary.totalExpense), Modifier.weight(1f))
-                }
-            }
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Tile("結構缺口", MoneyFormat.signed(summary.structuralGap), Modifier.weight(1f), negative = summary.structuralGap < 0)
-                    Tile("卡債全年增加", MoneyFormat.signed(summary.cardDebtIncrease), Modifier.weight(1f), negative = summary.cardDebtIncrease > 0)
-                }
-            }
-            if (summary.totalCardInterest > 0) {
-                item {
-                    Text(
-                        "其中預估循環利息 ${MoneyFormat.currency(summary.totalCardInterest)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = StatusColors.warningText,
-                    )
-                }
-            }
-        }
-
-        if (state.issues.isNotEmpty()) {
-            item { Text("計畫檢查", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp)) }
-            items(state.issues) { IssueRow(it) }
-        }
-
-        if (state.rows.isNotEmpty()) {
-            item {
-                Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("項目", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                    FilterChip(selected = !state.showTable, onClick = { onShowTable(false) }, label = { Text("清單") })
-                    FilterChip(selected = state.showTable, onClick = { onShowTable(true) }, label = { Text("月份表格") }, modifier = Modifier.padding(start = 8.dp))
-                }
-            }
-        }
-        val table = state.table
-        if (state.showTable && table != null) {
-            item { PlanMonthTable(table, onEditItem) }
-        } else if (state.rows.isNotEmpty()) {
-            var lastGroup: String? = null
-            state.rows.forEach { row ->
-                if (row.groupName != lastGroup) {
-                    val group = row.groupName
-                    item { Text(group, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary) }
-                    lastGroup = group
-                }
-                item {
-                    Row(
-                        Modifier.fillMaxWidth().clickable { onEditItem(row.itemId) }.padding(vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        MethodDot(row.method, Modifier.padding(end = 8.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(row.itemName, style = MaterialTheme.typography.bodyMedium)
-                            Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Text(MoneyFormat.currency(row.total), style = MaterialTheme.typography.bodyMedium)
+        Column(Modifier.fillMaxSize()) {
+            ScreenTopBar("計畫") {
+                IconButton(onClick = onPreviousYear) { Icon(Icons.Rounded.ChevronLeft, contentDescription = "上一年") }
+                Text("${state.year}", style = MaterialTheme.typography.titleSmall)
+                IconButton(onClick = onNextYear) { Icon(Icons.Rounded.ChevronRight, contentDescription = "下一年") }
+                Box {
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, contentDescription = "匯入與匯出") }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("匯入 CSV") }, leadingIcon = { Icon(Icons.Rounded.Upload, null) }, onClick = { menu = false; onImport() })
+                        DropdownMenuItem(text = { Text("匯出計畫") }, leadingIcon = { Icon(Icons.Rounded.Download, null) }, onClick = { menu = false; onExport() })
+                        DropdownMenuItem(text = { Text("下載空白範本") }, leadingIcon = { Icon(Icons.Rounded.Description, null) }, onClick = { menu = false; onTemplate() })
                     }
                 }
             }
+            LazyColumn(
+                Modifier.fillMaxSize().padding(horizontal = Spacing.lg),
+                verticalArrangement = Arrangement.spacedBy(Spacing.lg),
+            ) {
+                val summary = state.summary
+                if (summary == null) {
+                    item(key = "empty") {
+                        SectionCard {
+                            Text("${state.year} 年還沒有計畫", style = MaterialTheme.typography.titleSmall)
+                            HintText("把 Excel 預算表另存成 CSV 匯入最快；也可以下載範本照著填，或按右下「新增項目」一個一個建。")
+                            Button(onClick = onImport, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+                                Icon(Icons.Rounded.Upload, contentDescription = null)
+                                Spacer(Modifier.width(Spacing.sm))
+                                Text("匯入 CSV")
+                            }
+                            TextButton(onClick = onTemplate) { Text("下載空白範本") }
+                        }
+                    }
+                } else {
+                    item(key = "summary") {
+                        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                                SummaryTile("全年收入", MoneyFormat.currency(summary.totalIncome), Modifier.weight(1f))
+                                SummaryTile("全年支出", MoneyFormat.currency(summary.totalExpense), Modifier.weight(1f))
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                                SummaryTile(
+                                    "結構缺口", MoneyFormat.signed(summary.structuralGap), Modifier.weight(1f),
+                                    valueColor = if (summary.structuralGap < 0) MaterialTheme.colorScheme.error else Color.Unspecified,
+                                )
+                                SummaryTile(
+                                    "卡債全年增加", MoneyFormat.signed(summary.cardDebtIncrease), Modifier.weight(1f),
+                                    valueColor = if (summary.cardDebtIncrease > 0) MaterialTheme.colorScheme.error else Color.Unspecified,
+                                )
+                            }
+                            if (summary.totalCardInterest > 0) {
+                                HintText("其中預估循環利息 ${MoneyFormat.currency(summary.totalCardInterest)}", color = MaterialTheme.warningColors.warning)
+                            }
+                        }
+                    }
+                }
+
+                if (state.issues.isNotEmpty()) {
+                    item(key = "issues") { IssuesCard(state.issues) }
+                }
+
+                if (state.rows.isNotEmpty()) {
+                    item(key = "view") {
+                        SegmentedChoice(listOf(false, true), state.showTable, { if (it) "月份表格" else "清單" }, onShowTable)
+                    }
+                }
+                val table = state.table
+                if (state.showTable && table != null) {
+                    item(key = "table") { PlanMonthTable(table, onEditItem) }
+                } else if (state.rows.isNotEmpty()) {
+                    state.rows.groupBy { it.groupName }.forEach { (group, rows) ->
+                        item(key = "group-$group") {
+                            Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                                GroupLabel(group)
+                                ListCard {
+                                    rows.forEachIndexed { index, row ->
+                                        if (index > 0) ListDivider()
+                                        Surface(onClick = { onEditItem(row.itemId) }, color = Color.Transparent) {
+                                            ListRow(
+                                                title = row.itemName,
+                                                detail = row.detail,
+                                                lead = row.method?.let { method -> { MethodIcon(method) } },
+                                                trailing = MoneyFormat.currency(row.total),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                item(key = "end") { Spacer(Modifier.height(88.dp)) }
+            }
         }
-        item { Spacer(Modifier.height(88.dp)) }
-    }
         ExtendedFloatingActionButton(
             onClick = onAddItem,
-            icon = { Icon(Icons.Default.Add, contentDescription = null) },
+            icon = { Icon(Icons.Rounded.Add, contentDescription = null) },
             text = { Text("新增項目") },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(Spacing.lg),
         )
     }
 }
 
+/** 計畫檢查：錯誤與注意的數量標在上面，先列三則，其餘展開看。 */
 @Composable
-private fun Tile(label: String, value: String, modifier: Modifier = Modifier, negative: Boolean = false) {
-    Card(modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-        Column(Modifier.padding(12.dp)) {
-            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(
-                value,
-                style = MaterialTheme.typography.titleMedium,
-                color = if (negative) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-            )
+private fun IssuesCard(issues: List<PlanIssue>) {
+    var all by rememberSaveable { mutableStateOf(false) }
+    val errors = issues.count { it.severity == Severity.ERROR }
+    val warnings = issues.count { it.severity == Severity.WARNING }
+    SectionCard {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            Text("計畫檢查", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            if (errors > 0) StatusBadge("錯誤 $errors", tone = Tone.ERROR)
+            if (warnings > 0) StatusBadge("注意 $warnings", tone = Tone.WARNING)
+        }
+        val shown = if (all) issues else issues.take(3)
+        shown.forEach { IssueRow(it) }
+        if (issues.size > 3) {
+            TextButton(onClick = { all = !all }) { Text(if (all) "收起" else "全部 ${issues.size} 則") }
         }
     }
 }
 
 @Composable
 private fun IssueRow(issue: PlanIssue) {
-    val (label, color) = when (issue.severity) {
-        Severity.ERROR -> "錯誤" to MaterialTheme.colorScheme.error
-        Severity.WARNING -> "注意" to StatusColors.warningText
-        Severity.INFO -> "提示" to MaterialTheme.colorScheme.onSurfaceVariant
+    val (label, tone) = when (issue.severity) {
+        Severity.ERROR -> "錯誤" to Tone.ERROR
+        Severity.WARNING -> "注意" to Tone.WARNING
+        Severity.INFO -> "提示" to Tone.NEUTRAL
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = color, modifier = Modifier.padding(top = 2.dp))
-        Text(issue.message, style = MaterialTheme.typography.bodySmall, color = if (issue.severity == Severity.INFO) color else Color.Unspecified)
+    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm), verticalAlignment = Alignment.Top) {
+        StatusBadge(label, tone = tone)
+        Text(issue.message, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+/** 匯入預覽：看清楚會匯入什麼、有沒有錯誤，再決定怎麼匯入。 */
 @Composable
 private fun ImportPreviewPanel(
     import: ImportState,
@@ -225,68 +247,52 @@ private fun ImportPreviewPanel(
     modifier: Modifier = Modifier,
 ) {
     val preview = import.preview
-    LazyColumn(
-        modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        item {
-            Text("匯入預覽", style = MaterialTheme.typography.titleLarge)
-            Text("${import.fileName} · ${import.encoding} · 匯入到 ${preview.year} 年", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Tile("項目", "${preview.itemCount} 個（${preview.lineCount} 列）", Modifier.weight(1f))
-                Tile("全年收入", MoneyFormat.currency(preview.income), Modifier.weight(1f))
+    Column(modifier.fillMaxSize().imePadding()) {
+        ScreenTopBar(
+            "匯入預覽",
+            subtitle = "${import.fileName} · 匯入到 ${preview.year} 年",
+            navigation = NavAction(Icons.Rounded.Close, "取消匯入", onCancel),
+        )
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = Spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(Spacing.lg),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                SummaryTile("項目", "${preview.itemCount} 個", Modifier.weight(1f))
+                SummaryTile("全年收入", MoneyFormat.currency(preview.income), Modifier.weight(1f))
             }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Tile("全年支出", MoneyFormat.currency(preview.expense), Modifier.weight(1f))
-                Tile("其中刷卡", MoneyFormat.currency(preview.cardSpending), Modifier.weight(1f))
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                SummaryTile("全年支出", MoneyFormat.currency(preview.expense), Modifier.weight(1f))
+                SummaryTile("其中刷卡", MoneyFormat.currency(preview.cardSpending), Modifier.weight(1f))
             }
-        }
-        if (preview.newGroups.isNotEmpty()) {
-            item { Text("會新增群組：${preview.newGroups.joinToString("、")}", style = MaterialTheme.typography.bodySmall) }
-        }
+            HintText("共 ${preview.lineCount} 列 · 檔案編碼 ${import.encoding}")
+            if (preview.newGroups.isNotEmpty()) HintText("會新增群組：${preview.newGroups.joinToString("、")}")
 
-        val shown = preview.issues.filterNot { it.severity == Severity.INFO && (it.message.startsWith("共 ") || it.message.startsWith("會新增群組")) }
-        if (shown.isNotEmpty()) {
-            item { Text("檢查結果", style = MaterialTheme.typography.titleSmall) }
-            items(shown) { IssueRow(it) }
-        }
-
-        item {
-            HorizontalDivider()
-            Text("匯入方式", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ImportMode.entries.forEach { mode ->
-                    FilterChip(selected = import.mode == mode, onClick = { onMode(mode) }, label = { Text(mode.label) })
-                }
+            val shown = preview.issues.filterNot { it.severity == Severity.INFO && (it.message.startsWith("共 ") || it.message.startsWith("會新增群組")) }
+            if (shown.isNotEmpty()) {
+                SectionHeader("檢查結果")
+                SectionCard { shown.forEach { IssueRow(it) } }
             }
-            Text(
+
+            SectionHeader("匯入方式")
+            SegmentedChoice(ImportMode.entries, import.mode, { it.label }, onMode)
+            HintText(
                 when (import.mode) {
                     ImportMode.REPLACE_YEAR -> "檔案裡的項目會覆蓋這一年的金額；檔案沒有的項目保持不動。"
                     ImportMode.ADD_ONLY -> "只新增 App 裡還沒有的項目，已有的項目不會被改。"
                 },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        }
-
-        item {
             if (!preview.canImport) {
-                Text(
-                    "有錯誤不能匯入。請在 Excel 修正上面列出的列號後再匯入一次。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
+                Text("有錯誤不能匯入。請在 Excel 修正上面列出的列號後再匯入一次。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("取消") }
-                Button(onClick = onConfirm, enabled = preview.canImport && !import.importing, modifier = Modifier.weight(1f)) {
-                    Text(if (import.importing) "匯入中…" else "匯入", textAlign = TextAlign.Center)
-                }
-            }
+            Spacer(Modifier.height(Spacing.sm))
         }
+        BottomActions(
+            primary = if (import.importing) "匯入中…" else "匯入",
+            onPrimary = onConfirm,
+            primaryEnabled = preview.canImport && !import.importing,
+            secondary = "取消",
+            onSecondary = onCancel,
+        )
     }
 }

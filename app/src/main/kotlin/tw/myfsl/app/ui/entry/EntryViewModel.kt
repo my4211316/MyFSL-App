@@ -1,10 +1,11 @@
 package tw.myfsl.app.ui.entry
 
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import tw.myfsl.app.core.data.FinanceRepository
+import tw.myfsl.app.core.domain.AccountSummaryCalculator
 import tw.myfsl.app.core.domain.AmountInput
-import tw.myfsl.app.core.domain.BudgetProgressCalculator
 import tw.myfsl.app.core.domain.DueChoice
 import tw.myfsl.app.core.domain.DueItem
 import tw.myfsl.app.core.domain.DueItems
@@ -38,6 +39,7 @@ import javax.inject.Inject
 import tw.myfsl.app.ui.WriteGuard
 
 /** 本月到期清單的一列（R-DUE）。 */
+@Immutable
 data class DueRow(
     val key: String,
     val title: String,
@@ -48,9 +50,42 @@ data class DueRow(
     /** 上個月以前就到期、還沒記下。 */
     val overdue: Boolean,
     val income: Boolean,
+    /** 3 天內到期或已過期（R-DUE-07）：記帳畫面上方只提示這些。 */
+    val soon: Boolean = false,
+    /** 總覽清單左邊的日期：日、與「已過／今天／週一」。 */
+    val day: String = "",
+    val dayNote: String = "",
+    /** 到期日已經過了（總覽用錯誤色標日期）。 */
+    val past: Boolean = false,
+)
+
+/** 今天總覽（R-ENT-12）：右上角按鈕打開。 */
+@Immutable
+data class EntryOverview(
+    val dateTitle: String = "",
+    val freeCash: String = "",
+    val liquid: String = "",
+    val cardReserve: String = "",
+    val todaySpent: String = "",
+    val today: List<TodayRow> = emptyList(),
+    val remaining: List<RemainingRow> = emptyList(),
+)
+
+@Immutable
+data class TodayRow(val itemName: String, val type: FlowType, val detail: String, val amountText: String)
+
+@Immutable
+data class RemainingRow(
+    val name: String,
+    val remainingText: String,
+    /** 還剩的比例 0–1，畫進度條用。 */
+    val fraction: Float,
+    /** 剩不到兩成：變橘色提醒。 */
+    val low: Boolean,
 )
 
 /** 點到期項目後的記下視窗。 */
+@Immutable
 data class DueDialog(
     val key: String,
     val title: String,
@@ -81,6 +116,7 @@ data class DueDialog(
 )
 
 /** 記帳畫面的狀態；文字與預設值都來自 core.domain 的規則。 */
+@Immutable
 data class EntryUiState(
     val loading: Boolean = true,
     val empty: Boolean = false,
@@ -104,8 +140,6 @@ data class EntryUiState(
     val selectedLine: String = "",
     val hint: String = "",
     val hintWarning: Boolean = false,
-    val todayStrip: String = "",
-    val groupAllowance: String? = null,
     val message: String? = null,
     val canUndo: Boolean = false,
     // ---- 分期（付款為信用卡時） ----
@@ -123,7 +157,14 @@ data class EntryUiState(
     /** 本月到期、還沒記下的項目（R-DUE）。 */
     val dues: List<DueRow> = emptyList(),
     val dueDialog: DueDialog? = null,
+    val overview: EntryOverview = EntryOverview(),
+    /** 自己記下一筆就加一：畫面用來播放「已記下」回饋。 */
+    val savedTick: Int = 0,
 ) {
+    /** 付款方式「信用卡」那一格顯示的卡名。 */
+    val cardLabel: String get() = cards.firstOrNull { it.id == cardId }?.name ?: "不指定"
+    /** 3 天內到期或已過期、還沒記下的（R-DUE-07）。 */
+    val soonDues: List<DueRow> get() = dues.filter { it.soon }
     val amountText: String get() = AmountInput.display(amountInput)
     val amount: Money get() = AmountInput.value(amountInput)
     val saveEnabled: Boolean get() = amount > 0
@@ -166,6 +207,8 @@ class EntryViewModel @Inject constructor(
         val generation: Long = FinanceSnapshot.NO_GENERATION,
         /** 上一筆記下時的資料世代（復原、補登提示用）。 */
         val lastGeneration: Long = FinanceSnapshot.NO_GENERATION,
+        /** 自己記下的次數（「已記下」回饋）。 */
+        val savedCount: Int = 0,
     )
 
     private data class DueSelection(
@@ -202,8 +245,8 @@ class EntryViewModel @Inject constructor(
             return EntryUiState(loading = false, empty = true, message = sel.message)
         }
         val dues = DueItems.list(snapshot)
-        val common = commonItems(snapshot, all)
-        val item = all.firstOrNull { it.id == sel.itemId } ?: common.firstOrNull() ?: all.firstOrNull()
+        val common = EntryRules.commonItems(snapshot, sel.type)
+        val item = EntryRules.currentItem(snapshot, sel.type, sel.itemId)
             ?: return EntryUiState(loading = false, empty = true, message = sel.message)
         val shown = if (sel.showAll) all else (common + item).distinct()
         val items = all.filter { it in shown }
@@ -228,10 +271,6 @@ class EntryViewModel @Inject constructor(
                 (snapshot.account(item.toAccountId)?.name ?: "未設定")
         }
 
-        val progress = BudgetProgressCalculator.forMonth(snapshot)
-        val groupName = snapshot.group(item.groupId)?.name
-        val allowance = progress.filter { it.groupName == groupName }.sumOf { it.dailyAllowance ?: 0L }
-
         return EntryUiState(
             loading = false,
             empty = false,
@@ -252,12 +291,6 @@ class EntryViewModel @Inject constructor(
             selectedLine = selectedLine,
             hint = EntryRules.hintText(hint),
             hintWarning = EntryRules.isWarning(hint),
-            todayStrip = EntryRules.todayStrip(snapshot),
-            groupAllowance = if (allowance > 0 && groupName != null) {
-                "$groupName 每日可用 ${MoneyFormat.currency(allowance)}"
-            } else {
-                null
-            },
             message = sel.message,
             canUndo = sel.lastSavedId != null || sel.lastInstallmentId != null,
             showInstallment = item.type == FlowType.EXPENSE && method == PaymentMethod.CREDIT_CARD,
@@ -275,8 +308,57 @@ class EntryViewModel @Inject constructor(
             missedPrompt = sel.pendingMissed?.third,
             dues = dues.map { dueRow(snapshot, it) },
             dueDialog = sel.due?.let { due -> dues.firstOrNull { it.key == due.key }?.let { dueDialog(snapshot, it, due) } },
+            overview = overviewFor(snapshot),
+            savedTick = sel.savedCount,
         )
     }
+
+    // ---- 今天總覽（R-ENT-12） ----
+
+    /** 總覽只跟資料有關：同一份快照重用，按鍵盤時不用重算帳戶與預算。 */
+    private var overviewCache: Pair<FinanceSnapshot, EntryOverview>? = null
+
+    private fun overviewFor(snapshot: FinanceSnapshot): EntryOverview =
+        overviewCache?.takeIf { it.first === snapshot }?.second
+            ?: overview(snapshot).also { overviewCache = snapshot to it }
+
+    private fun overview(snapshot: FinanceSnapshot): EntryOverview {
+        val today = snapshot.today
+        val accounts = AccountSummaryCalculator.overview(snapshot)
+        return EntryOverview(
+            dateTitle = "${today.monthValue}月${today.dayOfMonth}日 ${weekday(today)}",
+            freeCash = MoneyFormat.currency(accounts.freeCash),
+            liquid = MoneyFormat.currency(accounts.liquid),
+            cardReserve = MoneyFormat.currency(accounts.cardReserve),
+            todaySpent = MoneyFormat.currency(EntryRules.todaySpent(snapshot)),
+            today = EntryRules.todayEntries(snapshot).map { entry ->
+                val name = snapshot.items.firstOrNull { it.id == entry.itemId }?.name ?: entry.type.label
+                val method = entry.method
+                val via = when {
+                    method == PaymentMethod.CREDIT_CARD -> listOfNotNull(method.label, snapshot.account(entry.accountId)?.name)
+                    method != null -> listOf(method.label)
+                    else -> listOfNotNull(snapshot.account(entry.accountId)?.name)
+                }
+                TodayRow(
+                    itemName = name,
+                    type = entry.type,
+                    detail = (via + listOf(entry.note.trim()).filter { it.isNotEmpty() }).joinToString(" · "),
+                    amountText = (if (entry.type == FlowType.INCOME) "+" else "") + MoneyFormat.currency(entry.amount),
+                )
+            },
+            remaining = EntryRules.monthRemaining(snapshot).map { budget ->
+                val ratio = (budget.remaining.toDouble() / budget.planned).coerceIn(0.0, 1.0)
+                RemainingRow(
+                    name = budget.item.name,
+                    remainingText = MoneyFormat.currency(budget.remaining),
+                    fraction = ratio.toFloat(),
+                    low = ratio < 0.2,
+                )
+            },
+        )
+    }
+
+    private fun weekday(date: java.time.LocalDate) = "週" + "一二三四五六日"[date.dayOfWeek.value - 1]
 
     // ---- 本月到期（R-DUE） ----
 
@@ -295,6 +377,14 @@ class EntryViewModel @Inject constructor(
             reached = due.isDue(today),
             overdue = due.isOverdue(today),
             income = due.isIncome,
+            soon = due.isSoon(today),
+            day = due.date.dayOfMonth.toString(),
+            past = due.date.isBefore(today),
+            dayNote = when {
+                due.date.isBefore(today) -> "已過"
+                due.date == today -> "今天"
+                else -> weekday(due.date)
+            },
         )
     }
 
@@ -466,25 +556,6 @@ class EntryViewModel @Inject constructor(
 
     fun setInstallmentFeeValue(value: String) = selection.update { it.copy(installmentFeeValue = value) }
 
-    /**
-     * 常用項目：最近自己記過的（最多 5 個），加上本月有計畫金額的項目，最多 8 個。
-     * 其餘收在「更多」裡，避免一打開就擠滿畫面。
-     */
-    private fun commonItems(snapshot: FinanceSnapshot, all: List<PlanItem>): List<PlanItem> {
-        val recent = snapshot.ledger
-            .asSequence()
-            .filter { it.source == EntrySource.MANUAL && it.itemId != null }
-            .sortedWith(compareByDescending<LedgerEntry> { it.date }.thenByDescending { it.id })
-            .mapNotNull { entry -> all.firstOrNull { it.id == entry.itemId } }
-            .distinct()
-            .take(5)
-            .toList()
-        val planned = all.filter { item ->
-            snapshot.plannedMethods(item.id, snapshot.today.year, snapshot.today.monthValue).isNotEmpty()
-        }
-        return (recent + planned).distinct().take(8)
-    }
-
     /** 備註建議：這個項目最近用過的備註。 */
     private fun suggestions(snapshot: FinanceSnapshot, item: PlanItem): List<String> =
         snapshot.ledger
@@ -528,8 +599,8 @@ class EntryViewModel @Inject constructor(
         viewModelScope.launch(WriteGuard) {
             val snapshot = repository.snapshot.first()
             val generation = generationFor(sel, snapshot)
-            val items = snapshot.activeItems.filter { it.type == sel.type }.sortedBy { it.sortOrder }
-            val item = items.firstOrNull { it.id == sel.itemId } ?: items.firstOrNull() ?: return@launch
+            // 和畫面顯示的是同一個項目（R-ENT-02）
+            val item = EntryRules.currentItem(snapshot, sel.type, sel.itemId) ?: return@launch
             val method = if (sel.methodTouched) sel.method else EntryRules.defaultMethod(snapshot, item)
             val cardId = if (sel.cardTouched) sel.cardId else EntryRules.defaultCard(snapshot, item)
             val refund = sel.refund && item.type == FlowType.EXPENSE
@@ -556,14 +627,17 @@ class EntryViewModel @Inject constructor(
                         lastGeneration = generation,
                         amount = "", note = "", installmentOn = false,
                         message = message + InstallmentRules.savedSuffix(installment),
-                        lastSavedId = null, lastInstallmentId = installmentId,
+                        lastSavedId = null, lastInstallmentId = installmentId, savedCount = it.savedCount + 1, itemId = item.id,
                     )
                 }
                 return@launch
             }
             val id = repository.addLedgerEntry(entry, generation)
             selection.update {
-                it.copy(amount = "", note = "", refund = false, message = message, lastSavedId = id, lastInstallmentId = null, lastGeneration = generation)
+                it.copy(
+                    amount = "", note = "", refund = false, message = message, lastSavedId = id, lastInstallmentId = null,
+                    lastGeneration = generation, savedCount = it.savedCount + 1, itemId = item.id,
+                )
             }
         }
     }
@@ -577,13 +651,13 @@ class EntryViewModel @Inject constructor(
                 repository.replaceMissed(missed.id, entry, generation)
                 selection.update {
                     it.copy(amount = "", note = "", pendingMissed = null, lastSavedId = null, lastInstallmentId = null,
-                        message = "已用這筆明細取代漏記差額，餘額不會重複扣")
+                        message = "已用這筆明細取代漏記差額，餘額不會重複扣", savedCount = it.savedCount + 1)
                 }
             } else {
                 val id = repository.addLedgerEntry(entry, generation)
                 selection.update {
                     it.copy(amount = "", note = "", pendingMissed = null, lastSavedId = id, lastInstallmentId = null,
-                        message = "已記下 ${MoneyFormat.currency(entry.amount)}（另外一筆，不影響之前的漏記差額）")
+                        message = "已記下 ${MoneyFormat.currency(entry.amount)}（另外一筆，不影響之前的漏記差額）", savedCount = it.savedCount + 1)
                 }
             }
         }

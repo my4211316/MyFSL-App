@@ -54,6 +54,9 @@ data class DueItem(
     fun isDue(today: LocalDate): Boolean = !date.isAfter(today)
     fun isOverdue(today: LocalDate): Boolean = YearMonth.from(date).isBefore(YearMonth.from(today))
 
+    /** 快到期（R-DUE-07）：[DueItems.SOON_DAYS] 天內到期，或已經過了還沒記下；記帳畫面只提示這些。 */
+    fun isSoon(today: LocalDate): Boolean = !date.isAfter(today.plusDays(DueItems.SOON_DAYS))
+
     /** 支出可以選支付方式（現金／信用卡／轉帳）。 */
     val choosesMethod: Boolean get() = kind == DueKind.PLAN && item?.type == FlowType.EXPENSE
 
@@ -100,6 +103,9 @@ data class DueRecord(
  * 起算日（含）以前到期的視為已經包含在餘額裡。
  */
 object DueItems {
+
+    /** 記帳畫面提示「幾天內到期」（R-DUE-07）。 */
+    const val SOON_DAYS = 3L
 
     /**
      * @param applied 前面的項目實際會寫入什麼（本週檢查依使用者的選擇：略過為空、金額不同為實際金額）；

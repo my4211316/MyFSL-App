@@ -181,6 +181,15 @@ class DueItemsTest {
         assertEquals(8, month.size)
     }
 
+    @Test fun `快到期：3 天內到期或已過期沒記下的才提示（R-DUE-07）`() {
+        fun due(date: LocalDate) = DueItem(key = "k", kind = DueKind.PLAN, date = date, title = "t", entries = emptyList())
+        assertTrue("上個月逾期", due(LocalDate.of(2026, 8, 20)).isSoon(today))
+        assertTrue("今天之前", due(LocalDate.of(2026, 9, 10)).isSoon(today))
+        assertTrue("今天", due(today).isSoon(today))
+        assertTrue("第 3 天", due(LocalDate.of(2026, 9, 17)).isSoon(today))
+        assertFalse("第 4 天", due(LocalDate.of(2026, 9, 18)).isSoon(today))
+    }
+
     @Test fun `起算日（含）以前到期的視為已在餘額裡；沒有起算日時從今天算`() {
         assertTrue(reached(snapshot(from = null)).isEmpty())
         assertTrue(reached(snapshot(from = today)).isEmpty())
