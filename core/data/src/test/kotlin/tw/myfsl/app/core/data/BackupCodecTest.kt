@@ -5,7 +5,8 @@ import tw.myfsl.app.core.data.db.PostedKeyEntity
 import tw.myfsl.app.core.data.db.toColumn
 import tw.myfsl.app.core.data.db.toEntity
 import tw.myfsl.app.core.sample.SampleHousehold
-import tw.myfsl.app.core.model.CardTerms
+import tw.myfsl.app.core.model.CardPayMode
+import tw.myfsl.app.core.model.CardStatement
 import tw.myfsl.app.core.model.Deferral
 import tw.myfsl.app.core.model.Scenario
 import tw.myfsl.app.core.model.ScenarioChange
@@ -20,7 +21,7 @@ class BackupCodecTest {
     private val sample = BackupFile(
         exportedAtMillis = 1_789_000_000_000,
         accounts = SampleHousehold.accounts.map {
-            if (it.id == SampleHousehold.CARD_A) it.copy(card = (it.card ?: CardTerms(15.0)).copy(revolvingBalance = 12_000)) else it
+            if (it.id == SampleHousehold.CARD_A) it.copy(card = it.card!!.copy(payMode = CardPayMode.MINIMUM, estimatedPayment = 12_000)) else it
         }.map { it.toEntity() },
         groups = SampleHousehold.groups.map { it.toEntity() },
         items = SampleHousehold.items.map { it.toEntity() },
@@ -41,13 +42,20 @@ class BackupCodecTest {
         // 選了「這個月沒有」的到期項目與延期款也要備份，還原後才不會再列出或重複記
         postedKeys = listOf(PostedKeyEntity("plan:101:-:2026-09:15", 20_711), PostedKeyEntity("cardpay:3:2026-09", 20_711)),
         deferrals = listOf(Deferral(4, SampleHousehold.SUBSIDY, null, 2026, 9, 2026, 10, 5_000).toEntity()),
+        // 帳單校正（R-CARD-23）也要備份
+        cardStatements = listOf(CardStatement(SampleHousehold.CARD_A, 2026, 9, 52_000, 3_000, coversInterest = true).toEntity()),
     )
 
-    @Test fun `匯出再讀回完全一樣（含 id、既有卡循、情境與設定）`() {
+    @Test fun `匯出再讀回完全一樣（含 id、繳款方式、帳單、情境與設定）`() {
         val text = BackupCodec.encode(sample)
         val result = BackupCodec.decode(text) as BackupReadResult.Ok
         assertEquals(sample, result.file)
-        assertEquals(12_000L, result.file.accounts.first { it.id == SampleHousehold.CARD_A }.cardRevolvingBalance)
+        result.file.accounts.first { it.id == SampleHousehold.CARD_A }.run {
+            assertEquals("MINIMUM", cardPayMode)
+            assertEquals(12_000L, cardEstimatedPayment)
+            assertEquals(1, cardStatementDay)
+        }
+        assertEquals(52_000L, result.file.cardStatements.single().amount)
         assertEquals(DayOfWeek.FRIDAY, result.file.settings!!.toSettings(SampleHousehold.settings).checkInDay)
         assertEquals(sample.accounts.size, result.summary.accounts)
         assertEquals(9, result.summary.ledger)

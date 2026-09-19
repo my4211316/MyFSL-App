@@ -9,6 +9,7 @@ import tw.myfsl.app.core.data.db.ItemActualEntity
 import tw.myfsl.app.core.data.db.DeferralEntity
 import tw.myfsl.app.core.data.db.DataGenerationEntity
 import tw.myfsl.app.core.data.db.CardInstallmentEntity
+import tw.myfsl.app.core.data.db.CardStatementEntity
 import tw.myfsl.app.core.data.db.AccountEntity
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.shareIn
@@ -45,6 +46,7 @@ import tw.myfsl.app.core.domain.ImportMode
 import tw.myfsl.app.core.domain.ImportPreview
 import tw.myfsl.app.core.domain.PlanImport
 import tw.myfsl.app.core.domain.RecordRules
+import tw.myfsl.app.core.domain.BillCorrection
 import tw.myfsl.app.core.domain.Deletion
 import tw.myfsl.app.core.domain.DueItems
 import tw.myfsl.app.core.domain.DueRecord
@@ -147,6 +149,7 @@ class FinanceRepository @Inject constructor(
         val checkIns: List<CheckInEntity>,
         val postedKeys: List<PostedKeyEntity>,
         val deferrals: List<DeferralEntity>,
+        val statements: List<CardStatementEntity>,
         val generation: Long,
     )
 
@@ -172,7 +175,7 @@ class FinanceRepository @Inject constructor(
                 db.withTransaction {
                     DbState(
                         allAccounts(), allSnapshots(), allGroups(), allItems(), allAmounts(), allActuals(), allLedger(),
-                        allInstallments(), allScenarios(), allCheckIns(), allPostedKeys(), allDeferrals(), generation() ?: 0L,
+                        allInstallments(), allScenarios(), allCheckIns(), allPostedKeys(), allDeferrals(), allStatements(), generation() ?: 0L,
                     )
                 }
             }
@@ -228,6 +231,7 @@ class FinanceRepository @Inject constructor(
             unassignedCardSpending = BalanceRules.unassignedCardSpending(entries, fullCardReconcile),
             postedKeys = d.postedKeys.map { it.key }.toSet() + entries.mapNotNull { it.postingKey },
             deferrals = d.deferrals.map { it.toModel() },
+            cardStatements = d.statements.map { it.toModel() },
             // 資料庫與設定的世代一致才有效；不一致表示資料正在更新，寫入會被拒絕。
             generation = if (d.generation == settings.dataGeneration) d.generation else FinanceSnapshot.NO_GENERATION,
         )
@@ -242,7 +246,7 @@ class FinanceRepository @Inject constructor(
     suspend fun startDueTracking() = writing(null) { settingsRepository.startAutoPostingIfNeeded(time.today().toEpochDay()) }
 
     /**
-     * 記下一個到期項目（同一個交易內寫入記帳、貸款剩餘期數與清掉的既有卡循）。
+     * 記下一個到期項目（同一個交易內寫入記帳與貸款剩餘期數）。
      * 回傳第一筆記帳的 id（復原用）；已經記過（識別碼重複，例如連點兩下）時不寫入，回傳 null。
      */
     suspend fun recordDue(record: DueRecord, generation: Long): Long? = writing(generation) {
@@ -253,8 +257,6 @@ class FinanceRepository @Inject constructor(
         db.withTransaction {
             val ids = record.entries.map { actualDao.insertLedger(it.copy(createdAt = now).toEntity()) }
             record.loanRemaining?.let { (id, months) -> accountDao.setLoanRemainingMonths(id, months) }
-            record.cardTerms?.let { (id, terms) -> accountDao.setCardRevolvingBalance(id, terms.revolvingBalance) }
-            record.marker?.let { actualDao.insertPostedKeys(listOf(PostedKeyEntity(it, time.today().toEpochDay()))) }
             ids.first()
         }
     }
@@ -371,7 +373,7 @@ class FinanceRepository @Inject constructor(
      * 刪除記帳，並讓相關狀態保持一致（R-REC-EDIT-05、R-REC-EDIT-07）。
      * 要做什麼由 [Deletion.plan] 算出（可以單獨測試），這裡在同一個交易內照做：
      * 分期消費本身整筆取消；某一期分期只刪那一期；到期記下的同一組一起刪並回到清單、
-     * 貸款期數加回、第一次利息恢復既有卡循；到期確認撤銷「已完成」；延期款改回未付。
+     * 貸款期數加回；帳單校正整筆刪掉；到期確認撤銷「已完成」；延期款改回未付。
      */
     suspend fun deleteLedgerEntry(id: Long, generation: Long) = writing(generation) {
         val snapshot = snapshot.first()
@@ -390,9 +392,28 @@ class FinanceRepository @Inject constructor(
             plan.unsettleDeferralId?.let { actualDao.setDeferralSettled(it, false) }
             plan.reopenActual?.let { actualDao.deleteActual(it.itemId, it.method.toColumn(), it.year, it.month) }
             plan.addLoanMonthTo?.let { accountDao.addLoanRemainingMonth(it) }
-            plan.restoreRevolving?.let { (cardId, amount) -> accountDao.setCardRevolvingBalance(cardId, amount) }
+            plan.removeStatement?.let { (cardId, ym) -> db.maintenanceDao().deleteStatement(cardId, ym.year, ym.monthValue) }
         }
     }
+
+    /**
+     * 帳單校正（R-CARD-23）：同一個交易內取代這一期前一次的差額、寫入新的差額與帳單，
+     * 帳單包含這一期利息時把利息設成已處理。要寫什麼由 [BillCorrection.correct] 算出。
+     */
+    suspend fun saveBillCorrection(result: BillCorrection.Result, generation: Long) = writing(generation) { db.withTransaction {
+        actualDao.deleteLedgerByKeys(listOf(result.replaceKey))
+        result.entry?.let { actualDao.insertLedger(it.copy(createdAt = time.nowMillis()).toEntity()) }
+        db.maintenanceDao().upsertStatement(result.statement.toEntity())
+        result.coveredInterestKey?.let { actualDao.insertPostedKeys(listOf(PostedKeyEntity(it, time.today().toEpochDay()))) }
+    } }
+
+    /** 刪掉某一期的帳單校正：差額與帳單一起刪，校正時包含的利息回到本月到期。 */
+    suspend fun deleteBillCorrection(cardId: Long, ym: java.time.YearMonth, generation: Long) = writing(generation) { db.withTransaction {
+        val covered = db.maintenanceDao().allStatements().any { it.cardId == cardId && it.year == ym.year && it.month == ym.monthValue && it.coversInterest }
+        actualDao.deleteLedgerByKeys(listOf(BillCorrection.key(cardId, ym)))
+        if (covered) actualDao.deletePostedKeys(listOf(DueItems.cardInterestKey(cardId, ym)))
+        db.maintenanceDao().deleteStatement(cardId, ym.year, ym.monthValue)
+    } }
 
     /** 修改記帳；保留原本的寫入時間，讓它和餘額校正的先後關係不變。 */
     suspend fun updateLedgerEntry(entry: LedgerEntry, generation: Long) = writing(generation) { actualDao.updateLedger(entry.toEntity()) }
@@ -451,11 +472,10 @@ class FinanceRepository @Inject constructor(
         }
         if (result.actuals.isNotEmpty()) actualDao.upsert(result.actuals.map { it.toEntity() })
         result.deferrals.forEach { actualDao.upsertDeferral(it.toEntity()) }
-        if (result.skippedKeys.isNotEmpty() || result.markers.isNotEmpty()) {
-            actualDao.insertPostedKeys((result.skippedKeys + result.markers).map { PostedKeyEntity(it, date.toEpochDay()) })
+        if (result.skippedKeys.isNotEmpty()) {
+            actualDao.insertPostedKeys(result.skippedKeys.map { PostedKeyEntity(it, date.toEpochDay()) })
         }
         result.loanRemaining.forEach { (id, months) -> accountDao.setLoanRemainingMonths(id, months) }
-        result.cardTerms.forEach { (id, terms) -> accountDao.setCardRevolvingBalance(id, terms.revolvingBalance) }
         result.balances.forEach { (id, value) ->
             accountDao.insertSnapshot(
                 BalanceSnapshotEntity(accountId = id, epochDay = date.toEpochDay(), balance = value, recordedAtMillis = now),
@@ -542,6 +562,7 @@ class FinanceRepository @Inject constructor(
                 checkIns = allCheckIns(),
                 postedKeys = allPostedKeys(),
                 deferrals = allDeferrals(),
+                cardStatements = allStatements(),
                 settings = SettingsBackup.of(settingsRepository.settings.first()),
             )
         }
@@ -551,7 +572,7 @@ class FinanceRepository @Inject constructor(
         /** 快照要觀察的所有資料表（任何一張變動就整份重讀）。 */
         val TABLES = arrayOf(
             "accounts", "balance_snapshots", "plan_groups", "plan_items", "plan_amounts", "item_actuals", "ledger_entries",
-            "card_installments", "scenarios", "check_ins", "posted_keys", "deferrals", "data_generation",
+            "card_installments", "scenarios", "check_ins", "posted_keys", "deferrals", "card_statements", "data_generation",
         )
     }
 
@@ -623,6 +644,7 @@ class FinanceRepository @Inject constructor(
             insertCheckIns(file.checkIns)
             insertPostedKeyRows(file.postedKeys)
             insertDeferrals(file.deferrals)
+            insertStatements(file.cardStatements)
             bumpGenerationInTransaction()
         }
     }
@@ -630,7 +652,7 @@ class FinanceRepository @Inject constructor(
     private suspend fun clearEverything() = with(db.maintenanceDao()) {
         clearAccounts(); clearSnapshots(); clearGroups(); clearItems(); clearAmounts()
         clearActuals(); clearLedger(); clearScenarios(); clearCheckIns(); clearInstallments()
-        clearPostedKeys(); clearDeferrals()
+        clearPostedKeys(); clearDeferrals(); clearStatements()
     }
 
     suspend fun clearAll() = replacingAll { clearAllLocked() }

@@ -35,6 +35,8 @@ data class PeriodOverview(
     val timePercent: Int,
     val liquid: Money,
     val liquidAccounts: List<Account>,
+    /** 要留給卡費的現金（R-CARD-25）；[liquid] 扣掉它才是真正可以用的。 */
+    val cardReserve: Money = 0,
     /** 未來每月最低水位，第一個值為本月。 */
     val monthlyLows: List<Money>,
     val monthLabels: List<String>,
@@ -86,6 +88,7 @@ object PeriodOverviewCalculator {
             timePercent = displayPercent(today.dayOfMonth.toDouble() / today.lengthOfMonth()),
             liquid = snapshot.activeAccounts.filter { it.kind.isLiquid }.sumOf { it.balance },
             liquidAccounts = snapshot.activeAccounts.filter { it.kind.isLiquid },
+            cardReserve = CardRules.reserve(snapshot),
             monthlyLows = lows,
             monthLabels = labels,
             safetyLevel = snapshot.settings.safetyLevel,

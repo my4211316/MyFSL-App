@@ -31,6 +31,8 @@ data class AppSettings(
      * 不會進備份，也不會被設定畫面改到。
      */
     val dataGeneration: Long = 0,
+    /** 到期前幾天提醒（R-REM-01）；空的表示不提醒。 */
+    val reminderDays: List<Int> = listOf(7, 3),
 )
 
 /** 某個時間點的完整財務資料，供純計算函式使用。 */
@@ -53,6 +55,8 @@ data class FinanceSnapshot(
     val postedKeys: Set<String> = emptySet(),
     /** 延期款項（含已付清的）。 */
     val deferrals: List<Deferral> = emptyList(),
+    /** 使用者輸入的帳單（R-CARD-23）。 */
+    val cardStatements: List<CardStatement> = emptyList(),
     /**
      * 這份快照的資料世代：資料庫與設定兩邊一致時才有效，否則為 [NO_GENERATION]（資料正在更新）。
      * 畫面發出的寫入要帶著它，資料層確認還是同一個世代才會寫（避免還原後用舊的 id 改到別筆資料）。
@@ -75,10 +79,14 @@ data class FinanceSnapshot(
     val defaultCardId: Long?
         get() = settings.defaultCardId?.takeIf { id -> activeCards.any { it.id == id } } ?: activeCards.firstOrNull()?.id
 
-    /** 已依合約（循環條件或攤還條件）自動繳款的負債帳戶。 */
+    /** 某張卡某一期（結帳年月）使用者輸入的帳單；沒有為 null。 */
+    fun statementOf(cardId: Long, ym: java.time.YearMonth): CardStatement? =
+        cardStatements.firstOrNull { it.cardId == cardId && it.year == ym.year && it.month == ym.monthValue }
+
+    /** 已依合約（繳款條件或攤還條件）自動繳款的負債帳戶。 */
     fun isAutoManagedDebt(accountId: Long?): Boolean {
         val account = account(accountId) ?: return false
-        return (account.kind == AccountKind.CREDIT_CARD && account.card != null) || account.loan != null
+        return account.hasCardSchedule || account.loan != null
     }
 
     /**

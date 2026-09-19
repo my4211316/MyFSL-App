@@ -6,35 +6,35 @@
   "lowestPeriod": "2027年2月上半月",
   "firstBelowSafety": "2027年2月上半月",
   "monthsUntilBelow": 5,
-  "structuralGapPerYear": -84747,
-  "endCardDebt": 339986,
+  "structuralGapPerYear": -79936,
+  "endCardDebt": 330365,
   "endLoanDebt": 1122396,
-  "endTotalDebt": 1462382,
-  "totalCardInterest": 48526,
+  "endTotalDebt": 1452761,
+  "totalCardInterest": 38905,
   "monthlyLowsThousands": [114, 126, 124, 124, 54, 18, 177, 196, 196, 165, 99, 107, 121, 139, 146, 155, 94, 67, 226, 245, 245, 214, 148, 156]
 },
             "integrate": {
-  "lowestLiquid": 13009,
+  "lowestLiquid": 14133,
   "lowestPeriod": "2028年2月上半月",
   "firstBelowSafety": "2028年2月上半月",
   "monthsUntilBelow": 17,
-  "structuralGapPerYear": -104290,
+  "structuralGapPerYear": -103728,
   "endCardDebt": 0,
   "endLoanDebt": 1256468,
   "endTotalDebt": 1256468,
-  "totalCardInterest": 1527,
-  "monthlyLowsThousands": [114, 233, 237, 237, 168, 134, 285, 284, 262, 233, 163, 142, 117, 115, 115, 116, 47, 13, 164, 163, 141, 112, 42, 21]
+  "totalCardInterest": 403,
+  "monthlyLowsThousands": [114, 234, 238, 238, 169, 135, 286, 285, 263, 234, 164, 144, 118, 117, 117, 117, 48, 14, 165, 164, 142, 113, 43, 23]
 },
             "cut20": {
   "lowestLiquid": 44725,
   "lowestPeriod": "2027年2月上半月",
   "firstBelowSafety": null,
   "monthsUntilBelow": null,
-  "structuralGapPerYear": 29837,
-  "endCardDebt": 212278,
+  "structuralGapPerYear": 33945,
+  "endCardDebt": 204063,
   "endLoanDebt": 1122396,
-  "endTotalDebt": 1334674,
-  "totalCardInterest": 32870,
+  "endTotalDebt": 1326459,
+  "totalCardInterest": 24655,
   "monthlyLowsThousands": [115, 129, 132, 136, 69, 45, 208, 230, 235, 206, 144, 155, 172, 194, 206, 219, 161, 145, 308, 330, 335, 307, 245, 256]
 }
           },
@@ -45,20 +45,20 @@
             "nonCardSpending": 501020,
             "cardPayments": 324000,
             "loanPayments": 174084,
-            "cardInterest": 9000,
-            "cardDebtIncrease": 23980,
-            "structuralGap": -83084,
+            "cardInterest": 6300,
+            "cardDebtIncrease": 21280,
+            "structuralGap": -80384,
             "monthly": {
               "income": [65000, 215000, 70000, 65000, 65000, 65000, 65000, 65000, 70000, 65000, 65000, 65000],
               "cardSpending": [21900, 21900, 33900, 21900, 21900, 21900, 21900, 74080, 33900, 21900, 21900, 21900],
               "nonCardSpending": [63900, 63700, 18900, 31820, 64200, 53700, 69300, 18700, 19500, 24700, 23900, 48700],
-              "cardInterest": [750, 750, 750, 750, 750, 750, 750, 750, 750, 750, 750, 750],
+              "cardInterest": [525, 525, 525, 525, 525, 525, 525, 525, 525, 525, 525, 525],
               "cardPayments": [27000, 27000, 27000, 27000, 27000, 27000, 27000, 27000, 27000, 27000, 27000, 27000],
               "loanPayments": [14507, 14507, 14507, 14507, 14507, 14507, 14507, 14507, 14507, 14507, 14507, 14507],
               "debtPayments": [41507, 41507, 41507, 41507, 41507, 41507, 41507, 41507, 41507, 41507, 41507, 41507],
               "cashFlow": [-40407, 109793, 9593, -8327, -40707, -30207, -45807, 4793, 8993, -1207, -407, -25207]
             },
-            "cardDebtChangeSeptember": 7650,
+            "cardDebtChangeSeptember": 7425,
             "groups": {
     "稅費與保險": 146920,
     "生活繳費": 11100,
@@ -68,8 +68,8 @@
     "年度": 131180
             },
             "issues": [
-    {"severity": "WARNING", "message": "「信用卡 A」每月刷 $28,248、利息 $750，繳 $18,000 不夠；每月至少要多繳 $10,998 卡債才不會再增加"},
-    {"severity": "WARNING", "message": "全年刷卡加利息比繳卡費多 $23,980，差額會累積成卡債"},
+    {"severity": "WARNING", "message": "「信用卡 A」每月刷 $28,248、利息 $525，繳 $18,000 不夠；每月至少要多繳 $10,773 卡債才不會再增加"},
+    {"severity": "WARNING", "message": "全年刷卡加利息比繳卡費多 $21,280，差額會累積成卡債"},
     {"severity": "INFO", "message": "「才藝課」是可調項目，建議改成依記帳，才能控管進度"},
     {"severity": "INFO", "message": "「繳信用卡 B」全年 $108,000，比「信用卡 B」目前欠款 $45,000 多；還清後試算與本月到期就不再扣款"}
             ]
@@ -87,9 +87,9 @@
             "loanDebt": 600000,
             "policyLoanDebt": 800000,
             "totalDebt": 1505000,
-            "cardInterest": 750,
+            "cardInterest": 525,
             "cards": [
-    {"name": "信用卡 A", "balance": 60000, "limit": 150000, "utilizationPercent": 40, "available": 90000, "monthSpending": 9800, "fixedPayment": 18000, "ratePercent": 15.0, "interest": 750, "minimumPayment": 6000, "dueDay": 15},
+    {"name": "信用卡 A", "balance": 60000, "limit": 150000, "utilizationPercent": 40, "available": 90000, "monthSpending": 9800, "fixedPayment": 18000, "ratePercent": 15.0, "interest": 525, "minimumPayment": null, "dueDay": 15},
     {"name": "信用卡 B", "balance": 45000, "limit": 80000, "utilizationPercent": 56, "available": 35000, "monthSpending": 1500, "fixedPayment": 9000, "ratePercent": null, "interest": 0, "minimumPayment": null, "dueDay": 25}
             ],
             "loans": [

@@ -16,6 +16,8 @@ data class SettingsDraft(
     val transferAccountId: Long?,
     val cardPostingDays: String,
     val defaultCardId: Long? = null,
+    /** 到期前幾天提醒，例如「7, 3」；空白為不提醒（R-REM-01）。 */
+    val reminderDays: String = "7, 3",
 )
 
 object SettingsForm {
@@ -28,6 +30,7 @@ object SettingsForm {
         const val CASH_ACCOUNT = "cashAccount"
         const val TRANSFER_ACCOUNT = "transferAccount"
         const val DEFAULT_CARD = "defaultCard"
+        const val REMINDER_DAYS = "reminderDays"
     }
 
     data class Result(val settings: AppSettings?, val errors: Map<String, String>) {
@@ -43,6 +46,7 @@ object SettingsForm {
         transferAccountId = settings.transferAccountId,
         cardPostingDays = settings.cardPostingDays.toString(),
         defaultCardId = settings.defaultCardId,
+        reminderDays = settings.reminderDays.joinToString(", "),
     )
 
     fun validate(draft: SettingsDraft, current: AppSettings, accounts: List<Account>): Result {
@@ -59,6 +63,8 @@ object SettingsForm {
         if (draft.defaultCardId != null && accounts.none { !it.archived && it.id == draft.defaultCardId && it.kind == AccountKind.CREDIT_CARD }) {
             errors[Field.DEFAULT_CARD] = "這張卡已不存在"
         }
+        val reminders = parseReminderDays(draft.reminderDays)
+        if (reminders == null) errors[Field.REMINDER_DAYS] = "用逗號分開的天數，每個 1 到 30，例如 7, 3"
         if (errors.isNotEmpty()) return Result(null, errors)
         return Result(
             current.copy(
@@ -70,9 +76,18 @@ object SettingsForm {
                 transferAccountId = draft.transferAccountId,
                 cardPostingDays = days!!,
                 defaultCardId = draft.defaultCardId,
+                reminderDays = reminders!!,
             ),
             emptyMap(),
         )
+    }
+
+    /** 「7, 3」→ [7, 3]（由大到小、不重複）；空白為不提醒；看不懂或超出 1–30 天為 null。 */
+    fun parseReminderDays(text: String): List<Int>? {
+        val parts = text.split(',', '、', '，', ' ').map { it.trim() }.filter { it.isNotEmpty() }
+        val days = parts.map { it.toIntOrNull() ?: return null }
+        if (days.any { it !in 1..30 }) return null
+        return days.distinct().sortedDescending()
     }
 
     /** 沒有指定時實際會用哪個帳戶，給畫面顯示「自動：xxx」。 */

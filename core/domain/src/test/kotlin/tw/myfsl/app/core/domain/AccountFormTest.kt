@@ -75,8 +75,7 @@ class AccountFormTest {
             AccountDraft(
                 name = "信用卡 A", kind = AccountKind.CREDIT_CARD, balance = "60000",
                 issuer = "某銀行", creditLimit = "150,000", statementDay = "28", payDay = "15",
-                revolvingEnabled = true, revolvingRate = "15", minPercent = "10", minFloor = "1000",
-                payMode = CardPayMode.FIXED, fixedPayment = "18000", payAccountId = 1,
+                scheduleEnabled = true, payMode = CardPayMode.FREE, revolvingRate = "15", estimatedPayment = "18000", payAccountId = 1,
             ),
             existing,
         )
@@ -86,10 +85,20 @@ class AccountFormTest {
         assertEquals(150_000L, account.creditLimit)
         assertEquals(28, account.statementDay)
         assertEquals(15, account.paymentDueDay)
-        assertEquals(
-            CardTerms(15.0, 10.0, 1_000, CardPayMode.FIXED, 18_000, payAccountId = 1, payDay = 15, statementDay = 28),
-            account.card,
+        assertEquals(CardTerms(CardPayMode.FREE, 15.0, 18_000, payAccountId = 1), account.card)
+        assertTrue(account.hasCardSchedule)
+    }
+
+    @Test fun `信用卡：全額繳清的卡利率與預估繳款都可以不填`() {
+        val result = AccountForm.validate(
+            AccountDraft(
+                name = "台新", kind = AccountKind.CREDIT_CARD, balance = "12000", statementDay = "22", payDay = "7",
+                scheduleEnabled = true, payMode = CardPayMode.FULL,
+            ),
+            existing,
         )
+        assertTrue(result.errors.toString(), result.ok)
+        assertEquals(CardTerms(CardPayMode.FULL), result.account!!.card)
     }
 
     @Test fun `信用卡：結帳日不開循環條件也能填`() {
@@ -107,8 +116,7 @@ class AccountFormTest {
             AccountDraft(
                 name = "卡", kind = AccountKind.CREDIT_CARD, balance = "0",
                 creditLimit = "0", statementDay = "32", payDay = "abc",
-                revolvingEnabled = true, revolvingRate = "", minPercent = "150",
-                payMode = CardPayMode.FIXED, fixedPayment = "",
+                scheduleEnabled = true, payMode = CardPayMode.MINIMUM, revolvingRate = "", estimatedPayment = "",
             ),
             existing,
         )
@@ -116,9 +124,25 @@ class AccountFormTest {
         assertEquals("額度要大於 0", result.errors[AccountForm.Field.LIMIT])
         assertEquals("日期要在 1 到 31 之間", result.errors[AccountForm.Field.STATEMENT_DAY])
         assertEquals("日期要在 1 到 31 之間", result.errors[AccountForm.Field.PAY_DAY])
-        assertEquals("請輸入循環年利率", result.errors[AccountForm.Field.RATE])
-        assertEquals("要在 0 到 100 之間", result.errors[AccountForm.Field.MIN_PERCENT])
-        assertEquals("固定金額繳款要填每月金額", result.errors[AccountForm.Field.FIXED])
+        assertEquals("自由或最低繳款要填循環年利率", result.errors[AccountForm.Field.RATE])
+        assertEquals("自由或最低繳款要填預估每月繳款", result.errors[AccountForm.Field.ESTIMATE])
+
+        val noDays = AccountForm.validate(
+            AccountDraft(name = "卡", kind = AccountKind.CREDIT_CARD, balance = "0", scheduleEnabled = true, payMode = CardPayMode.FULL),
+            existing,
+        )
+        assertEquals("依帳單繳款要填結帳日", noDays.errors[AccountForm.Field.STATEMENT_DAY])
+        assertEquals("依帳單繳款要填繳款截止日", noDays.errors[AccountForm.Field.PAY_DAY])
+        assertEquals(
+            "要在 0 到 100 之間",
+            AccountForm.validate(
+                AccountDraft(
+                    name = "卡", kind = AccountKind.CREDIT_CARD, balance = "0", statementDay = "5", payDay = "26",
+                    scheduleEnabled = true, payMode = CardPayMode.FREE, revolvingRate = "150", estimatedPayment = "3000",
+                ),
+                existing,
+            ).errors[AccountForm.Field.RATE],
+        )
     }
 
     // ---------- 貸款進階 ----------
@@ -156,7 +180,7 @@ class AccountFormTest {
         val card = Account(
             3, "信用卡 A", AccountKind.CREDIT_CARD, balance = 60_000, creditLimit = 150_000, issuer = "某銀行",
             paymentDueDay = 15, statementDay = 28,
-            card = CardTerms(15.0, 10.0, 1_000, CardPayMode.MINIMUM, null, payAccountId = 1, payDay = 15, statementDay = 28),
+            card = CardTerms(CardPayMode.MINIMUM, 14.88, 3_000, payAccountId = 1),
         )
         val result = AccountForm.validate(AccountForm.fromAccount(card), existing + card)
         assertTrue(result.errors.toString(), result.ok)

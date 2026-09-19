@@ -126,6 +126,11 @@ fun MyFslApp() {
         snackbarHostState.showSnackbar(message, withDismissAction = true, duration = androidx.compose.material3.SnackbarDuration.Long)
         startViewModel.dismissRecovery()
     }
+    // 點了結帳提醒：切到帳戶頁，由帳戶頁打開帳單校正。
+    val pendingBill by DeepLinks.pendingBill.collectAsStateWithLifecycle()
+    LaunchedEffect(pendingBill) {
+        if (pendingBill != null) navController.navigate(Tab.ACCOUNTS.route) { launchSingleTop = true }
+    }
     LaunchedEffect(pendingRoute) {
         val route = pendingRoute ?: return@LaunchedEffect
         navController.navigate(route) { launchSingleTop = true }
@@ -202,6 +207,7 @@ fun MyFslApp() {
                     onDueMethod = viewModel::setDueMethod,
                     onDueCard = viewModel::setDueCard,
                     onDueAccount = viewModel::setDueAccount,
+                    onDuePayMode = viewModel::setDuePayMode,
                     onDueUseDueDate = viewModel::setDueUseDueDate,
                     onRecordDue = viewModel::recordDue,
                     onSkipDue = viewModel::skipDue,
@@ -452,6 +458,14 @@ fun MyFslApp() {
                     viewModel.dismissMessage()
                 }
                 BackHandler(enabled = state.editor != null) { viewModel.cancel() }
+                // 從結帳提醒打開：直接打開那張卡的帳單校正（R-REM-01）。
+                val pendingBill by DeepLinks.pendingBill.collectAsStateWithLifecycle()
+                LaunchedEffect(pendingBill, state.loading) {
+                    val cardId = pendingBill ?: return@LaunchedEffect
+                    if (state.loading) return@LaunchedEffect
+                    viewModel.openBill(cardId)
+                    DeepLinks.consumeBill()
+                }
 
                 AccountsScreen(
                     state = state,
@@ -462,6 +476,11 @@ fun MyFslApp() {
                     onSave = viewModel::save,
                     onCancel = viewModel::cancel,
                     onArchive = viewModel::archive,
+                    onOpenBill = viewModel::openBill,
+                    onBillChange = viewModel::updateBill,
+                    onBillSave = viewModel::saveBill,
+                    onBillDelete = viewModel::deleteBill,
+                    onBillClose = viewModel::closeBill,
                 )
             }
         }

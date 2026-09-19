@@ -92,13 +92,17 @@ class BaselineBuilderTest {
         assertEquals(3_750L, loan.single { it.kind == EventKind.EXPENSE }.amount)
     }
 
-    @Test fun `逐卡排程：有循環條件的 A 卡依自己的條件計息與繳款，B 卡沒有`() {
-        val events = BaselineBuilder.build(snapshot).events
-        val cardA = events.filter { it.relatedAccountId == CARD_A && it.source == EventSource.CARD_SCHEDULE }
-        val first = cardA.filter { it.period == sep1 }
-        assertEquals("9/15 繳款日在上半月", 15.0, first.single { it.interestRatePercent != null }.interestRatePercent!!, 0.0)
-        assertEquals(18_000L, first.single { it.kind == EventKind.TRANSFER }.amount)
-        assertTrue(events.none { it.relatedAccountId == CARD_B && it.source == EventSource.CARD_SCHEDULE })
+    @Test fun `逐卡排程：依帳單繳款的 A 卡依自己的結帳日與截止日，B 卡沒有`() {
+        val input = BaselineBuilder.build(snapshot)
+        val cardA = input.events.filter { it.relatedAccountId == CARD_A && it.source == EventSource.CARD_SCHEDULE }
+        // 9/15 截止（上半月）：自由繳 18,000；9/1 那期帳單 = 60,000 − 9/1 之後刷的 9,800 = 50,200
+        assertEquals(18_000L, cardA.filter { it.period == sep1 }.single { it.kind == EventKind.TRANSFER }.amount)
+        assertEquals(50_200L, input.openStatements[CARD_A])
+        // 10/1 結帳：和 10/15 截止同一個半月，計息與結帳提前
+        val oct1 = cardA.filter { it.period == Period(2026, 10, Half.FIRST) }
+        oct1.single { it.interestRatePercent != null }.run { assertEquals(15.0, interestRatePercent!!, 0.0); assertTrue(statementEarly) }
+        assertTrue(oct1.single { it.statementOf == CARD_A }.statementEarly)
+        assertTrue(input.events.none { it.relatedAccountId == CARD_B && it.source == EventSource.CARD_SCHEDULE })
     }
 
     @Test fun `繳給依合約自動繳款的卡片：計畫轉帳不計，除非標成額外還款`() {

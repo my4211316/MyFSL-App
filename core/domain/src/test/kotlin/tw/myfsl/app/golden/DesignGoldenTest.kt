@@ -45,10 +45,10 @@ class DesignGoldenTest {
         assertEquals(Period(2027, 2, Half.FIRST), result.lowest?.period)
         assertEquals(Period(2027, 2, Half.FIRST), result.firstBelowSafety?.period)
         assertEquals(5, ForecastSummary.monthsUntil(base.start, result.firstBelowSafety!!.period))
-        assertEquals(-84_747L, result.structuralGapPerYear)
-        assertEquals("A 卡每月刷約 28,000、固定只繳 18,000，卡債一路增加；B 卡 2027/1 繳清後不再扣款", 339_986L, result.endCardDebt)
-        assertEquals(1_462_382L, result.endTotalDebt)
-        assertEquals("兩年循環利息（只有 A 卡計息）", 48_526L, result.totalCardInterest)
+        assertEquals(-79_936L, result.structuralGapPerYear)
+        assertEquals("A 卡每月刷約 28,000、自由只繳 18,000，卡債一路增加；B 卡 2027/1 繳清後不再扣款", 330_365L, result.endCardDebt)
+        assertEquals(1_452_761L, result.endTotalDebt)
+        assertEquals("兩年循環利息（只有 A 卡計息，每期只算上一期帳單沒繳清的部分）", 38_905L, result.totalCardInterest)
         assertEquals(
             listOf(114L, 126, 124, 124, 54, 18, 177, 196, 196, 165, 99, 107, 121, 139, 146, 155, 94, 67, 226, 245, 245, 214, 148, 156),
             thousandsSeries(result),
@@ -66,15 +66,15 @@ class DesignGoldenTest {
                 ScenarioChange.ChangeMethod(listOf(LIVING, FUEL, PHONE, CAR_SERVICE, TRIP), PaymentMethod.CREDIT_CARD, PaymentMethod.CASH, oct.index),
             ),
         )
-        assertEquals("10 月上半月先計 A 卡利息 777 再清償（R-ORD-01）", 13_009L, result.lowestLiquid)
+        assertEquals("10 月上半月先計 A 卡利息 403 再清償（R-ORD-01）", 14_133L, result.lowestLiquid)
         assertEquals(Period(2028, 2, Half.FIRST), result.lowest?.period)
         assertEquals(Period(2028, 2, Half.FIRST), result.firstBelowSafety?.period)
-        assertEquals(-104_290L, result.structuralGapPerYear)
+        assertEquals(-103_728L, result.structuralGapPerYear)
         assertEquals(0L, result.endCardDebt)
-        assertEquals("9 月 750 ＋ 10 月清償前 62,150 × 1.25% = 777", 1_527L, result.totalCardInterest)
+        assertEquals("只有 10/1 結帳一次：(50,200 − 18,000) × 1.25% = 402.5 → 403", 403L, result.totalCardInterest)
         assertEquals(1_256_468L, result.endTotalDebt)
         assertEquals(
-            listOf(114L, 233, 237, 237, 168, 134, 285, 284, 262, 233, 163, 142, 117, 115, 115, 116, 47, 13, 164, 163, 141, 112, 42, 21),
+            listOf(114L, 234, 238, 238, 169, 135, 286, 285, 263, 234, 164, 144, 118, 117, 117, 117, 48, 14, 165, 164, 142, 113, 43, 23),
             thousandsSeries(result),
         )
     }
@@ -85,10 +85,10 @@ class DesignGoldenTest {
         assertEquals(44_725L, result.lowestLiquid)
         assertEquals(Period(2027, 2, Half.FIRST), result.lowest?.period)
         assertNull(result.firstBelowSafety)
-        assertEquals(29_837L, result.structuralGapPerYear)
-        assertEquals(212_278L, result.endCardDebt)
-        assertEquals(1_334_674L, result.endTotalDebt)
-        assertEquals(32_870L, result.totalCardInterest)
+        assertEquals(33_945L, result.structuralGapPerYear)
+        assertEquals(204_063L, result.endCardDebt)
+        assertEquals(1_326_459L, result.endTotalDebt)
+        assertEquals(24_655L, result.totalCardInterest)
         assertEquals(
             listOf(115L, 129, 132, 136, 69, 45, 208, 230, 235, 206, 144, 155, 172, 194, 206, 219, 161, 145, 308, 330, 335, 307, 245, 256),
             thousandsSeries(result),

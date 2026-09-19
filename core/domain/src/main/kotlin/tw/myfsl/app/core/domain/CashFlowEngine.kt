@@ -1,7 +1,6 @@
 package tw.myfsl.app.core.domain
 
 import tw.myfsl.app.core.model.AccountKind
-import tw.myfsl.app.core.model.CardTerms
 import tw.myfsl.app.core.model.Money
 import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.Period
@@ -31,25 +30,25 @@ data class FlowEvent(
     val relatedAccountId: Long? = null,
     /** true 時忽略 [amount]，改以當期目的帳戶的全部欠款清償。 */
     val payFullBalance: Boolean = false,
-    /** 設定時忽略 [amount]，改以目的帳戶當時欠款計算最低應繳。 */
-    val minimumPayment: MinimumPaymentRule? = null,
-    /** 設定時忽略 [amount]，改以來源帳戶當時欠款計算當月循環利息（年利率）。 */
+    /** true 時忽略 [amount]，改繳目的卡片目前這一期帳單還沒繳的部分（全額，R-CARD-20）。 */
+    val payStatement: Boolean = false,
+    /** 設定時忽略 [amount]，改以來源卡片上一期帳單沒繳清的部分計算循環利息（年利率，R-CARD-22）。 */
     val interestRatePercent: Double? = null,
-    /** 計息時的上限金額（既有卡循）；null 表示以當時全部欠款計息。 */
-    val interestBase: Money? = null,
+    /** 設定時這是卡片的結帳：記下這張卡當時的欠款成為新的一期帳單（金額為 0，不影響餘額）。 */
+    val statementOf: Long? = null,
+    /**
+     * 結帳（與結帳時的計息）時點：false 在同一個半月的其他收支之後（上一期的繳款先繳）；
+     * true 在卡片繳款之前（這一期的截止日也落在同一個半月時）。
+     */
+    val statementEarly: Boolean = false,
+    /** false：這筆繳款已經算在試算開始時的帳單裡（[ForecastInput.openStatements]），不再算成結帳後的繳款。 */
+    val countsTowardStatement: Boolean = true,
     /**
      * false 時這筆支出不算進「支出」：用在分期每期入帳的本金，
      * 因為那筆消費在刷卡當月就已經算過預算，這裡只是變成要繳的卡債。
      */
     val countAsExpense: Boolean = true,
     val source: EventSource = EventSource.PLAN,
-)
-
-/** 最低應繳的計算方式；與 [CardTerms] 對應。 */
-data class MinimumPaymentRule(
-    val percent: Double,
-    val floor: Money,
-    val revolvingRatePercent: Double,
 )
 
 data class AccountSeed(
@@ -72,6 +71,8 @@ data class ForecastInput(
      * 這些已經是消費過的付款義務，期末總負債要算進去（R-FC-10）。
      */
     val installmentsBeyond: Map<Long, Money> = emptyMap(),
+    /** 有繳款條件的卡：試算開始時這一期帳單還沒繳的部分（R-CARD-20）。 */
+    val openStatements: Map<Long, Money> = emptyMap(),
 ) {
     /** 帳戶 id 原樣回傳（每張卡各自模擬）。保留給情境套用時統一使用。 */
     fun mapAccount(id: Long?): Long? = id
@@ -162,6 +163,10 @@ object CashFlowEngine {
         val kinds = input.accounts.associate { it.id to it.kind }
         val balances = input.accounts.associate { it.id to it.balance }.toMutableMap()
         val eventsByPeriod = input.events.groupBy { it.period.index }
+        // 每張卡目前這一期的帳單，以及結帳之後已經繳的（R-CARD-20、R-CARD-22）。
+        val billed = input.openStatements.toMutableMap()
+        val paid = mutableMapOf<Long, Money>()
+        fun unpaidOf(card: Long?): Money = card?.let { ((billed[it] ?: 0L) - (paid[it] ?: 0L)).coerceAtLeast(0) } ?: 0L
         val results = ArrayList<PeriodResult>(input.periodCount)
 
         for (period in Period.range(input.start, input.periodCount)) {
@@ -205,24 +210,24 @@ object CashFlowEngine {
             // 依 R-ORD-01：分期入帳 → 計息 → 情境清償 → 卡片合約繳款 → 貸款 → 其他收支。
             val ordered = eventsByPeriod[period.index].orEmpty().sortedBy { priority(it) }
             for (event in ordered) {
+                val statementCard = event.statementOf
+                if (statementCard != null) {
+                    // 結帳：這一期的帳單 = 當時的欠款；之後的繳款算這一期的。
+                    billed[statementCard] = (balances[statementCard] ?: 0L).coerceAtLeast(0)
+                    paid[statementCard] = 0L
+                    continue
+                }
                 val amount = when {
                     event.interestRatePercent != null -> {
                         val debt = (event.fromAccountId?.let { balances[it] } ?: 0L).coerceAtLeast(0)
-                        CardRules.monthlyInterest(event.interestBase?.coerceIn(0, debt) ?: debt, event.interestRatePercent)
+                        CardRules.monthlyInterest(minOf(unpaidOf(event.fromAccountId), debt), event.interestRatePercent)
                     }
 
                     event.payFullBalance -> (event.toAccountId?.let { balances[it] } ?: 0L).coerceAtLeast(0)
 
-                    event.minimumPayment != null -> {
+                    event.payStatement -> {
                         val debt = (event.toAccountId?.let { balances[it] } ?: 0L).coerceAtLeast(0)
-                        CardRules.minimumPayment(
-                            debt,
-                            CardTerms(
-                                revolvingRatePercent = event.minimumPayment.revolvingRatePercent,
-                                minPaymentPercent = event.minimumPayment.percent,
-                                minPaymentFloor = event.minimumPayment.floor,
-                            ),
-                        )
+                        minOf(unpaidOf(event.toAccountId), debt)
                     }
 
                     // 還款最多還到欠款為 0，多的錢留在原帳戶（R-PAY-02）。
@@ -267,6 +272,9 @@ object CashFlowEngine {
                         val internal = from?.isLiquid == true && to?.isLiquid == true
                         takeFrom(event.fromAccountId, amount, countLiquid = !internal)
                         putInto(event.toAccountId, amount, countLiquid = !internal)
+                        if (to == AccountKind.CREDIT_CARD && event.countsTowardStatement) {
+                            event.toAccountId?.let { paid[it] = (paid[it] ?: 0L) + amount }
+                        }
                         when {
                             from?.isLiability == true && to?.isLiquid == true -> borrowing += amount
                             from?.isLiquid == true && to == AccountKind.CREDIT_CARD ->
@@ -306,15 +314,20 @@ object CashFlowEngine {
         return ForecastResult(input, results)
     }
 
-    /** 同一半月內的處理順序：循環利息 → 全額清償 → 最低應繳 → 其他。 */
-    /** 同一個半月內的處理順序（R-ORD-01，和本月到期相同）。 */
+    /**
+     * 同一個半月內的處理順序（R-ORD-01）：分期入帳 → 循環利息 → 情境清償 → 卡片繳款 → 貸款 → 其他收支。
+     * 結帳（先計上一期沒繳清的利息，再結算帳單）一般在最後：上一期的繳款先繳，這個半月的刷卡算進這一期帳單；
+     * 這一期的截止日也落在同一個半月時（例如 1 日結帳、15 日截止），結帳與計息提前：計息在清償之前、結帳在卡片繳款之前。
+     */
     private fun priority(event: FlowEvent): Int = when {
+        event.statementOf != null -> if (event.statementEarly) 4 else 9
+        event.interestRatePercent != null -> if (event.statementEarly) 2 else 8
         event.source == EventSource.INSTALLMENT -> 0
-        event.interestRatePercent != null -> 1
-        event.payFullBalance && event.source == EventSource.SCENARIO -> 2
-        event.source == EventSource.CARD_SCHEDULE -> 3
-        event.source == EventSource.LOAN_SCHEDULE -> 4
-        else -> 5
+        event.source == EventSource.CARD_SCHEDULE && event.kind == EventKind.EXPENSE -> 1
+        event.payFullBalance && event.source == EventSource.SCENARIO -> 3
+        event.source == EventSource.CARD_SCHEDULE -> 5
+        event.source == EventSource.LOAN_SCHEDULE -> 6
+        else -> 7
     }
 
     private inline fun sumOf(

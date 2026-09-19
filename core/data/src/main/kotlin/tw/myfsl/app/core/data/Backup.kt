@@ -3,6 +3,7 @@ package tw.myfsl.app.core.data
 import tw.myfsl.app.core.data.db.AccountEntity
 import tw.myfsl.app.core.data.db.BalanceSnapshotEntity
 import tw.myfsl.app.core.data.db.CardInstallmentEntity
+import tw.myfsl.app.core.data.db.CardStatementEntity
 import tw.myfsl.app.core.data.db.CheckInEntity
 import tw.myfsl.app.core.data.db.DeferralEntity
 import tw.myfsl.app.core.data.db.PostedKeyEntity
@@ -29,8 +30,11 @@ data class SettingsBackup(
     val cardPostingDays: Int,
     val defaultCardId: Long? = null,
     val autoPostFrom: Long? = null,
+    /** 到期前幾天提醒；舊備份沒有時用預設的 7、3 天。 */
+    val reminderDays: List<Int>? = null,
 ) {
     fun toSettings(current: AppSettings) = current.copy(
+        reminderDays = reminderDays ?: AppSettings().reminderDays,
         safetyLevel = safetyLevel,
         horizonMonths = horizonMonths,
         checkInDay = DayOfWeek.of(checkInDay.coerceIn(1, 7)),
@@ -44,7 +48,7 @@ data class SettingsBackup(
     companion object {
         fun of(s: AppSettings) = SettingsBackup(
             s.safetyLevel, s.horizonMonths, s.checkInDay.value, s.pickCard, s.cashAccountId, s.transferAccountId, s.cardPostingDays,
-            s.defaultCardId, s.autoPostFrom,
+            s.defaultCardId, s.autoPostFrom, s.reminderDays,
         )
     }
 }
@@ -67,6 +71,8 @@ data class BackupFile(
     val checkIns: List<CheckInEntity> = emptyList(),
     val postedKeys: List<PostedKeyEntity> = emptyList(),
     val deferrals: List<DeferralEntity> = emptyList(),
+    /** 帳單校正（R-CARD-23）；舊備份沒有這個欄位時為空。 */
+    val cardStatements: List<CardStatementEntity> = emptyList(),
     val settings: SettingsBackup? = null,
 ) {
     companion object {
@@ -127,6 +133,7 @@ object BackupCodec {
             "分期".takeIf { duplicates(file.installments) { it.id } },
             "計畫金額".takeIf { duplicates(file.amounts) { listOf(it.itemId, it.method, it.year, it.month) } },
             "延期款".takeIf { duplicates(file.deferrals) { it.id } },
+            "帳單".takeIf { duplicates(file.cardStatements) { listOf(it.cardId, it.year, it.month) } },
             "到期項目識別碼".takeIf { duplicates(file.ledger.mapNotNull { it.postingKey }) { it } },
         )
         if (duplicated.isNotEmpty()) return BackupReadResult.Error("備份檔內容有重複（${duplicated.joinToString("、")}），無法還原")
@@ -156,6 +163,7 @@ object BackupCodec {
             actuals = file.actuals.filter { it.itemId in itemIds },
             snapshots = file.snapshots.filter { it.accountId in accountIds },
             deferrals = file.deferrals.filter { it.itemId in itemIds },
+            cardStatements = file.cardStatements.filter { it.cardId in accountIds },
         )
         return BackupReadResult.Ok(
             cleaned,

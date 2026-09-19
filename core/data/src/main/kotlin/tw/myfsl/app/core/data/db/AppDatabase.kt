@@ -17,6 +17,7 @@ import androidx.room.RoomDatabase
         CardInstallmentEntity::class,
         PostedKeyEntity::class,
         DeferralEntity::class,
+        CardStatementEntity::class,
         DataGenerationEntity::class,
     ],
     // 1.0.0 首發的結構。之後改 schema：提高版本，並在 Migrations 加上升級 SQL（MigrationTest 會檢查）。

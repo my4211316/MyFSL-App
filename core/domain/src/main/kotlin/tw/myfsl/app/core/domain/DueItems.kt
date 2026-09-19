@@ -2,7 +2,7 @@ package tw.myfsl.app.core.domain
 
 import tw.myfsl.app.core.model.ActualStatus
 import tw.myfsl.app.core.model.CardPayMode
-import tw.myfsl.app.core.model.CardTerms
+import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.EntrySource
 import tw.myfsl.app.core.model.FinanceSnapshot
 import tw.myfsl.app.core.model.FlowType
@@ -41,11 +41,12 @@ data class DueItem(
     val method: PaymentMethod? = null,
     /** 相關的卡片或貸款帳戶。 */
     val relatedAccountId: Long? = null,
-    /**
-     * 這筆循環利息是用「既有卡循」算的（真正第一次計息）。同一批補記多個月時只有這一期是 true，
-     * 所以只有這一期記下時才清掉既有卡循、保存原值；刪掉後面月份不會恢復已經用掉的原值（F10）。
-     */
-    val usesRevolving: Boolean = false,
+    /** 繳卡費：三種繳款方式各自的建議金額（R-CARD-20），使用者可以臨時換（R-CARD-21）。 */
+    val payOptions: CardRules.PaymentOptions? = null,
+    /** 繳卡費：這張卡預設的繳款方式。 */
+    val payMode: CardPayMode? = null,
+    /** 繳卡費：這一期的結帳日（帳單校正用）。 */
+    val statementDate: LocalDate? = null,
 ) {
     val amount: Money get() = entries.sumOf { it.amount }
     val isIncome: Boolean get() = item?.type == FlowType.INCOME
@@ -80,6 +81,8 @@ data class DueChoice(
     val cardId: Long? = null,
     /** 實際付款日；null 為今天（R-DUE-03）。已經在到期日付過、只是現在才記時選到期日。 */
     val date: LocalDate? = null,
+    /** 繳卡費這一期選的繳款方式（R-CARD-21）；null 為卡片預設。 */
+    val payMode: CardPayMode? = null,
 )
 
 /** 記下一個到期項目要寫入的東西。 */
@@ -87,10 +90,6 @@ data class DueRecord(
     val entries: List<LedgerEntry>,
     /** 貸款記下後剩下的期數。 */
     val loanRemaining: Pair<Long, Int>? = null,
-    /** 第一次記下利息後清掉「既有卡循」的卡片條件。 */
-    val cardTerms: Pair<Long, CardTerms>? = null,
-    /** 清掉既有卡循時記下原本的值（`revbal:<利息識別碼>:<金額>`），刪掉這筆利息時用來恢復（F10）。 */
-    val marker: String? = null,
 )
 
 /**
@@ -117,7 +116,7 @@ object DueItems {
 
         val tasks = mutableListOf<Task>()
         planTasks(snapshot, months, ::inWindow, tasks)
-        cardTasks(snapshot, months, ::inWindow, tasks)
+        cardTasks(snapshot, through, ::inWindow, tasks)
         loanTasks(snapshot, months, ::inWindow, tasks)
         installmentTasks(snapshot, ::inWindow, tasks)
 
@@ -131,10 +130,9 @@ object DueItems {
             val entries = applied?.invoke(due) ?: due.entries
             entries.forEach(state::add)
             if (entries.isEmpty()) {
-                // 沒有記下：貸款期數不扣、既有卡循留給下一次利息。
+                // 沒有記下：貸款期數不扣。
                 val id = due.relatedAccountId
                 if (due.kind == DueKind.LOAN && id != null) state.loanRemaining[id] = (state.loanRemaining[id] ?: 0) + 1
-                if (due.kind == DueKind.CARD_INTEREST && id != null) state.interestCharged -= id
             }
             result += due
         }
@@ -147,6 +145,7 @@ object DueItems {
         method = due.method,
         accountId = if (due.choosesAccount) due.defaultAccountId else null,
         cardId = if (due.method == PaymentMethod.CREDIT_CARD) due.entries.firstOrNull()?.accountId else null,
+        payMode = due.payMode,
     )
 
     /** 已經處理過：同一組識別碼任何一個已經記下或選了「這個月沒有」（只繳利息的貸款只有利息那一筆，F03）。 */
@@ -184,7 +183,17 @@ object DueItems {
                 }
             }
 
-            DueKind.CARD_PAYMENT -> due.entries.map { it.copy(amount = choice.amount, accountId = choice.accountId ?: it.accountId) }
+            DueKind.CARD_PAYMENT -> {
+                val mode = choice.payMode ?: due.payMode
+                val card = snapshot.account(due.relatedAccountId)?.name.orEmpty()
+                due.entries.map {
+                    it.copy(
+                        amount = choice.amount,
+                        accountId = choice.accountId ?: it.accountId,
+                        note = if (mode != null) "繳 $card（${mode.label}）" else it.note,
+                    )
+                }
+            }
             DueKind.CARD_INTEREST -> due.entries.map { it.copy(amount = choice.amount) }
             DueKind.INSTALLMENT -> due.entries
         }.map { it.copy(date = date) }
@@ -196,12 +205,7 @@ object DueItems {
         } else {
             null
         }
-        // 只有真正用既有卡循計息的那一期才清掉並保存原值（F10）。
-        val terms = if (due.kind == DueKind.CARD_INTEREST && due.usesRevolving) snapshot.account(due.relatedAccountId)?.card else null
-        val previous = terms?.revolvingBalance
-        val card = if (previous != null) due.relatedAccountId!! to terms.copy(revolvingBalance = null) else null
-        val marker = previous?.let { "${PostingKeys.REVOLVING}${due.key}:$it" }
-        return DueRecord(entries, loan, card, marker)
+        return DueRecord(entries, loan)
     }
 
     private fun planEntry(snapshot: FinanceSnapshot, due: DueItem, choice: DueChoice): LedgerEntry {
@@ -231,7 +235,6 @@ object DueItems {
     private class State(val snapshot: FinanceSnapshot) {
         val entries = mutableListOf<LedgerEntry>()
         val loanRemaining = mutableMapOf<Long, Int>()
-        val interestCharged = mutableSetOf<Long>()
         // 和試算相同的起始欠款：未指定卡片的刷卡算在預設卡片上（F04）。
         private val balances = snapshot.accounts.associate { it.id to it.balance }.toMutableMap().also { map ->
             snapshot.defaultCardId?.let { id -> map[id] = (map[id] ?: 0L) + snapshot.unassignedCardSpending }
@@ -350,47 +353,82 @@ object DueItems {
             }
         }
 
-    /** 有循環條件的卡：繳款日先計息，再依繳款方式繳款。 */
-    private fun cardTasks(snapshot: FinanceSnapshot, months: List<YearMonth>, inWindow: (LocalDate) -> Boolean, tasks: MutableList<Task>) {
+    /**
+     * 有繳款條件的卡（R-CARD-20–22）：
+     * - 結帳日：上一期帳單沒繳清的部分計循環利息。上一期的截止日在起算日（含）以前時，視為已經繳清（餘額是那天輸入的）。
+     *   帳單校正時已經把這一期利息算進帳單的，識別碼已處理，不再列出（R-CARD-23）。
+     * - 截止日：繳這一期的帳單，建議金額依預設繳款方式，三種方式的金額都帶著（R-CARD-21）。
+     */
+    private fun cardTasks(snapshot: FinanceSnapshot, through: LocalDate, inWindow: (LocalDate) -> Boolean, tasks: MutableList<Task>) {
         snapshot.activeCards.forEach { card ->
             val terms = card.card ?: return@forEach
             val payAccount = terms.payAccountId?.takeIf { id -> snapshot.activeAccounts.any { it.id == id && it.kind.isLiquid } }
                 ?: snapshot.methodAccountId(PaymentMethod.TRANSFER)
-            for (ym in months) {
-                val date = day(ym, terms.payDay)
-                if (!inWindow(date)) continue
-                val interestKey = cardInterestKey(card.id, ym)
-                tasks += Task(date, 1, interestKey) { state ->
-                    // 既有卡循只影響第一次計息。
-                    val current = if (card.id in state.interestCharged) terms.copy(revolvingBalance = null) else terms
-                    state.interestCharged += card.id
-                    val usesRevolving = current.revolvingBalance != null
-                    val interest = CardRules.monthlyInterest(CardRules.interestBase(state.balance(card.id), current), current.revolvingRatePercent)
-                    if (interest <= 0) return@Task null
-                    val entry = LedgerEntry(
-                        date = date, type = FlowType.EXPENSE, amount = interest, accountId = card.id,
-                        note = "${card.name} 循環利息", source = EntrySource.DUE, postingKey = interestKey,
-                    )
-                    DueItem(interestKey, DueKind.CARD_INTEREST, date, "${card.name} 循環利息", listOf(entry), relatedAccountId = card.id, usesRevolving = usesRevolving)
-                }
-                val payKey = cardPaymentKey(card.id, ym)
-                tasks += Task(date, 2, payKey) { state ->
-                    val from = payAccount ?: return@Task null
-                    val debt = state.balance(card.id).coerceAtLeast(0)
-                    val amount = when (terms.payMode) {
-                        CardPayMode.FULL -> debt
-                        CardPayMode.MINIMUM -> CardRules.minimumPayment(debt, terms)
-                        CardPayMode.FIXED -> minOf(terms.fixedPayment ?: 0L, debt)
+            val base = CardRules.baseBalance(snapshot, card)
+            CardRules.cycles(card, snapshot.trackingFrom, through).forEach { cycle ->
+                val ym = cycle.yearMonth
+                if (inWindow(cycle.statement)) {
+                    val interestKey = cardInterestKey(card.id, ym)
+                    tasks += Task(cycle.statement, 1, interestKey) { state ->
+                        val interest = interestFor(snapshot, card, base, cycle, state.entries)
+                        if (interest <= 0) return@Task null
+                        val entry = LedgerEntry(
+                            date = cycle.statement, type = FlowType.EXPENSE, amount = interest, accountId = card.id,
+                            note = "${card.name} 循環利息", source = EntrySource.DUE, postingKey = interestKey,
+                        )
+                        DueItem(interestKey, DueKind.CARD_INTEREST, cycle.statement, "${card.name} 循環利息", listOf(entry), relatedAccountId = card.id)
                     }
-                    if (amount <= 0) return@Task null
-                    val entry = LedgerEntry(
-                        date = date, type = FlowType.TRANSFER, amount = amount, accountId = from, toAccountId = card.id,
-                        note = "繳 ${card.name}（${terms.payMode.label}）", source = EntrySource.DUE, postingKey = payKey,
-                    )
-                    DueItem(payKey, DueKind.CARD_PAYMENT, date, "繳 ${card.name}（${terms.payMode.label}）", listOf(entry), relatedAccountId = card.id)
+                }
+                if (inWindow(cycle.due)) {
+                    val payKey = cardPaymentKey(card.id, ym)
+                    tasks += Task(cycle.due, 2, payKey) { state ->
+                        val from = payAccount ?: return@Task null
+                        val options = paymentOptions(snapshot, card, base, cycle, state.entries, state.balance(card.id))
+                        if (options.full <= 0) return@Task null
+                        val amount = options.of(terms.payMode).takeIf { it > 0 } ?: options.full
+                        val title = "繳 ${card.name}"
+                        val entry = LedgerEntry(
+                            date = cycle.due, type = FlowType.TRANSFER, amount = amount, accountId = from, toAccountId = card.id,
+                            note = "$title（${terms.payMode.label}）", source = EntrySource.DUE, postingKey = payKey,
+                        )
+                        DueItem(
+                            payKey, DueKind.CARD_PAYMENT, cycle.due, title, listOf(entry), relatedAccountId = card.id,
+                            payOptions = options, payMode = terms.payMode, statementDate = cycle.statement,
+                        )
+                    }
                 }
             }
         }
+    }
+
+    /**
+     * 某一期結帳日的循環利息：上一期帳單在這一期結帳前沒繳清的部分 × 年利率 ÷ 12（R-CARD-22）。
+     * 上一期的截止日在起算日（含）以前：那天輸入的餘額已經反映，視為繳清。
+     */
+    fun interestFor(snapshot: FinanceSnapshot, card: Account, base: Money, cycle: CardRules.Cycle, extra: List<LedgerEntry>): Money {
+        val terms = card.card ?: return 0
+        val previous = CardRules.previous(card, cycle) ?: return 0
+        if (!previous.due.isAfter(snapshot.trackingFrom)) return 0
+        val billed = CardRules.balanceAt(card, base, snapshot.ledger, extra, previous.statement)
+        val paid = CardRules.paidBetween(card, snapshot.ledger, extra, previous.statement, cycle.statement)
+        return CardRules.monthlyInterest(billed - paid, terms.revolvingRatePercent)
+    }
+
+    /** 某一期的繳款選項：帳單金額（結帳日的欠款）扣掉結帳後已經繳的，再依繳款方式（R-CARD-20）。 */
+    fun paymentOptions(
+        snapshot: FinanceSnapshot,
+        card: Account,
+        base: Money,
+        cycle: CardRules.Cycle,
+        extra: List<LedgerEntry>,
+        debt: Money,
+    ): CardRules.PaymentOptions {
+        val terms = requireNotNull(card.card)
+        val billed = CardRules.balanceAt(card, base, snapshot.ledger, extra, cycle.statement)
+        val (s, d) = requireNotNull(CardRules.cycleDays(card))
+        val next = CardRules.cycle(cycle.yearMonth.plusMonths(1), s, d)
+        val paid = CardRules.paidBetween(card, snapshot.ledger, extra, cycle.statement, next.statement)
+        return CardRules.options(terms, billed - paid, debt, snapshot.statementOf(card.id, cycle.yearMonth)?.minimumPayment)
     }
 
     /** 有攤還條件的貸款：本金轉入貸款帳戶、利息算支出。 */

@@ -22,15 +22,12 @@ data class AccountEntity(
     val loanPayAccountId: Long?,
     val loanPayDay: Int?,
     val loanOriginalPrincipal: Long?,
-    val cardRatePercent: Double? = null,
-    val cardMinPercent: Double? = null,
-    val cardMinFloor: Long? = null,
+    /** 依帳單繳款的繳款方式（FULL／FREE／MINIMUM）；null = 沒有設定依帳單繳款（R-CARD-20）。 */
     val cardPayMode: String? = null,
-    val cardFixedPayment: Long? = null,
+    val cardRatePercent: Double? = null,
+    val cardEstimatedPayment: Long? = null,
     val cardPayAccountId: Long? = null,
-    val cardPayDay: Int? = null,
     val cardStatementDay: Int? = null,
-    val cardRevolvingBalance: Long? = null,
     val issuer: String = "",
     val archived: Boolean,
     val sortOrder: Int,
@@ -120,6 +117,18 @@ data class LedgerEntryEntity(
 data class PostedKeyEntity(
     @PrimaryKey val key: String,
     val epochDay: Long,
+)
+
+/** 使用者輸入的某張卡某一期帳單（R-CARD-23）；year/month 是結帳日所在的年月。 */
+@Serializable
+@Entity(tableName = "card_statements", primaryKeys = ["cardId", "year", "month"])
+data class CardStatementEntity(
+    val cardId: Long,
+    val year: Int,
+    val month: Int,
+    val amount: Long,
+    val minimumPayment: Long? = null,
+    val coversInterest: Boolean = false,
 )
 
 /** 資料世代（只有一列，id = 0）：整份替換資料時加一，和設定裡的值一致時快照才有效。不進備份。 */

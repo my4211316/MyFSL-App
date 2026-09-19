@@ -7,6 +7,10 @@ import tw.myfsl.app.core.domain.AccountDraft
 import tw.myfsl.app.core.domain.AccountForm
 import tw.myfsl.app.core.domain.AccountSummaryCalculator
 import tw.myfsl.app.core.domain.AccountsOverview
+import tw.myfsl.app.core.domain.BillCorrection
+import tw.myfsl.app.core.domain.CardRules
+import tw.myfsl.app.core.model.Money
+import tw.myfsl.app.core.model.MoneyFormat
 import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.FinanceSnapshot
@@ -32,12 +36,29 @@ data class AccountEditor(
     val isNew: Boolean get() = draft.id == 0L
 }
 
+/** 帳單校正（R-CARD-23）的輸入視窗。 */
+data class BillEditor(
+    val cardId: Long,
+    val cardName: String,
+    val cycle: CardRules.Cycle,
+    /** App 對這一期帳單的估計。 */
+    val estimate: Money,
+    val amount: String,
+    val minimum: String,
+    /** 這一期已經輸入過帳單（可以刪除校正）。 */
+    val existing: Boolean,
+    val error: String? = null,
+    /** 打開時畫面的資料世代（F11）。 */
+    val generation: Long = FinanceSnapshot.NO_GENERATION,
+)
+
 data class AccountsUiState(
     val loading: Boolean = true,
     val overview: AccountsOverview? = null,
     /** 可以當扣款帳戶的流動帳戶。 */
     val payAccounts: List<Account> = emptyList(),
     val editor: AccountEditor? = null,
+    val bill: BillEditor? = null,
     val message: String? = null,
 )
 
@@ -46,12 +67,14 @@ class AccountsViewModel @Inject constructor(
     private val repository: FinanceRepository,
 ) : ViewModel() {
 
-    private data class Local(val editor: AccountEditor? = null, val message: String? = null)
+    private data class Local(val editor: AccountEditor? = null, val bill: BillEditor? = null, val message: String? = null)
 
     private val local = MutableStateFlow(Local())
 
-    /** 畫面正在顯示的資料世代（F11）：寫入時帶著，資料換過就會被拒絕。 */
-    @Volatile private var shownGeneration = FinanceSnapshot.NO_GENERATION
+    /** 畫面正在顯示的資料（F11）：寫入時帶著它的世代，資料換過就會被拒絕。 */
+    @Volatile private var shown: FinanceSnapshot? = null
+
+    private val shownGeneration get() = shown?.generation ?: FinanceSnapshot.NO_GENERATION
 
     val state: StateFlow<AccountsUiState> = combine(repository.snapshot, local, ::build)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AccountsUiState())
@@ -61,8 +84,9 @@ class AccountsViewModel @Inject constructor(
         overview = AccountSummaryCalculator.overview(snapshot),
         payAccounts = snapshot.activeAccounts.filter { it.kind.isLiquid },
         editor = local.editor,
+        bill = local.bill,
         message = local.message,
-    ).also { shownGeneration = snapshot.generation }
+    ).also { shown = snapshot }
 
     fun startNew(kind: AccountKind = AccountKind.CASH) = local.update {
         it.copy(editor = AccountEditor(AccountDraft(kind = kind), generation = shownGeneration))
@@ -73,7 +97,7 @@ class AccountsViewModel @Inject constructor(
         it.copy(
             editor = AccountEditor(
                 draft,
-                showAdvanced = draft.revolvingEnabled || draft.loanEnabled || draft.creditLimit.isNotBlank(),
+                showAdvanced = draft.scheduleEnabled || draft.loanEnabled || draft.creditLimit.isNotBlank() || draft.statementDay.isNotBlank(),
                 generation = shownGeneration,
             ),
         )
@@ -113,6 +137,59 @@ class AccountsViewModel @Inject constructor(
         viewModelScope.launch(WriteGuard) {
             repository.setAccountArchived(editor.draft.id, true, editor.generation)
             local.update { it.copy(editor = null, message = "已封存「${editor.draft.name}」") }
+        }
+    }
+
+    // ---- 帳單校正（R-CARD-23） ----
+
+    /** 打開某張卡最近一期的帳單校正；已經輸入過的帶入上次的金額，否則帶入 App 的估計。 */
+    fun openBill(cardId: Long) {
+        val snapshot = shown ?: return
+        val card = snapshot.account(cardId) ?: return
+        val preview = BillCorrection.preview(snapshot, card) ?: return
+        local.update {
+            it.copy(
+                bill = BillEditor(
+                    cardId = card.id,
+                    cardName = card.name,
+                    cycle = preview.cycle,
+                    estimate = preview.estimate,
+                    amount = (preview.existing?.amount ?: preview.estimate).toString(),
+                    minimum = preview.existing?.minimumPayment?.toString().orEmpty(),
+                    existing = preview.existing != null,
+                    generation = snapshot.generation,
+                ),
+            )
+        }
+    }
+
+    fun updateBill(transform: (BillEditor) -> BillEditor) = local.update { current ->
+        current.copy(bill = current.bill?.let(transform)?.copy(error = null))
+    }
+
+    fun closeBill() = local.update { it.copy(bill = null) }
+
+    fun saveBill() {
+        val bill = local.value.bill ?: return
+        viewModelScope.launch(WriteGuard) {
+            val snapshot = repository.snapshot.first()
+            val card = snapshot.account(bill.cardId) ?: return@launch
+            val amount = MoneyFormat.parse(bill.amount)
+            val minimum = bill.minimum.takeIf { it.isNotBlank() }?.let { MoneyFormat.parse(it) ?: -1L }
+            BillCorrection.validate(snapshot, card, amount, minimum)?.let { error ->
+                local.update { it.copy(bill = bill.copy(error = error)) }
+                return@launch
+            }
+            repository.saveBillCorrection(BillCorrection.correct(snapshot, card, bill.cycle, amount!!, minimum), bill.generation)
+            local.update { it.copy(bill = null, message = "已照帳單校正「${card.name}」") }
+        }
+    }
+
+    fun deleteBill() {
+        val bill = local.value.bill ?: return
+        viewModelScope.launch(WriteGuard) {
+            repository.deleteBillCorrection(bill.cardId, bill.cycle.yearMonth, bill.generation)
+            local.update { it.copy(bill = null, message = "已刪除「${bill.cardName}」這一期的帳單校正") }
         }
     }
 

@@ -78,6 +78,13 @@ fun PeriodScreen(
                     Column(Modifier.weight(1f)) {
                         Text("可動用現金", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(MoneyFormat.currency(o.liquid), style = MaterialTheme.typography.headlineSmall)
+                        if (o.cardReserve > 0) {
+                            Text(
+                                "其中 ${MoneyFormat.currency(o.cardReserve)} 要留著繳卡費，扣掉後可用 ${MoneyFormat.currency(o.liquid - o.cardReserve)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (o.liquid - o.cardReserve < 0) StatusColors.warningText else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                     o.monthsUntilBelowSafety?.let { months ->
                         Text(

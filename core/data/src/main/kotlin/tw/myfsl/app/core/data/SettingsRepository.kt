@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import tw.myfsl.app.core.model.AppSettings
 import tw.myfsl.app.core.model.Money
 import kotlinx.coroutines.flow.Flow
@@ -33,6 +34,7 @@ class SettingsRepository @Inject constructor(
             defaultCardId = prefs[DEFAULT_CARD],
             autoPostFrom = prefs[AUTO_POST_FROM],
             dataGeneration = prefs[DATA_GENERATION] ?: 0L,
+            reminderDays = prefs[REMINDER_DAYS]?.let { text -> text.split(',').mapNotNull { it.trim().toIntOrNull() } } ?: defaults.reminderDays,
         )
     }
 
@@ -102,6 +104,7 @@ class SettingsRepository @Inject constructor(
             it[CARD_POSTING_DAYS] = settings.cardPostingDays
             val card = settings.defaultCardId
             if (card == null) it.remove(DEFAULT_CARD) else it[DEFAULT_CARD] = card
+            it[REMINDER_DAYS] = settings.reminderDays.joinToString(",")
         }
     }
 
@@ -118,5 +121,6 @@ class SettingsRepository @Inject constructor(
         val DEFAULT_CARD = longPreferencesKey("default_card_id")
         val AUTO_POST_FROM = longPreferencesKey("auto_post_from_epoch_day")
         val DATA_GENERATION = longPreferencesKey("data_generation")
+        val REMINDER_DAYS = stringPreferencesKey("reminder_days")
     }
 }

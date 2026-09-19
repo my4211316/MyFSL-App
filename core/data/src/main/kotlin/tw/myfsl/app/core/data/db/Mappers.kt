@@ -5,6 +5,7 @@ import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.ActualStatus
 import tw.myfsl.app.core.model.CardInstallment
 import tw.myfsl.app.core.model.CardPayMode
+import tw.myfsl.app.core.model.CardStatement
 import tw.myfsl.app.core.model.InstallmentFee
 import tw.myfsl.app.core.model.CardTerms
 import tw.myfsl.app.core.model.CheckIn
@@ -48,20 +49,13 @@ fun AccountEntity.toModel() = Account(
     paymentDueDay = paymentDueDay,
     issuer = issuer,
     statementDay = cardStatementDay,
-    card = if (cardRatePercent != null) {
+    card = cardPayMode?.let { mode ->
         CardTerms(
+            payMode = CardPayMode.valueOf(mode),
             revolvingRatePercent = cardRatePercent,
-            minPaymentPercent = cardMinPercent ?: 10.0,
-            minPaymentFloor = cardMinFloor ?: 1_000,
-            payMode = cardPayMode?.let { CardPayMode.valueOf(it) } ?: CardPayMode.MINIMUM,
-            fixedPayment = cardFixedPayment,
+            estimatedPayment = cardEstimatedPayment,
             payAccountId = cardPayAccountId,
-            payDay = cardPayDay ?: 15,
-            statementDay = cardStatementDay,
-            revolvingBalance = cardRevolvingBalance,
         )
-    } else {
-        null
     },
     loan = if (loanRatePercent != null && loanRemainingMonths != null && loanMethod != null &&
         loanPayAccountId != null && loanPayDay != null
@@ -93,19 +87,18 @@ fun Account.toEntity() = AccountEntity(
     loanPayAccountId = loan?.payAccountId,
     loanPayDay = loan?.payDay,
     loanOriginalPrincipal = loan?.originalPrincipal,
-    cardRatePercent = card?.revolvingRatePercent,
-    cardMinPercent = card?.minPaymentPercent,
-    cardMinFloor = card?.minPaymentFloor,
     cardPayMode = card?.payMode?.name,
-    cardFixedPayment = card?.fixedPayment,
+    cardRatePercent = card?.revolvingRatePercent,
+    cardEstimatedPayment = card?.estimatedPayment,
     cardPayAccountId = card?.payAccountId,
-    cardPayDay = card?.payDay,
-    cardStatementDay = statementDay ?: card?.statementDay,
-    cardRevolvingBalance = card?.revolvingBalance,
+    cardStatementDay = statementDay,
     issuer = issuer,
     archived = archived,
     sortOrder = sortOrder,
 )
+
+fun CardStatementEntity.toModel() = CardStatement(cardId, year, month, amount, minimumPayment, coversInterest)
+fun CardStatement.toEntity() = CardStatementEntity(cardId, year, month, amount, minimumPayment, coversInterest)
 
 fun PlanGroupEntity.toModel() = PlanGroup(id, name, sortOrder)
 fun PlanGroup.toEntity() = PlanGroupEntity(id, name, sortOrder)

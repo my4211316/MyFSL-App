@@ -5,15 +5,20 @@ import org.junit.Test
 import tw.myfsl.app.core.model.*
 import java.time.LocalDate
 
-/** Independent review cases (v2.2 審閱). Assertions describe expected accounting behavior. */
+/**
+ * Independent review cases (v2.2 審閱). Assertions describe expected accounting behavior.
+ *
+ * v2.9 起信用卡改成依帳單繳款（R-CARD-20–22）：卡片固定用「10 日結帳、次月 5 日截止、自由繳 2,000、年利率 12%」。
+ * 起算 9/1、今天 9/18：8/10 那期的截止日 9/5 在起算之後 → 9/5 繳 2,000；9/10 結帳時 8/10 那期帳單 10,000 還剩 8,000 沒繳，
+ * 計利息 8,000 × 1% = 80。原本「以整筆欠款計息」的預期值依新規則手算改寫，測試的用意不變。
+ */
 class ReviewRegressionTest {
     private val today = LocalDate.of(2026, 9, 18)
     private fun base(): FinanceSnapshot = FinanceSnapshot.empty(today).copy(
         accounts = listOf(
             Account(1, "Bank", AccountKind.BANK, balance = 100000),
-            Account(2, "Card", AccountKind.CREDIT_CARD, balance = 10000,
-                card = CardTerms(12.0, payMode = CardPayMode.FIXED, fixedPayment = 2000,
-                    payAccountId = 1, payDay = 15))
+            Account(2, "Card", AccountKind.CREDIT_CARD, balance = 10000, statementDay = 10, paymentDueDay = 5,
+                card = CardTerms(CardPayMode.FREE, revolvingRatePercent = 12.0, estimatedPayment = 2000, payAccountId = 1))
         ),
         settings = AppSettings(autoPostFrom = LocalDate.of(2026, 9, 1).toEpochDay(), transferAccountId = 1)
     )
@@ -23,13 +28,13 @@ class ReviewRegressionTest {
         val due = DueItems.list(s)
         val pending = due.flatMap { DueItems.record(s, it, DueItems.defaultChoice(s, it)).entries }
         val row = CheckInRules.reconciles(s, pending).single { it.isCard }
-        assertEquals("10000 + 100 interest - 2000 payment", 8100L, row.computed)
+        assertEquals("10000 - 2000 payment (9/5) + 80 interest (9/10)", 8080L, row.computed)
     }
 
     @Test fun unassignedSpendingCountsForDueInterest() {
         val s = base().copy(unassignedCardSpending = 5000)
         val interest = DueItems.list(s).single { it.kind == DueKind.CARD_INTEREST }
-        assertEquals("Default card carries 10000 + 5000 debt", 150L, interest.amount)
+        assertEquals("Default card carries 10000 + 5000 debt: (15000 - 2000) × 1%", 130L, interest.amount)
     }
 
     @Test fun overduePaymentTodayMustAffectBalanceAfterYesterdaySnapshot() {
@@ -59,25 +64,40 @@ class ReviewRegressionTest {
     }
 
     @Test fun skipInterestRecomputesFullPaymentInCheckIn() {
+        // 10/6 本週檢查：9/5 已經記下繳 2,000（欠款 8,000）；9/10 利息 80 與 10/5 全額繳款都還沒記
         val original = base()
-        val s = original.copy(accounts = original.accounts.map { if(it.id == 2L) it.copy(card = it.card!!.copy(payMode = CardPayMode.FULL)) else it })
-        val dues = DueItems.list(s)
+        val paid = LedgerEntry(id = 1, date = LocalDate.of(2026, 9, 5), type = FlowType.TRANSFER, amount = 2000,
+            accountId = 1, toAccountId = 2, source = EntrySource.DUE, postingKey = "cardpay:2:2026-08")
+        val s = original.copy(
+            today = LocalDate.of(2026, 10, 6),
+            ledger = listOf(paid),
+            accounts = original.accounts.map { if (it.id == 2L) it.copy(balance = 8000, card = it.card!!.copy(payMode = CardPayMode.FULL)) else it },
+        )
+        val dues = DueItems.list(s, through = s.today)
         val interest = dues.single { it.kind == DueKind.CARD_INTEREST }
         val payment = dues.single { it.kind == DueKind.CARD_PAYMENT }
+        assertEquals(80L, interest.amount)
+        assertEquals("全額 = 9/10 帳單 8,000 + 80", 8080L, payment.amount)
         val result = CheckInRules.build(s, CheckInInput(dues = mapOf(
             interest.key to DueDecision(DueCheck.SKIP), payment.key to DueDecision(DueCheck.PAID)
         )))
-        assertEquals("Skipping interest leaves only 10000 payable", 10000L,
+        assertEquals("Skipping interest leaves only 8000 payable", 8000L,
             result.entries.single { it.type == FlowType.TRANSFER }.amount)
     }
 
     @Test fun installmentIsPostedBeforeInterestInSamePeriod() {
-        val s = base().copy(installments = listOf(CardInstallment(
-            id = 7, cardAccountId = 2, purchaseDate = LocalDate.of(2026, 8, 20),
-            amount = 12000, months = 12, firstPeriodIndex = Period(2026, 9, Half.SECOND).index
-        )))
-        val result = CashFlowEngine.run(BaselineBuilder.build(s, 2))
-        assertEquals("11000 debt after installment must incur 110 interest", 110L, result.periods.first().cardInterest)
+        // 全額繳：9/5 繳清 8/10 的帳單 10,000；分期第一期在 10 月上半月入帳，和 10/10 結帳同一個半月 → 算進 10/10 帳單，11/5 繳
+        val original = base()
+        val s = original.copy(
+            accounts = original.accounts.map { if (it.id == 2L) it.copy(card = it.card!!.copy(payMode = CardPayMode.FULL)) else it },
+            installments = listOf(CardInstallment(
+                id = 7, cardAccountId = 2, purchaseDate = LocalDate.of(2026, 9, 20),
+                amount = 12000, months = 12, firstPeriodIndex = Period(2026, 10, Half.FIRST).index
+            )),
+        )
+        val result = CashFlowEngine.run(BaselineBuilder.build(s, 4))
+        assertEquals("先入帳分期、再結帳：分期本金算進帳單", 1000L, result.periods.first { it.period == Period(2026, 11, Half.FIRST) }.cardPayments)
+        assertEquals("全額繳清不計息", 0L, result.totalCardInterest)
     }
 
     @Test fun interestOnlyLoanPaymentDoesNotReappear() {
@@ -104,31 +124,21 @@ class ReviewRegressionTest {
             postedKeys = postedKeys - plan.postedKeys.toSet(),
             installments = installments.filterNot { it.id == cancel },
             accounts = accounts.map { a ->
-                val revolving = plan.restoreRevolving?.takeIf { it.first == a.id }?.second
-                when {
-                    revolving != null -> a.copy(card = a.card!!.copy(revolvingBalance = revolving))
-                    plan.addLoanMonthTo == a.id -> a.copy(loan = a.loan!!.copy(remainingMonths = a.loan!!.remainingMonths + 1))
-                    else -> a
-                }
+                if (plan.addLoanMonthTo == a.id) a.copy(loan = a.loan!!.copy(remainingMonths = a.loan!!.remainingMonths + 1)) else a
             },
         )
     }
 
-    /** 記下到期項目後的快照（資料層寫入的事：記帳、期數、卡循、原值標記）。 */
+    /** 記下到期項目後的快照（資料層寫入的事：記帳、期數；帳戶餘額跟著記帳變）。已經到期的照到期日付款。 */
     private fun FinanceSnapshot.record(due: DueItem): FinanceSnapshot {
-        val r = DueItems.record(this, due, DueItems.defaultChoice(this, due))
+        val r = DueItems.record(this, due, DueItems.defaultChoice(this, due).copy(date = due.date.takeIf { !it.isAfter(today) }))
         var nextId = (ledger.maxOfOrNull { it.id } ?: 0L) + 1
         return copy(
             ledger = ledger + r.entries.map { it.copy(id = nextId++) },
-            postedKeys = postedKeys + listOfNotNull(r.marker),
             accounts = accounts.map { a ->
-                val terms = r.cardTerms?.takeIf { it.first == a.id }?.second
                 val loan = r.loanRemaining?.takeIf { it.first == a.id }?.second
-                when {
-                    terms != null -> a.copy(card = terms)
-                    loan != null -> a.copy(loan = a.loan!!.copy(remainingMonths = loan))
-                    else -> a
-                }
+                val moved = a.copy(balance = a.balance + r.entries.sumOf { BalanceRules.effect(it, a.id, a.kind) })
+                if (loan != null) moved.copy(loan = moved.loan!!.copy(remainingMonths = loan)) else moved
             },
         )
     }
@@ -161,24 +171,25 @@ class ReviewRegressionTest {
         assertTrue(s3.installments.isEmpty())
     }
 
-    @Test fun f10DeletingFirstInterestRestoresRevolvingBalance() {
-        val original = base()
-        val s0 = original.copy(accounts = original.accounts.map {
-            if (it.id == 2L) it.copy(balance = 60000, card = it.card!!.copy(revolvingBalance = 20000)) else it
-        })
-        val interest = DueItems.list(s0).single { it.kind == DueKind.CARD_INTEREST }
-        assertEquals("20,000 × 12% ÷ 12", 200L, interest.amount)
-        val s1 = s0.record(interest)
-        assertNull("記下後清掉既有卡循", s1.account(2)!!.card!!.revolvingBalance)
+    @Test fun f10DeletingInterestReturnsSameAmount() {
+        // v2.9：「既有卡循」由帳單期別取代（R-CARD-22）。利息只看上一期帳單沒繳清的部分，刪掉重記仍是同一個金額。
+        val s0 = base()
+        val payment = DueItems.list(s0).single { it.kind == DueKind.CARD_PAYMENT }
+        val s1 = s0.record(payment)
+        val interest = DueItems.list(s1).single { it.kind == DueKind.CARD_INTEREST }
+        assertEquals("(10,000 − 2,000) × 12% ÷ 12", 80L, interest.amount)
+        val s2 = s1.record(interest)
+        assertTrue(DueItems.list(s2).none { it.kind == DueKind.CARD_INTEREST })
 
-        val s2 = s1.apply(Deletion.plan(s1, s1.ledger.single { it.postingKey == interest.key }))
-        assertEquals("恢復既有卡循", 20000L, s2.account(2)!!.card!!.revolvingBalance)
-        assertTrue("原值標記清掉", s2.postedKeys.none { it.startsWith(PostingKeys.REVOLVING) })
-        assertEquals("重記時仍是 200，不是 60,000 × 1% = 600", 200L, DueItems.list(s2).single { it.kind == DueKind.CARD_INTEREST }.amount)
+        val deleted = s2.ledger.single { it.postingKey == interest.key }
+        val s3 = s2.apply(Deletion.plan(s2, deleted)).let { s ->
+            s.copy(accounts = s.accounts.map { it.copy(balance = it.balance - BalanceRules.effect(deleted, it.id, it.kind)) })
+        }
+        assertEquals("刪掉後回到本月到期，金額不變", 80L, DueItems.list(s3).single { it.kind == DueKind.CARD_INTEREST }.amount)
     }
 
     @Test fun f12NewSpendingAfterPayoffAccruesInterestByOriginalTerms() {
-        // 今天 9/18（9 月下半月）清償；10 月上半月刷 30,000；卡片 15 日計息、固定繳 2,000、年利率 12%
+        // 今天 9/18（9 月下半月）清償；10 月上半月刷 30,000；卡片 10 日結帳、5 日截止、自由繳 2,000、年利率 12%
         val start = Period.of(today)
         val oct1 = Period(2026, 10, Half.FIRST)
         val nov1 = Period(2026, 11, Half.FIRST)
@@ -187,17 +198,18 @@ class ReviewRegressionTest {
             ScenarioChange.OneOff("之後又刷", oct1.index, FlowType.EXPENSE, 30000, method = PaymentMethod.CREDIT_CARD),
         ))
         val result = CashFlowEngine.run(applied)
-        // 9/15 的利息 100 到期還沒記下，放在今天這一期、先計息再清償（R-DUE-06、R-ORD-01）
-        assertEquals("10,000 ＋ 利息 100", 10100L, result.periods.first { it.period == start }.debtPayoff)
+        // 9/10 的利息 80 到期還沒記下，放在今天這一期、先計息再清償（R-DUE-06、R-ORD-01）；
+        // 9/5 那筆 2,000 也還沒記，排在清償之後，欠款已經是 0，繳 0（R-PAY-02）
+        assertEquals("10,000 ＋ 利息 80", 10080L, result.periods.first { it.period == start }.debtPayoff)
         result.periods.first { it.period == oct1 }.run {
-            assertEquals("10/15 計息時欠款是 0（同一期先計息再刷卡）", 0L, cardInterest)
-            assertEquals("欠款 0，固定繳款最多繳到 0", 0L, cardPayments)
+            assertEquals("10/10 結帳：9/10 那期已經清償，沒有利息", 0L, cardInterest)
+            assertEquals("10/5 欠款 0，最多繳到 0", 0L, cardPayments)
             assertEquals(30000L, balances[2])
         }
         result.periods.first { it.period == nov1 }.run {
-            assertEquals("30,000 × 12% ÷ 12", 300L, cardInterest)
-            assertEquals("依原條件固定繳 2,000", 2000L, cardPayments)
-            assertEquals("30,000 + 300 − 2,000", 28300L, balances[2])
+            assertEquals("依原條件 11/5 繳 2,000", 2000L, cardPayments)
+            assertEquals("11/10 結帳：10/10 帳單 30,000 − 已繳 2,000 = 28,000 × 1%", 280L, cardInterest)
+            assertEquals("30,000 − 2,000 + 280", 28280L, balances[2])
         }
     }
 

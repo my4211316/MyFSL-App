@@ -113,12 +113,13 @@ object PlanSummaryCalculator {
             }
         }
 
-        // 有循環條件的卡：逐卡以目前欠款估算每月利息與依合約的繳款。
+        // 依帳單繳款的卡：逐卡以目前欠款估算每月利息與依預設繳款方式的繳款。
         val interest = LongArray(12)
-        snapshot.activeCards.forEach { account ->
-            val terms = account.card ?: return@forEach
-            val monthlyInterest = CardRules.monthlyInterest(CardRules.interestBase(account.balance, terms), terms.revolvingRatePercent)
-            val payment = CardRules.outlook(account.balance, terms, monthlySpending = 0).payment
+        snapshot.activeCards.filter { it.hasCardSchedule }.forEach { account ->
+            val terms = account.card!!
+            val outlook = CardRules.outlook(account.balance, terms, monthlySpending = 0)
+            val monthlyInterest = outlook.interest
+            val payment = outlook.payment
             for (m in 0 until 12) {
                 interest[m] += monthlyInterest
                 cardPay[m] += payment

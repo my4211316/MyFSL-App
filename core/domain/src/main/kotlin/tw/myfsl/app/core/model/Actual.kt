@@ -21,6 +21,9 @@ enum class EntrySource {
 
     /** 到期記下（R-DUE）：在記帳畫面點本月到期的項目記下的，例如每月固定的帳單、貸款月繳、繳卡費、循環利息、分期每期入帳。 */
     DUE,
+
+    /** 帳單校正（R-CARD-23）：帳單金額和 App 估計的差額。 */
+    STATEMENT,
 }
 
 /**
@@ -92,7 +95,8 @@ data class LedgerEntry(
     /** 銀行在卡上產生的款項（循環利息、分期各期與手續費），不是自己的消費。 */
     val isCardCharge: Boolean
         get() = postingKey?.let {
-            it.startsWith(PostingKeys.CARD_INTEREST) || it.startsWith(PostingKeys.INSTALLMENT_PRINCIPAL) || it.startsWith(PostingKeys.INSTALLMENT_FEE)
+            it.startsWith(PostingKeys.CARD_INTEREST) || it.startsWith(PostingKeys.INSTALLMENT_PRINCIPAL) ||
+                it.startsWith(PostingKeys.INSTALLMENT_FEE) || it.startsWith(PostingKeys.STATEMENT)
         } == true
 
     /**
@@ -121,8 +125,24 @@ object PostingKeys {
     const val INSTALLMENT_FEE = "instfee:"
     const val DEFERRAL = "deferral:"
 
-    /** 清掉既有卡循時記下原本的值，刪掉那筆利息時恢復：`revbal:<利息識別碼>:<金額>`。 */
-    const val REVOLVING = "revbal:"
+    /** 帳單校正的差額：`stmt:<卡片>:<結帳年月>`（R-CARD-23）。 */
+    const val STATEMENT = "stmt:"
+}
+
+/**
+ * 使用者輸入的某張卡某一期帳單（R-CARD-23）。[year]/[month] 是結帳日所在的年月。
+ * 帳單金額和 App 估計的差額另外記成一筆記帳（識別碼 `stmt:`）；這裡保存帳單上的最低應繳，
+ * 以及校正時是否把這一期的循環利息一併算進帳單（[coversInterest]，刪除校正時要把利息放回本月到期）。
+ */
+data class CardStatement(
+    val cardId: Long,
+    val year: Int,
+    val month: Int,
+    val amount: Money,
+    val minimumPayment: Money? = null,
+    val coversInterest: Boolean = false,
+) {
+    val yearMonth: java.time.YearMonth get() = java.time.YearMonth.of(year, month)
 }
 
 /** 帳戶在某天校正後的餘額。 */

@@ -135,10 +135,6 @@ data class CheckInResult(
     val skippedKeys: List<String> = emptyList(),
     /** 記下貸款月繳後的剩餘期數。 */
     val loanRemaining: Map<Long, Int> = emptyMap(),
-    /** 記下第一次利息後清掉既有卡循的卡片條件。 */
-    val cardTerms: Map<Long, tw.myfsl.app.core.model.CardTerms> = emptyMap(),
-    /** 清掉既有卡循時記下的原值（刪掉那筆利息時恢復）。 */
-    val markers: List<String> = emptyList(),
 ) {
     /** 這次記下的到期項目。 */
     val dueEntries: List<LedgerEntry> get() = entries.filter { it.source == EntrySource.DUE }
@@ -404,8 +400,6 @@ object CheckInRules {
         // 到期還沒記下的項目：已付就照建議金額記下，金額不同就記實際金額，這個月沒有就略過（R-DUE-05）。
         val skipped = mutableListOf<String>()
         val loanRemaining = mutableMapOf<Long, Int>()
-        val cardTerms = mutableMapOf<Long, tw.myfsl.app.core.model.CardTerms>()
-        val markers = mutableListOf<String>()
         dueLines(snapshot, date, input).forEach { due ->
             val decision = input.dues[due.key] ?: return@forEach
             if (decision.choice == DueCheck.DIFFERENT_AMOUNT) requireNotNull(decision.amount) { "金額不同需要輸入實際金額" }
@@ -419,8 +413,6 @@ object CheckInRules {
                 val current = loanRemaining[id] ?: snapshot.account(id)?.loan?.remainingMonths ?: 0
                 loanRemaining[id] = (current - 1).coerceAtLeast(0)
             }
-            record.cardTerms?.let { (id, terms) -> cardTerms[id] = terms }
-            record.marker?.let { markers += it }
         }
 
         reconciles(snapshot, entries, date).forEach { row ->
@@ -437,7 +429,7 @@ object CheckInRules {
             row.accounts.forEach { balances[it.id] = decision.balances.getValue(it.id) }
         }
 
-        return CheckInResult(entries, actuals, balances, deferrals, skipped, loanRemaining, cardTerms, markers)
+        return CheckInResult(entries, actuals, balances, deferrals, skipped, loanRemaining)
     }
 
     private fun adjustment(

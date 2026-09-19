@@ -67,12 +67,18 @@ data class CardView(
     val available: Money?,
     /** 本月指定這張卡的刷卡。 */
     val monthSpending: Money,
-    /** 本月預計繳這張卡的金額：有循環條件依合約（加額外還款），沒有則依計畫轉帳。 */
+    /** 本月預計繳這張卡的金額：依帳單繳款的卡照預設繳款方式（加額外還款），沒有則依計畫轉帳。 */
     val fixedPayment: Money,
-    /** 當期循環利息；沒有設定循環條件時為 0。 */
+    /** 下一期預估的循環利息（自由、最低沒繳清的部分）；全額或沒有條件時為 0。 */
     val interest: Money = 0,
-    /** 最低應繳；沒有設定循環條件時為 null。 */
+    /** 帳單上的最低應繳（帳單校正時輸入的，R-CARD-23）；沒有為 null。 */
     val minimumPayment: Money? = null,
+    /** 目前這一期帳單還沒繳的部分；不是依帳單繳款的卡為 null。 */
+    val currentBill: Money? = null,
+    /** 目前這一期的結帳日與截止日；不是依帳單繳款的卡為 null。 */
+    val cycle: CardRules.Cycle? = null,
+    /** 目前這一期已經輸入帳單（帳單校正）。 */
+    val billEntered: Boolean = false,
     /** 未入帳的分期本金：已經佔用額度，但還沒變成要繳的卡債。 */
     val pendingInstallmentPrincipal: Money = 0,
     /** 未結清的分期筆數。 */
@@ -103,8 +109,13 @@ data class AccountsOverview(
     /** 未指定卡片的分期未入帳本金。 */
     val unassignedInstallmentPrincipal: Money = 0,
     val loans: List<LoanView>,
+    /** 要留給卡費的現金（R-CARD-25）。 */
+    val cardReserve: Money = 0,
 ) {
     val liquid: Money get() = liquidAccounts.sumOf { it.balance }
+
+    /** 扣掉要留給卡費的，真正可以用的現金（R-CARD-25）。 */
+    val freeCash: Money get() = liquid - cardReserve
 
     /** 已入帳卡款：各卡欠款＋未指定卡片的刷卡。 */
     val cardDebt: Money get() = cards.sumOf { it.account.balance } + unassignedCardSpending
@@ -139,6 +150,11 @@ object AccountSummaryCalculator {
             val own = snapshot.installments.filter { (it.cardAccountId ?: defaultCard) == card.id }
             val installments = InstallmentRules.summary(snapshot, own)
             val pending = installments.pendingPrincipal
+            val cycle = if (card.hasCardSchedule) CardRules.latestCycle(card, snapshot.today) else null
+            val bill = cycle?.let {
+                DueItems.paymentOptions(snapshot, card, CardRules.baseBalance(snapshot, card), it, emptyList(), card.balance)
+                    .takeIf { _ -> !DueItems.isRecorded(snapshot, DueItems.cardPaymentKey(card.id, it.yearMonth)) }
+            }
             CardView(
                 account = card,
                 utilizationPercent = card.creditLimit?.takeIf { it > 0 }?.let { limit ->
@@ -150,12 +166,15 @@ object AccountSummaryCalculator {
                     it.type == FlowType.EXPENSE && it.accountId == card.id && !it.isCardCharge &&
                         it.date.year == year && it.date.monthValue == month
                 }.sumOf { it.amount },
-                // 有循環條件：依合約繳款＋標成額外還款的計畫轉帳；沒有：計畫中繳這張卡的轉帳（R-PAY-01）。
-                fixedPayment = (card.card?.let { CardRules.outlook(card.balance, it, monthlySpending = 0).payment } ?: 0L) +
-                    transfers.filter { it.toAccountId == card.id && (card.card == null || it.extraRepayment) }
+                // 依帳單繳款：本期帳單照預設繳款方式＋標成額外還款的計畫轉帳；沒有：計畫中繳這張卡的轉帳（R-PAY-01）。
+                fixedPayment = (bill?.of(card.card!!.payMode) ?: 0L) +
+                    transfers.filter { it.toAccountId == card.id && (!card.hasCardSchedule || it.extraRepayment) }
                         .sumOf { snapshot.planAmount(PlanLine(it.id, null), year, month) },
-                interest = card.card?.let { CardRules.monthlyInterest(CardRules.interestBase(card.balance, it), it.revolvingRatePercent) } ?: 0,
-                minimumPayment = card.card?.let { CardRules.minimumPayment(card.balance, it) },
+                interest = card.card?.let { CardRules.outlook(card.balance, it, monthlySpending = 0).interest } ?: 0,
+                minimumPayment = cycle?.let { snapshot.statementOf(card.id, it.yearMonth)?.minimumPayment },
+                currentBill = bill?.full,
+                cycle = cycle,
+                billEntered = cycle?.let { snapshot.statementOf(card.id, it.yearMonth) } != null,
                 pendingInstallmentPrincipal = pending,
                 installmentCount = installments.count,
                 nextInstallmentAmount = installments.nextAmount,
@@ -176,6 +195,7 @@ object AccountSummaryCalculator {
         }
 
         return AccountsOverview(
+            cardReserve = CardRules.reserve(snapshot),
             liquidAccounts = active.filter { it.kind.isLiquid },
             cards = cards,
             unassignedCardSpending = snapshot.unassignedCardSpending,

@@ -75,8 +75,8 @@ class ScenarioAndGoalTest {
         val result = CashFlowEngine.run(applied)
         val octResult = result.periods.first { it.period == oct }
         val debtBefore = result.periods.first { it.period == oct.plus(-1) }.cardDebtEnd
-        // 同一個半月先計 A 卡利息（A 欠 62,150 × 15% ÷ 12 = 777）再清償（R-ORD-01）
-        assertEquals(debtBefore + 777, octResult.debtPayoff)
+        // 10/1 結帳和 10/15 截止同一個半月：先計 A 卡利息（9/1 帳單 50,200 − 9/15 已繳 18,000 = 32,200 × 15% ÷ 12 = 402.5 → 403）再清償（R-ORD-01）
+        assertEquals(debtBefore + 403, octResult.debtPayoff)
         assertEquals(0L, octResult.cardPayments)
         // 期初清償後，同一個半月的刷卡成為新的卡債
         assertEquals("刷卡都在預設卡片 A", octResult.cardSpending, octResult.balances[CARD_A])

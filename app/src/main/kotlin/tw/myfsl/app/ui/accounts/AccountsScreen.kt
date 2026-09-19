@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -62,6 +63,11 @@ fun AccountsScreen(
     onSave: () -> Unit,
     onCancel: () -> Unit,
     onArchive: () -> Unit,
+    onOpenBill: (Long) -> Unit,
+    onBillChange: ((BillEditor) -> BillEditor) -> Unit,
+    onBillSave: () -> Unit,
+    onBillDelete: () -> Unit,
+    onBillClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (state.loading) {
@@ -74,6 +80,7 @@ fun AccountsScreen(
         return
     }
     val overview = state.overview ?: return
+    state.bill?.let { BillDialog(it, onBillChange, onBillSave, onBillDelete, onBillClose) }
 
     Box(modifier.fillMaxSize()) {
         LazyColumn(
@@ -87,6 +94,15 @@ fun AccountsScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SummaryTile("可動用現金", MoneyFormat.currency(overview.liquid), Modifier.weight(1f))
                     SummaryTile("負債合計", MoneyFormat.currency(overview.totalDebt), Modifier.weight(1f))
+                }
+                if (overview.cardReserve > 0) {
+                    Text(
+                        "可動用現金裡有 ${MoneyFormat.currency(overview.cardReserve)} 要留著繳卡費（已經刷了、之後要繳的），" +
+                            "扣掉後真正可用 ${MoneyFormat.currency(overview.freeCash)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
                 }
                 if (overview.cards.isNotEmpty() || overview.unassignedCardSpending > 0) {
                     Text(
@@ -117,6 +133,10 @@ fun AccountsScreen(
                             if (card.pendingInstallmentPrincipal > 0) "\n總 ${MoneyFormat.currency(card.totalDebt)}" else "",
                         details = cardDetails(card),
                         warn = (card.utilizationPercent ?: 0) >= 50,
+                        action = card.cycle?.let { cycle ->
+                            (if (card.billEntered) "修改帳單（${cycle.statement.monthValue}/${cycle.statement.dayOfMonth} 結帳）" else "輸入帳單（${cycle.statement.monthValue}/${cycle.statement.dayOfMonth} 結帳）") to
+                                { onOpenBill(card.account.id) }
+                        },
                     ) { onEdit(card.account) }
                 }
             }
@@ -161,12 +181,26 @@ private fun cardDetails(card: CardView): List<String> = buildList {
     if (card.installmentCount > 0) {
         add("分期 ${card.installmentCount} 筆 · 未入帳 ${MoneyFormat.currency(card.pendingInstallmentPrincipal)} · 下期 ${MoneyFormat.currency(card.nextInstallmentAmount)}")
     }
-    card.account.card?.let { terms ->
-        add("循環年利率 ${trim(terms.revolvingRatePercent)}% · 當期利息 ${MoneyFormat.currency(card.interest)} · 最低應繳 ${MoneyFormat.currency(card.minimumPayment ?: 0)}")
-        terms.revolvingBalance?.let { add("既有卡循 ${MoneyFormat.currency(it)}") }
-    }
-    val days = listOfNotNull(card.account.statementDay?.let { "結帳日 $it 日" }, card.account.paymentDueDay?.let { "繳款日 $it 日" })
+    val days = listOfNotNull(card.account.statementDay?.let { "結帳日 $it 日" }, card.account.paymentDueDay?.let { "截止日 $it 日" })
     if (days.isNotEmpty()) add(days.joinToString(" · "))
+    card.account.card?.let { terms ->
+        add(
+            listOfNotNull(
+                "繳款方式：${terms.payMode.label}",
+                terms.revolvingRatePercent?.let { "循環年利率 ${trim(it)}%" },
+                card.interest.takeIf { it > 0 }?.let { "下期利息約 ${MoneyFormat.currency(it)}" },
+            ).joinToString(" · "),
+        )
+        val cycle = card.cycle
+        val bill = card.currentBill
+        if (cycle != null && bill != null && bill > 0) {
+            add(
+                "本期帳單還要繳 ${MoneyFormat.currency(bill)}（${cycle.due.monthValue}/${cycle.due.dayOfMonth} 截止）" +
+                    (card.minimumPayment?.let { " · 帳單最低 ${MoneyFormat.currency(it)}" } ?: "") +
+                    if (card.billEntered) " · 已照帳單校正" else "",
+            )
+        }
+    }
     if (card.monthSpending > 0) add("本月已刷 ${MoneyFormat.currency(card.monthSpending)}")
 }
 
@@ -203,6 +237,7 @@ private fun AccountRow(
     amount: String,
     details: List<String>,
     warn: Boolean,
+    action: Pair<String, () -> Unit>? = null,
     onClick: () -> Unit,
 ) {
     Card(
@@ -225,6 +260,7 @@ private fun AccountRow(
                     color = if (warn && it.contains("使用率")) StatusColors.warningText else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            action?.let { (label, onAction) -> TextButton(onClick = onAction) { Text(label) } }
         }
     }
 }
@@ -276,42 +312,43 @@ private fun AccountEditorForm(
 
         if (draft.isCard && editor.showAdvanced) {
             HorizontalDivider()
-            Text("這些都可以不填；不填的話卡片只記欠款，不計算利息。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("這些都可以不填；不填的話卡片只記欠款，繳卡費照計畫走。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextInput("發卡銀行", draft.issuer, null) { value -> onChange { it.copy(issuer = value) } }
             TextInput("額度", draft.creditLimit, errors[Field.LIMIT], number = true) { value -> onChange { it.copy(creditLimit = value) } }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextInput("結帳日", draft.statementDay, errors[Field.STATEMENT_DAY], number = true, modifier = Modifier.weight(1f)) { value ->
                     onChange { it.copy(statementDay = value) }
                 }
-                TextInput("繳款日", draft.payDay, errors[Field.PAY_DAY], number = true, modifier = Modifier.weight(1f)) { value ->
+                TextInput("繳款截止日", draft.payDay, errors[Field.PAY_DAY], number = true, modifier = Modifier.weight(1f)) { value ->
                     onChange { it.copy(payDay = value) }
                 }
             }
-            SwitchRow("計算循環利息", draft.revolvingEnabled) { checked -> onChange { it.copy(revolvingEnabled = checked) } }
-            if (draft.revolvingEnabled) {
-                TextInput("循環年利率（%）", draft.revolvingRate, errors[Field.RATE], number = true) { value -> onChange { it.copy(revolvingRate = value) } }
-                TextInput("既有卡循（選填）", draft.revolvingBalance, errors[Field.REVOLVING_BALANCE], number = true) { value -> onChange { it.copy(revolvingBalance = value) } }
-                Text(
-                    "帳單上前期沒繳清、已經在計息的金額。不填就當作整筆欠款都在計息。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextInput("最低應繳比例（%）", draft.minPercent, errors[Field.MIN_PERCENT], number = true, modifier = Modifier.weight(1f)) { value ->
-                        onChange { it.copy(minPercent = value) }
-                    }
-                    TextInput("最低應繳下限", draft.minFloor, errors[Field.MIN_FLOOR], number = true, modifier = Modifier.weight(1f)) { value ->
-                        onChange { it.copy(minFloor = value) }
-                    }
-                }
-                Text("繳款方式", style = MaterialTheme.typography.labelLarge)
+            SwitchRow("依帳單繳款（到期列在本月到期）", draft.scheduleEnabled) { checked -> onChange { it.copy(scheduleEnabled = checked) } }
+            if (draft.scheduleEnabled) {
+                Text("繳款方式（每期到期時還可以臨時換）", style = MaterialTheme.typography.labelLarge)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     CardPayMode.entries.forEach { mode ->
                         FilterChip(selected = draft.payMode == mode, onClick = { onChange { it.copy(payMode = mode) } }, label = { Text(mode.label) })
                     }
                 }
-                if (draft.payMode == CardPayMode.FIXED) {
-                    TextInput("每月繳款金額", draft.fixedPayment, errors[Field.FIXED], number = true) { value -> onChange { it.copy(fixedPayment = value) } }
+                Text(
+                    when (draft.payMode) {
+                        CardPayMode.FULL -> "每期繳清帳單金額，不會有循環利息。"
+                        CardPayMode.FREE -> "每期自己決定繳多少；沒繳清的部分會計循環利息。"
+                        CardPayMode.MINIMUM -> "照帳單上的最低應繳（帳單來時輸入）；沒繳清的部分會計循環利息。"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val partial = draft.payMode != CardPayMode.FULL
+                TextInput(if (partial) "循環年利率（%）" else "循環年利率（%，選填）", draft.revolvingRate, errors[Field.RATE], number = true) { value ->
+                    onChange { it.copy(revolvingRate = value) }
+                }
+                if (partial) {
+                    TextInput("預估每月繳款", draft.estimatedPayment, errors[Field.ESTIMATE], number = true) { value ->
+                        onChange { it.copy(estimatedPayment = value) }
+                    }
+                    Text("試算用；帳單來時可以輸入實際的最低應繳。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 PayAccountPicker(draft.payAccountId, payAccounts, null) { id -> onChange { it.copy(payAccountId = id) } }
             }
@@ -358,6 +395,44 @@ private fun AccountEditorForm(
             }
         }
     }
+}
+
+/** 帳單校正（R-CARD-23）：輸入帳單金額與選填的最低應繳；和 App 估計不同時，差額另記一筆。 */
+@Composable
+private fun BillDialog(
+    bill: BillEditor,
+    onChange: ((BillEditor) -> BillEditor) -> Unit,
+    onSave: () -> Unit,
+    onDelete: () -> Unit,
+    onClose: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("${bill.cardName} 帳單（${bill.cycle.statement.monthValue}/${bill.cycle.statement.dayOfMonth} 結帳）") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "App 估計 ${MoneyFormat.currency(bill.estimate)}，${bill.cycle.due.monthValue}/${bill.cycle.due.dayOfMonth} 截止。照帳單輸入，差額會另記一筆「帳單差額」。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextInput("帳單金額", bill.amount, bill.error.takeIf { it?.contains("帳單金額") == true && it.startsWith("請") }, number = true) { value ->
+                    onChange { it.copy(amount = value) }
+                }
+                TextInput("最低應繳（選填）", bill.minimum, bill.error.takeIf { it?.startsWith("最低") == true }, number = true) { value ->
+                    onChange { it.copy(minimum = value) }
+                }
+                bill.error?.takeIf { !it.startsWith("請") && !it.startsWith("最低") }?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                if (bill.existing) {
+                    TextButton(onClick = onDelete) { Text("刪除這一期的校正", color = MaterialTheme.colorScheme.error) }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onSave) { Text("儲存") } },
+        dismissButton = { TextButton(onClick = onClose) { Text("取消") } },
+    )
 }
 
 @Composable

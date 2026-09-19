@@ -135,9 +135,9 @@ object BaselineBuilder {
         addDueItems(snapshot, input, end, events)
         addDeferrals(snapshot, input, end, events)
         val beyond = addInstallments(snapshot, input, end, events)
-        addCardSchedule(snapshot, input, end, events)
+        val open = addCardSchedule(snapshot, input, end, events)
         addLoanSchedules(snapshot, input, end, events)
-        return input.copy(events = events, installmentsBeyond = beyond)
+        return input.copy(events = events, installmentsBeyond = beyond, openStatements = open)
     }
 
     private fun MutableList<FlowEvent>.addIfInRange(
@@ -260,57 +260,76 @@ object BaselineBuilder {
     }
 
     /**
-     * 有循環條件的卡，逐卡在各自的繳款日產生：先計息，再依該卡繳款方式扣款（R-CARD-03）。
-     * 從起算日之後的第一個繳款日開始；已經記下的月份跳過，到期了還沒記下的放在今天所在的半月（R-DUE）。
+     * 有繳款條件的卡（R-CARD-20–22），逐卡：
+     * - 今天以前到期、還沒記下的利息與繳款：用本月到期算好的金額，放在今天所在的半月。
+     * - 目前這一期（最近一次結帳、截止日在今天之後）：帳單還沒繳的部分當成試算開始時的帳單（回傳值）。
+     * - 今天以後：結帳日先計上一期沒繳清的利息、再結帳；截止日依預設方式繳（全額繳帳單，自由與最低繳預估金額）。
      */
-    private fun addCardSchedule(snapshot: FinanceSnapshot, input: ForecastInput, endIndex: Int, events: MutableList<FlowEvent>) {
-        snapshot.activeCards.forEach { card ->
-            val terms = card.card ?: return@forEach
+    private fun addCardSchedule(snapshot: FinanceSnapshot, input: ForecastInput, endIndex: Int, events: MutableList<FlowEvent>): Map<Long, Money> {
+        val today = snapshot.today
+        val open = mutableMapOf<Long, Money>()
+        // 已到期還沒記下的（照建議金額）：放在今天所在的半月。它們已經算進下面「目前這一期」的帳單，不再算成結帳後的繳款。
+        val overdue = DueItems.list(snapshot, through = today).filter { it.kind == DueKind.CARD_INTEREST || it.kind == DueKind.CARD_PAYMENT }
+        overdue.forEach { due ->
+            val entry = due.entries.single()
+            events += FlowEvent(
+                period = input.start,
+                kind = if (due.kind == DueKind.CARD_INTEREST) EventKind.EXPENSE else EventKind.TRANSFER,
+                amount = due.amount,
+                label = due.title,
+                fromAccountId = entry.accountId,
+                toAccountId = entry.toAccountId,
+                relatedAccountId = due.relatedAccountId,
+                countsTowardStatement = false,
+                source = EventSource.CARD_SCHEDULE,
+            )
+        }
+        val overdueEntries = overdue.flatMap { it.entries }
+        val endDate = Period.fromIndex(endIndex).startDate
+        snapshot.activeCards.filter { it.hasCardSchedule }.forEach { card ->
+            val terms = card.card!!
             val payAccount = terms.payAccountId?.takeIf { id -> input.accounts.any { it.id == id && it.kind.isLiquid } }
                 ?: snapshot.methodAccountId(PaymentMethod.TRANSFER)
-            var due = nextDue(snapshot.trackingFrom, terms.payDay)
-            var first = true
-            while (periodFor(snapshot, due, input).index < endIndex) {
-                val period = periodFor(snapshot, due, input)
-                val ym = YearMonth.from(due)
-                if (!DueItems.isRecorded(snapshot, DueItems.cardInterestKey(card.id, ym))) events += FlowEvent(
-                    period = period,
-                    kind = EventKind.EXPENSE,
-                    amount = 0,
-                    label = "${card.name} 循環利息",
-                    fromAccountId = card.id,
-                    relatedAccountId = card.id,
-                    interestRatePercent = terms.revolvingRatePercent,
-                    // 既有卡循只影響第一次計息；之後沒繳清的欠款都會計息。
-                    interestBase = if (first) terms.revolvingBalance else null,
-                    source = EventSource.CARD_SCHEDULE,
-                ).also { first = false }
-                if (payAccount != null && !DueItems.isRecorded(snapshot, DueItems.cardPaymentKey(card.id, ym))) {
-                    val payment = when (terms.payMode) {
-                        CardPayMode.FULL -> FlowEvent(
-                            period = period, kind = EventKind.TRANSFER, amount = 0, label = "繳 ${card.name}（當期全額）",
-                            fromAccountId = payAccount, toAccountId = card.id, relatedAccountId = card.id,
-                            payFullBalance = true, source = EventSource.CARD_SCHEDULE,
-                        )
-
-                        CardPayMode.MINIMUM -> FlowEvent(
-                            period = period, kind = EventKind.TRANSFER, amount = 0, label = "繳 ${card.name}（最低應繳）",
-                            fromAccountId = payAccount, toAccountId = card.id, relatedAccountId = card.id,
-                            minimumPayment = MinimumPaymentRule(terms.minPaymentPercent, terms.minPaymentFloor, terms.revolvingRatePercent),
-                            source = EventSource.CARD_SCHEDULE,
-                        )
-
-                        CardPayMode.FIXED -> FlowEvent(
-                            period = period, kind = EventKind.TRANSFER, amount = terms.fixedPayment ?: 0, label = "繳 ${card.name}",
-                            fromAccountId = payAccount, toAccountId = card.id, relatedAccountId = card.id,
-                            source = EventSource.CARD_SCHEDULE,
+            CardRules.latestCycle(card, today)?.let { current ->
+                if (current.due.isAfter(snapshot.trackingFrom)) {
+                    val options = DueItems.paymentOptions(snapshot, card, CardRules.baseBalance(snapshot, card), current, overdueEntries, Long.MAX_VALUE)
+                    open[card.id] = options.full
+                }
+            }
+            CardRules.cycles(card, today, endDate).forEach { cycle ->
+                val ym = YearMonth.from(cycle.statement)
+                if (cycle.statement.isAfter(today) && Period.of(cycle.statement).index < endIndex) {
+                    val period = Period.of(cycle.statement)
+                    val early = Period.of(cycle.due).index == period.index
+                    if (!DueItems.isRecorded(snapshot, DueItems.cardInterestKey(card.id, ym))) {
+                        events += FlowEvent(
+                            period = period, kind = EventKind.EXPENSE, amount = 0, label = "${card.name} 循環利息",
+                            fromAccountId = card.id, relatedAccountId = card.id,
+                            interestRatePercent = terms.revolvingRatePercent ?: 0.0, statementEarly = early, source = EventSource.CARD_SCHEDULE,
                         )
                     }
-                    if (payment.amount > 0 || payment.payFullBalance || payment.minimumPayment != null) events += payment
+                    events += FlowEvent(
+                        period = period, kind = EventKind.EXPENSE, amount = 0, label = "${card.name} 結帳",
+                        relatedAccountId = card.id, statementOf = card.id, statementEarly = early, source = EventSource.CARD_SCHEDULE,
+                    )
                 }
-                due = nextDue(due, terms.payDay)
+                if (payAccount != null && cycle.due.isAfter(today) && Period.of(cycle.due).index < endIndex &&
+                    !DueItems.isRecorded(snapshot, DueItems.cardPaymentKey(card.id, ym))
+                ) {
+                    val label = "繳 ${card.name}（${terms.payMode.label}）"
+                    val base = FlowEvent(
+                        period = Period.of(cycle.due), kind = EventKind.TRANSFER, amount = 0, label = label,
+                        fromAccountId = payAccount, toAccountId = card.id, relatedAccountId = card.id, source = EventSource.CARD_SCHEDULE,
+                    )
+                    events += when (terms.payMode) {
+                        CardPayMode.FULL -> base.copy(payStatement = true)
+                        CardPayMode.FREE -> base.copy(amount = terms.estimatedPayment ?: 0L)
+                        CardPayMode.MINIMUM -> base.copy(amount = snapshot.statementOf(card.id, ym)?.minimumPayment ?: terms.estimatedPayment ?: 0L)
+                    }
+                }
             }
         }
+        return open
     }
 
     /** 有攤還條件的貸款：從起算日之後還沒記下的繳款日開始，依目前餘額與剩餘期數攤還（R-DUE）。 */

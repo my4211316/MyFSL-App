@@ -6,6 +6,7 @@ import tw.myfsl.app.core.model.ActualStatus
 import tw.myfsl.app.core.model.AppSettings
 import tw.myfsl.app.core.model.CardInstallment
 import tw.myfsl.app.core.model.CardPayMode
+import tw.myfsl.app.core.model.CardStatement
 import tw.myfsl.app.core.model.CardTerms
 import tw.myfsl.app.core.model.Deferral
 import tw.myfsl.app.core.model.EntrySource
@@ -52,9 +53,9 @@ class DueItemsTest {
     private val PAY_B = 301L
     private val PAY_CARD = 302L
 
+    /** 5 日結帳、次月 3 日截止、照帳單繳最低（沒輸入帳單時預估 4,000）、年利率 12%。 */
     private val cardTerms = CardTerms(
-        revolvingRatePercent = 12.0, minPaymentPercent = 10.0, minPaymentFloor = 1_000,
-        payMode = CardPayMode.MINIMUM, payAccountId = BANK, payDay = 10,
+        payMode = CardPayMode.MINIMUM, revolvingRatePercent = 12.0, estimatedPayment = 4_000, payAccountId = BANK,
     )
 
     private val installment = CardInstallment(
@@ -81,7 +82,10 @@ class DueItemsTest {
             today = today,
             accounts = listOf(
                 Account(BANK, "銀行", AccountKind.BANK, balance = 100_000, balanceAsOf = today, sortOrder = 1),
-                Account(CARD, "有循環條件的卡", AccountKind.CREDIT_CARD, balance = 40_000, balanceAsOf = today, card = terms, sortOrder = 2),
+                Account(
+                    CARD, "依帳單繳款的卡", AccountKind.CREDIT_CARD, balance = 40_000, balanceAsOf = today,
+                    statementDay = 5, paymentDueDay = 3, card = terms, sortOrder = 2,
+                ),
                 Account(CARD_B, "沒有循環條件的卡", AccountKind.CREDIT_CARD, balance = 3_000, balanceAsOf = today, sortOrder = 3),
                 Account(
                     LOAN, "貸款", AccountKind.LOAN, balance = 120_000, balanceAsOf = today,
@@ -143,11 +147,17 @@ class DueItemsTest {
             assertEquals(EntrySource.DUE, entries.single().source)
         }
 
-        // 9/10 先計息 40,000 × 12% ÷ 12 = 400，再繳最低應繳 max(1,000, 40,400 × 10%) = 4,040
-        assertEquals(400L, dues.item("cardint:3:2026-09").amount)
-        dues.entry("cardpay:3:2026-09").run { assertEquals(4_040L, amount); assertEquals(BANK, accountId); assertEquals(CARD, toAccountId) }
+        // 9/3 繳 8/5 那期帳單：還沒輸入帳單，最低用預估 4,000；三種方式的金額都帶著（全額 = 帳單 40,000）
+        dues.entry("cardpay:3:2026-08").run { assertEquals(4_000L, amount); assertEquals(BANK, accountId); assertEquals(CARD, toAccountId) }
+        dues.item("cardpay:3:2026-08").run {
+            assertEquals(CardPayMode.MINIMUM, payMode)
+            assertEquals(CardRules.PaymentOptions(full = 40_000, free = 4_000, minimum = 4_000), payOptions)
+            assertEquals(LocalDate.of(2026, 8, 5), statementDate)
+        }
+        // 9/5 結帳：8/5 那期帳單 40,000 繳了 4,000，沒繳清的 36,000 × 12% ÷ 12 = 360
+        assertEquals(360L, dues.item("cardint:3:2026-09").amount)
         val order = dues.map { it.key }
-        assertTrue("先計息再繳款", order.indexOf("cardint:3:2026-09") < order.indexOf("cardpay:3:2026-09"))
+        assertTrue("先繳上一期、再結帳計息", order.indexOf("cardpay:3:2026-08") < order.indexOf("cardint:3:2026-09"))
 
         // 9/10 房租：支出，可以選支付方式，預設計畫的「轉帳」
         dues.item("plan:201:TRANSFER:2026-09:10").run {
@@ -202,21 +212,43 @@ class DueItemsTest {
     }
 
     @Test fun `標成額外還款的轉帳才列出`() {
-        // 9/10 繳款後欠 40,000 ＋ 400 − 4,040 = 36,360，額外還 5,000 不受限
+        // 9/12 時欠 40,000 − 4,000 ＋ 360 = 36,360，額外還 5,000 不受限
         assertEquals(5_000L, reached(snapshot(extraRepayment = true)).item("plan:302:-:2026-09:12").amount)
     }
 
-    @Test fun `既有卡循只影響第一次計息；記下後清掉`() {
-        val s = snapshot(from = LocalDate.of(2026, 7, 31), terms = cardTerms.copy(revolvingBalance = 10_000))
+    @Test fun `逐期計息：每期結帳時算上一期沒繳清的；起算前就截止的那期視為繳清`() {
+        // 7/31 起算：7/5 那期的截止日 8/3 在起算之後 → 8/3 繳 4,000；8/5 結帳 (40,000 − 4,000) × 1% = 360
+        val s = snapshot(from = LocalDate.of(2026, 7, 31))
         val dues = reached(s)
-        // 8/10：10,000 × 1% = 100；最低應繳 max(1,000, 40,100 × 10%) = 4,010 → 欠 36,090
-        assertEquals(100L, dues.item("cardint:3:2026-08").amount)
-        assertEquals(4_010L, dues.item("cardpay:3:2026-08").amount)
-        // 9/10：36,090 × 1% = 360.9 → 361
-        assertEquals(361L, dues.item("cardint:3:2026-09").amount)
+        assertEquals(4_000L, dues.item("cardpay:3:2026-07").amount)
+        assertEquals(360L, dues.item("cardint:3:2026-08").amount)
         dues.item("cardint:3:2026-08").run { assertTrue("8 月的是上個月到期", isOverdue(today)) }
-        val record = DueItems.record(s, dues.item("cardint:3:2026-08"), DueItems.defaultChoice(s, dues.item("cardint:3:2026-08")))
-        assertNull("寫回卡片：既有卡循清掉", record.cardTerms!!.second.revolvingBalance)
+        // 8/5 帳單 = 40,000 − 4,000 ＋ 360 = 36,360；9/3 繳 4,000；9/5 結帳 32,360 × 1% = 323.6 → 324
+        assertEquals(36_360L, dues.item("cardpay:3:2026-08").payOptions!!.full)
+        assertEquals(324L, dues.item("cardint:3:2026-09").amount)
+        // 8/31 起算：7/5 那期 8/3 就截止了，當天輸入的餘額已經反映 → 8/5 不計息
+        assertTrue(reached(snapshot()).none { it.key == "cardint:3:2026-08" })
+    }
+
+    @Test fun `帳單上的最低應繳：輸入後這一期「最低」改用帳單上的金額；每期可以臨時換方式`() {
+        val statement = CardStatement(CARD, 2026, 8, amount = 40_000, minimumPayment = 2_500)
+        val s = snapshot().copy(cardStatements = listOf(statement))
+        val pay = reached(s).item("cardpay:3:2026-08")
+        assertEquals(CardRules.PaymentOptions(full = 40_000, free = 4_000, minimum = 2_500), pay.payOptions)
+        assertEquals("預設「最低」→ 帳單上的 2,500", 2_500L, pay.amount)
+        // 這一期臨時改全額：記下的金額與備註照選的方式
+        val full = DueChoice(40_000, accountId = BANK, date = LocalDate.of(2026, 9, 3), payMode = CardPayMode.FULL)
+        DueItems.record(s, pay, full).entries.single().run {
+            assertEquals(40_000L, amount)
+            assertEquals("繳 依帳單繳款的卡（全額）", note)
+        }
+        // 9/3 全額繳清 → 9/5 結帳不計息；卡片的預設方式不變
+        val paidFull = s.copy(
+            ledger = DueItems.record(s, pay, full).entries,
+            accounts = s.accounts.map { if (it.id == CARD) it.copy(balance = 0) else it },
+        )
+        assertTrue(reached(paidFull).none { it.key == "cardint:3:2026-09" })
+        assertEquals(CardPayMode.MINIMUM, paidFull.account(CARD)!!.card!!.payMode)
     }
 
     // ---------- 點下去：選支付方式、改金額 ----------

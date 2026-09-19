@@ -54,7 +54,7 @@ class ScenarioFormTest {
             changes,
         )
         val comparison = ForecastComparisonCalculator.compare(snapshot, listOf(result.scenario), 24)
-        assertEquals(13_009L, comparison.outcomes[1].lowest)
+        assertEquals(14_133L, comparison.outcomes[1].lowest)
         assertEquals(0L, comparison.outcomes[1].endCardDebt)
         assertEquals(18_465L, comparison.outcomes[0].lowest)
         assertEquals(18_465L, comparison.bestLowest)

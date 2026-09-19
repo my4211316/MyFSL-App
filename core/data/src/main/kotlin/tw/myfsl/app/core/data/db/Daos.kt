@@ -26,8 +26,6 @@ interface AccountDao {
     @Query("UPDATE accounts SET loanRemainingMonths = loanRemainingMonths + 1 WHERE id = :id AND loanRemainingMonths IS NOT NULL")
     suspend fun addLoanRemainingMonth(id: Long)
 
-    @Query("UPDATE accounts SET cardRevolvingBalance = :amount WHERE id = :id")
-    suspend fun setCardRevolvingBalance(id: Long, amount: Long?)
 
     @Query("SELECT * FROM balance_snapshots ORDER BY epochDay, id")
     fun observeSnapshots(): Flow<List<BalanceSnapshotEntity>>
@@ -187,6 +185,13 @@ interface MaintenanceDao {
     @Query("DELETE FROM card_installments") suspend fun clearInstallments()
     @Query("DELETE FROM posted_keys") suspend fun clearPostedKeys()
     @Query("DELETE FROM deferrals") suspend fun clearDeferrals()
+    @Query("DELETE FROM card_statements") suspend fun clearStatements()
+    @Query("SELECT * FROM card_statements ORDER BY cardId, year, month") suspend fun allStatements(): List<CardStatementEntity>
+    @Insert suspend fun insertStatements(list: List<CardStatementEntity>)
+    @Upsert suspend fun upsertStatement(entity: CardStatementEntity)
+
+    @Query("DELETE FROM card_statements WHERE cardId = :cardId AND year = :year AND month = :month")
+    suspend fun deleteStatement(cardId: Long, year: Int, month: Int)
     @Query("SELECT * FROM posted_keys") suspend fun allPostedKeys(): List<PostedKeyEntity>
     @Query("SELECT generation FROM data_generation WHERE id = 0") suspend fun generation(): Long?
     @Upsert suspend fun setGeneration(entity: DataGenerationEntity)

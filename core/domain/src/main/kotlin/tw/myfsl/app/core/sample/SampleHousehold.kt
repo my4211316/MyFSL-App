@@ -64,9 +64,9 @@ object SampleHousehold {
         Account(CASH, "零用現金", AccountKind.CASH, balance = 15_000, balanceAsOf = today, sortOrder = 2),
         Account(
             CARD_A, "信用卡 A", AccountKind.CREDIT_CARD, balance = 60_000, balanceAsOf = today,
-            creditLimit = 150_000, paymentDueDay = 15,
-            // A 卡依合約每月固定繳 18,000（自動扣款），計畫裡不另外列繳卡費。
-            card = CardTerms(revolvingRatePercent = 15.0, payMode = CardPayMode.FIXED, fixedPayment = 18_000, payAccountId = BANK, payDay = 15),
+            creditLimit = 150_000, paymentDueDay = 15, statementDay = 1,
+            // A 卡依帳單繳款、每月自由繳 18,000（自動扣款），沒繳清的部分計息；計畫裡不另外列繳卡費。
+            card = CardTerms(payMode = CardPayMode.FREE, revolvingRatePercent = 15.0, estimatedPayment = 18_000, payAccountId = BANK),
             sortOrder = 3,
         ),
         Account(

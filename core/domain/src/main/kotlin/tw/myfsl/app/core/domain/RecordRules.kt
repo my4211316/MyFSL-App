@@ -26,6 +26,7 @@ object RecordRules {
             entry.postingKey?.startsWith(PostingKeys.LOAN) == true -> "貸款月繳"
             else -> "每月固定"
         }
+        EntrySource.STATEMENT -> "帳單差額"
     }
 
     data class MonthTotals(val expense: Money, val income: Money)

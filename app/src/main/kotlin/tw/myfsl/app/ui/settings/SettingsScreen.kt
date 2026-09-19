@@ -117,6 +117,17 @@ fun SettingsScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
             )
+            OutlinedTextField(
+                value = draft.reminderDays,
+                onValueChange = { v -> onChange { it.copy(reminderDays = v) } },
+                label = { Text("到期前幾天提醒") },
+                supportingText = {
+                    Text(errors[Field.REMINDER_DAYS] ?: "用逗號分開，例如「7, 3」；空白為不提醒。卡費、貸款與每月固定的付款都會提醒")
+                },
+                isError = errors[Field.REMINDER_DAYS] != null,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
 
             HorizontalDivider()
             Section("記帳")

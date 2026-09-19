@@ -16,7 +16,7 @@ data class DeletionPlan(
     val ledgerIds: List<Long> = emptyList(),
     /** 依識別碼刪的記帳（同一組：貸款本金與利息、分期同一期的本金與手續費）。 */
     val ledgerKeys: List<String> = emptyList(),
-    /** 要從「已處理」清掉的識別碼（含第一次利息記下的既有卡循原值）。 */
+    /** 要從「已處理」清掉的識別碼。 */
     val postedKeys: List<String> = emptyList(),
     /** 整筆取消的分期：消費、已入帳各期、分期本身、這個分期的「已處理」識別碼一起刪。 */
     val cancelInstallmentId: Long? = null,
@@ -26,8 +26,8 @@ data class DeletionPlan(
     val reopenActual: ReopenActual? = null,
     /** 剩餘期數加回一期的貸款。 */
     val addLoanMonthTo: Long? = null,
-    /** 恢復的既有卡循：(卡片, 原本的金額)。 */
-    val restoreRevolving: Pair<Long, Money>? = null,
+    /** 刪掉的帳單校正：(卡片, 結帳年月)（R-CARD-23）。 */
+    val removeStatement: Pair<Long, java.time.YearMonth>? = null,
 ) {
     data class ReopenActual(val itemId: Long, val method: PaymentMethod?, val year: Int, val month: Int)
 }
@@ -56,22 +56,25 @@ object Deletion {
                 )
             }
 
+            // 帳單校正的差額：整筆校正一起刪，回到 App 的估計；校正時包含的利息回到本月到期（R-CARD-23）。
+            key != null && key.startsWith(PostingKeys.STATEMENT) -> BillCorrection.removal(snapshot, key)?.let { (cardId, ym) ->
+                val covered = snapshot.statementOf(cardId, ym)?.coversInterest == true
+                DeletionPlan(
+                    ledgerIds = listOf(entry.id),
+                    ledgerKeys = listOf(key),
+                    postedKeys = if (covered) listOf(DueItems.cardInterestKey(cardId, ym)) else emptyList(),
+                    removeStatement = cardId to ym,
+                )
+            } ?: DeletionPlan(ledgerIds = listOf(entry.id))
+
             // 到期記下的：同一組一起刪，回到本月到期清單。某一期分期只刪那一期（F09）。
             key != null -> {
                 val group = DueItems.groupKeys(key)
-                val interestKey = group.firstOrNull { it.startsWith(PostingKeys.CARD_INTEREST) }
-                val marker = interestKey?.let { k -> snapshot.postedKeys.firstOrNull { it.startsWith("${PostingKeys.REVOLVING}$k:") } }
-                val restore = marker?.let { m ->
-                    val cardId = DueItems.cardIdOf(interestKey)
-                    val amount = m.substringAfterLast(':').toLongOrNull()
-                    if (cardId != null && amount != null) cardId to amount else null
-                }
                 DeletionPlan(
                     ledgerIds = listOf(entry.id),
                     ledgerKeys = group,
-                    postedKeys = group + listOfNotNull(marker),
+                    postedKeys = group,
                     addLoanMonthTo = DueItems.loanIdOf(key),
-                    restoreRevolving = restore,
                 )
             }
 

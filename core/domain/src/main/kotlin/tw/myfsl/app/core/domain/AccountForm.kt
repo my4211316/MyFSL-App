@@ -13,7 +13,7 @@ import tw.myfsl.app.core.model.RepaymentMethod
  * 帳戶編輯畫面的草稿。欄位都是字串，方便直接綁輸入框；存檔前由 [AccountForm.validate] 檢查。
  *
  * 必填只有名稱、種類、目前餘額（負債帳戶填欠款）。
- * 信用卡與貸款的細節都放在「進階（選填）」，不填就不計息。
+ * 信用卡與貸款的細節都放在「進階（選填）」。信用卡打開「依帳單繳款」後才會在本月到期列出繳款（R-CARD-20）。
  */
 data class AccountDraft(
     val id: Long = 0,
@@ -25,14 +25,13 @@ data class AccountDraft(
     val creditLimit: String = "",
     val statementDay: String = "",
     val payDay: String = "",
-    val revolvingEnabled: Boolean = false,
+    /** 依帳單繳款：每期在截止日列出繳款（R-CARD-20）。 */
+    val scheduleEnabled: Boolean = false,
+    val payMode: CardPayMode = CardPayMode.FULL,
+    /** 循環年利率：自由、最低必填；全額選填。 */
     val revolvingRate: String = "",
-    val minPercent: String = "10",
-    val minFloor: String = "1000",
-    val payMode: CardPayMode = CardPayMode.MINIMUM,
-    val fixedPayment: String = "",
-    /** 既有卡循：欠款中已在計息的金額；空白 = 整筆欠款都計息。 */
-    val revolvingBalance: String = "",
+    /** 自由、最低的預估每月繳款。 */
+    val estimatedPayment: String = "",
     // ---- 貸款進階 ----
     val loanEnabled: Boolean = false,
     val loanRate: String = "",
@@ -58,10 +57,7 @@ object AccountForm {
         const val STATEMENT_DAY = "statementDay"
         const val PAY_DAY = "payDay"
         const val RATE = "rate"
-        const val MIN_PERCENT = "minPercent"
-        const val MIN_FLOOR = "minFloor"
-        const val FIXED = "fixed"
-        const val REVOLVING_BALANCE = "revolvingBalance"
+        const val ESTIMATE = "estimate"
         const val LOAN_RATE = "loanRate"
         const val LOAN_MONTHS = "loanMonths"
         const val LOAN_ORIGINAL = "loanOriginal"
@@ -84,15 +80,12 @@ object AccountForm {
         balance = account.balance.toString(),
         issuer = account.issuer,
         creditLimit = account.creditLimit?.toString().orEmpty(),
-        statementDay = (account.statementDay ?: account.card?.statementDay)?.toString().orEmpty(),
-        payDay = (account.card?.payDay ?: account.loan?.payDay ?: account.paymentDueDay)?.toString().orEmpty(),
-        revolvingEnabled = account.card != null,
+        statementDay = account.statementDay?.toString().orEmpty(),
+        payDay = (account.loan?.payDay ?: account.paymentDueDay)?.toString().orEmpty(),
+        scheduleEnabled = account.card != null,
+        payMode = account.card?.payMode ?: CardPayMode.FULL,
         revolvingRate = account.card?.revolvingRatePercent?.let(::trim).orEmpty(),
-        minPercent = account.card?.minPaymentPercent?.let(::trim) ?: "10",
-        minFloor = account.card?.minPaymentFloor?.toString() ?: "1000",
-        payMode = account.card?.payMode ?: CardPayMode.MINIMUM,
-        fixedPayment = account.card?.fixedPayment?.toString().orEmpty(),
-        revolvingBalance = account.card?.revolvingBalance?.toString().orEmpty(),
+        estimatedPayment = account.card?.estimatedPayment?.toString().orEmpty(),
         loanEnabled = account.loan != null,
         loanRate = account.loan?.annualRatePercent?.let(::trim).orEmpty(),
         loanMonths = account.loan?.remainingMonths?.toString().orEmpty(),
@@ -135,38 +128,29 @@ object AccountForm {
             }
             val statementDay = optionalDay(draft.statementDay, Field.STATEMENT_DAY, errors)
             paymentDueDay = optionalDay(draft.payDay, Field.PAY_DAY, errors)
-            if (draft.revolvingEnabled) {
-                val rate = requiredPercent(draft.revolvingRate, Field.RATE, "請輸入循環年利率", errors)
-                val minPercent = requiredPercent(draft.minPercent, Field.MIN_PERCENT, "請輸入最低應繳比例", errors)
-                val minFloor = MoneyFormat.parse(draft.minFloor.ifBlank { "0" }).also {
-                    if (it == null || it < 0) errors[Field.MIN_FLOOR] = "下限金額看不懂"
+            if (draft.scheduleEnabled) {
+                if (draft.statementDay.isBlank()) errors[Field.STATEMENT_DAY] = "依帳單繳款要填結帳日"
+                if (draft.payDay.isBlank()) errors[Field.PAY_DAY] = "依帳單繳款要填繳款截止日"
+                val partial = draft.payMode != CardPayMode.FULL
+                // 全額繳清不計息，利率選填；自由、最低沒繳清的部分要計息，利率與預估繳款必填。
+                val rate = if (partial || draft.revolvingRate.isNotBlank()) {
+                    requiredPercent(draft.revolvingRate, Field.RATE, "自由或最低繳款要填循環年利率", errors)
+                } else {
+                    null
                 }
-                val fixed = if (draft.payMode == CardPayMode.FIXED) {
-                    MoneyFormat.parse(draft.fixedPayment).also {
-                        if (it == null || it <= 0) errors[Field.FIXED] = "固定金額繳款要填每月金額"
+                val estimate = if (partial || draft.estimatedPayment.isNotBlank()) {
+                    MoneyFormat.parse(draft.estimatedPayment).also {
+                        if (it == null || it <= 0) errors[Field.ESTIMATE] = "自由或最低繳款要填預估每月繳款"
                     }
                 } else {
                     null
                 }
-                val revolving = optionalMoney(draft.revolvingBalance, Field.REVOLVING_BALANCE, errors)?.also {
-                    when {
-                        it < 0 -> errors[Field.REVOLVING_BALANCE] = "既有卡循不能是負數"
-                        balance != null && it > balance -> errors[Field.REVOLVING_BALANCE] = "既有卡循不能超過目前欠款"
-                    }
-                }
-                if (rate != null && minPercent != null && minFloor != null) {
-                    card = CardTerms(
-                        revolvingRatePercent = rate,
-                        minPaymentPercent = minPercent,
-                        minPaymentFloor = minFloor,
-                        payMode = draft.payMode,
-                        fixedPayment = fixed,
-                        payAccountId = draft.payAccountId,
-                        payDay = paymentDueDay ?: 15,
-                        statementDay = statementDay,
-                        revolvingBalance = revolving,
-                    )
-                }
+                card = CardTerms(
+                    payMode = draft.payMode,
+                    revolvingRatePercent = rate,
+                    estimatedPayment = estimate,
+                    payAccountId = draft.payAccountId,
+                )
             }
             cardStatementDay = statementDay
         }

@@ -18,6 +18,7 @@ import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.EntrySource
 import tw.myfsl.app.core.model.LedgerEntry
+import tw.myfsl.app.core.model.CardPayMode
 import tw.myfsl.app.core.model.FinanceSnapshot
 import tw.myfsl.app.core.model.FlowType
 import tw.myfsl.app.core.model.Money
@@ -72,6 +73,9 @@ data class DueDialog(
     /** 到期日在今天以前時可以選付款日：今天，或到期日當天已經付過（F02）。 */
     val dueDateLabel: String?,
     val useDueDate: Boolean,
+    /** 繳卡費：三種繳款方式與各自的建議金額（R-CARD-21）；其他項目為空。 */
+    val payModes: List<Pair<CardPayMode, Money>> = emptyList(),
+    val payMode: CardPayMode? = null,
 )
 
 /** 記帳畫面的狀態；文字與預設值都來自 core.domain 的規則。 */
@@ -172,6 +176,8 @@ class EntryViewModel @Inject constructor(
         val cardTouched: Boolean = false,
         val accountId: Long? = null,
         val useDueDate: Boolean = false,
+        /** 繳卡費這一期臨時換的繳款方式；null 為卡片預設。 */
+        val payMode: CardPayMode? = null,
         val error: String? = null,
     )
 
@@ -299,13 +305,16 @@ class EntryViewModel @Inject constructor(
             default.method == PaymentMethod.CREDIT_CARD -> default.cardId
             else -> snapshot.defaultCardId
         }
+        val payMode = sel.payMode ?: due.payMode
         val amount = when {
             !due.amountEditable -> due.amount
-            sel.amount == null -> default.amount
-            else -> MoneyFormat.parse(sel.amount) ?: 0L
+            sel.amount != null -> MoneyFormat.parse(sel.amount) ?: 0L
+            // 繳卡費：照這一期選的繳款方式帶入建議金額（R-CARD-21）
+            payMode != null && due.payOptions != null -> due.payOptions!!.of(payMode)
+            else -> default.amount
         }
         val date = if (sel.useDueDate && due.date.isBefore(snapshot.today)) due.date else null
-        return DueChoice(amount = amount, method = method, accountId = sel.accountId ?: default.accountId, cardId = cardId, date = date)
+        return DueChoice(amount = amount, method = method, accountId = sel.accountId ?: default.accountId, cardId = cardId, date = date, payMode = payMode)
     }
 
     private fun dueDialog(snapshot: FinanceSnapshot, due: DueItem, sel: DueSelection): DueDialog {
@@ -316,8 +325,11 @@ class EntryViewModel @Inject constructor(
                 val interest = due.entries.firstOrNull { it.type == FlowType.EXPENSE }?.amount ?: 0L
                 "本金 ${MoneyFormat.currency(due.amount - interest)} ＋ 利息 ${MoneyFormat.currency(interest)}；改金額時利息不變"
             }
-            DueKind.CARD_INTEREST -> "依目前欠款估算，請以帳單金額為準"
-            DueKind.CARD_PAYMENT -> "依卡片的繳款方式估算，請以實際繳款金額為準"
+            DueKind.CARD_INTEREST -> "上一期帳單沒繳清的部分 × 循環年利率 ÷ 12 估算；輸入帳單後以帳單為準"
+            DueKind.CARD_PAYMENT -> {
+                val statement = due.statementDate?.let { "${it.monthValue}/${it.dayOfMonth} 結帳" }.orEmpty()
+                "本期帳單還要繳 ${MoneyFormat.currency(due.payOptions?.full ?: due.amount)}（$statement）；繳款方式只換這一期，金額可以改"
+            }
             DueKind.INSTALLMENT -> {
                 val fee = due.entries.firstOrNull { it.postingKey?.startsWith("instfee:") == true }?.amount ?: 0L
                 "本金 ${MoneyFormat.currency(due.amount - fee)}" + if (fee > 0) " ＋ 手續費 ${MoneyFormat.currency(fee)}" else ""
@@ -336,7 +348,7 @@ class EntryViewModel @Inject constructor(
             key = due.key,
             title = due.title,
             subtitle = listOf(whenText, detail).filter { it.isNotEmpty() }.joinToString("\n"),
-            amountText = if (due.amountEditable) sel.amount ?: due.amount.toString() else MoneyFormat.currency(due.amount),
+            amountText = if (due.amountEditable) sel.amount ?: choice.amount.toString() else MoneyFormat.currency(due.amount),
             amountEditable = due.amountEditable,
             choosesMethod = due.choosesMethod,
             method = choice.method,
@@ -352,6 +364,8 @@ class EntryViewModel @Inject constructor(
             recordLabel = if (choice.amount > 0) "記下 ${MoneyFormat.currency(choice.amount)}" else "記下",
             dueDateLabel = if (due.date.isBefore(snapshot.today)) "到期日 $date" else null,
             useDueDate = choice.date != null,
+            payModes = due.payOptions?.let { options -> CardPayMode.entries.map { it to options.of(it) } }.orEmpty(),
+            payMode = choice.payMode,
         )
     }
 
@@ -368,6 +382,9 @@ class EntryViewModel @Inject constructor(
     fun setDueUseDueDate(use: Boolean) = selection.update { s -> s.copy(due = s.due?.copy(useDueDate = use, error = null)) }
 
     fun setDueAccount(id: Long) = selection.update { s -> s.copy(due = s.due?.copy(accountId = id, error = null)) }
+
+    /** 繳卡費這一期臨時換繳款方式：金額改成那個方式的建議金額（R-CARD-21）。 */
+    fun setDuePayMode(mode: CardPayMode) = selection.update { s -> s.copy(due = s.due?.copy(payMode = mode, amount = null, error = null)) }
 
     /** 記下打開中的到期項目。 */
     fun recordDue() {
@@ -409,7 +426,7 @@ class EntryViewModel @Inject constructor(
 
     private fun draftInstallment(snapshot: FinanceSnapshot, item: PlanItem, cardId: Long?, sel: Selection): CardInstallment {
         val card = snapshot.account(cardId)
-        val payDay = card?.card?.payDay ?: card?.paymentDueDay
+        val payDay = card?.paymentDueDay
         return CardInstallment(
             cardAccountId = if (snapshot.settings.pickCard) cardId else null,
             itemId = item.id,

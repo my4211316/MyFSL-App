@@ -46,6 +46,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.text.input.KeyboardType
+import tw.myfsl.app.core.model.CardPayMode
+import tw.myfsl.app.core.model.MoneyFormat
 import tw.myfsl.app.core.model.FlowType
 import tw.myfsl.app.core.model.InstallmentFee
 import tw.myfsl.app.core.model.PaymentMethod
@@ -80,13 +82,14 @@ fun EntryScreen(
     onDueMethod: (PaymentMethod) -> Unit,
     onDueCard: (Long?) -> Unit,
     onDueAccount: (Long) -> Unit,
+    onDuePayMode: (CardPayMode) -> Unit,
     onDueUseDueDate: (Boolean) -> Unit,
     onRecordDue: () -> Unit,
     onSkipDue: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     state.dueDialog?.let { dialog ->
-        DueRecordDialog(dialog, onCloseDue, onDueAmount, onDueMethod, onDueCard, onDueAccount, onDueUseDueDate, onRecordDue, onSkipDue)
+        DueRecordDialog(dialog, onCloseDue, onDueAmount, onDueMethod, onDueCard, onDueAccount, onDuePayMode, onDueUseDueDate, onRecordDue, onSkipDue)
     }
     state.missedPrompt?.let { prompt ->
         AlertDialog(
@@ -365,6 +368,7 @@ private fun DueRecordDialog(
     onMethod: (PaymentMethod) -> Unit,
     onCard: (Long?) -> Unit,
     onAccount: (Long) -> Unit,
+    onPayMode: (CardPayMode) -> Unit,
     onUseDueDate: (Boolean) -> Unit,
     onRecord: () -> Unit,
     onSkip: () -> Unit,
@@ -387,6 +391,18 @@ private fun DueRecordDialog(
                     )
                 } else {
                     Text("金額 ${dialog.amountText}", style = MaterialTheme.typography.titleMedium)
+                }
+                if (dialog.payModes.isNotEmpty()) {
+                    Text("這一期的繳款方式", style = MaterialTheme.typography.labelMedium)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        dialog.payModes.forEach { (mode, amount) ->
+                            FilterChip(
+                                selected = dialog.payMode == mode,
+                                onClick = { onPayMode(mode) },
+                                label = { Text(if (amount > 0) "${mode.label} ${MoneyFormat.currency(amount)}" else "${mode.label}（自己輸入）") },
+                            )
+                        }
+                    }
                 }
                 if (dialog.choosesMethod) {
                     Text("支付方式", style = MaterialTheme.typography.labelMedium)
