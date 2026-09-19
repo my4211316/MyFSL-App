@@ -110,203 +110,204 @@ fun EntryScreen(
     }
 
     Column(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("記一筆", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-            val types = listOf(FlowType.EXPENSE, FlowType.INCOME, FlowType.TRANSFER)
-            SingleChoiceSegmentedButtonRow {
-                types.forEachIndexed { index, type ->
-                    SegmentedButton(
-                        selected = state.type == type,
-                        onClick = { onSelectType(type) },
-                        shape = SegmentedButtonDefaults.itemShape(index, types.size),
-                        label = { Text(type.label, style = MaterialTheme.typography.labelLarge) },
-                        icon = {},
-                    )
+        // 上半部（項目、付款、卡片、分期、備註）可以捲動；數字鍵盤和記下按鈕固定在下方。
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("記一筆", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                val types = listOf(FlowType.EXPENSE, FlowType.INCOME, FlowType.TRANSFER)
+                SingleChoiceSegmentedButtonRow {
+                    types.forEachIndexed { index, type ->
+                        SegmentedButton(
+                            selected = state.type == type,
+                            onClick = { onSelectType(type) },
+                            shape = SegmentedButtonDefaults.itemShape(index, types.size),
+                            label = { Text(type.label, style = MaterialTheme.typography.labelLarge) },
+                            icon = {},
+                        )
+                    }
+                }
+                IconButton(onClick = onOpenRecords) {
+                    Icon(Icons.AutoMirrored.Filled.List, contentDescription = "看紀錄")
                 }
             }
-            IconButton(onClick = onOpenRecords) {
-                Icon(Icons.AutoMirrored.Filled.List, contentDescription = "看紀錄")
-            }
-        }
 
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            shape = MaterialTheme.shapes.medium,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(
-                Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(state.todayStrip, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                state.groupAllowance?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(
+                    Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(state.todayStrip, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    state.groupAllowance?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
-        }
 
-        if (state.dues.isNotEmpty()) {
-            DueStrip(state.dues, onOpenDue)
-        }
+            if (state.dues.isNotEmpty()) {
+                DueStrip(state.dues, onOpenDue)
+            }
 
-        Spacer(Modifier.height(8.dp))
-        Text(state.selectedLine, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text("$", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.height(8.dp))
+            Text(state.selectedLine, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text("$", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    state.amountText,
+                    fontSize = 44.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (state.amount > 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
+                )
+            }
             Text(
-                state.amountText,
-                fontSize = 44.sp,
-                fontWeight = FontWeight.Medium,
-                color = if (state.amount > 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
+                state.hint,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (state.hintWarning) StatusColors.warningText else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        }
-        Text(
-            state.hint,
-            style = MaterialTheme.typography.bodySmall,
-            color = if (state.hintWarning) StatusColors.warningText else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
 
-        Spacer(Modifier.height(8.dp))
-        LabeledRow("項目") {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                state.items.forEach { item ->
-                    FilterChip(
-                        selected = item.id == state.selectedItemId,
-                        onClick = { onSelectItem(item.id) },
-                        label = { Text(item.name) },
-                    )
-                }
-                if (state.moreCount > 0 || state.showAll) {
-                    FilterChip(
-                        selected = false,
-                        onClick = onToggleShowAll,
-                        label = { Text(if (state.showAll) "收起" else "更多 " + state.moreCount) },
-                    )
-                }
-            }
-        }
-
-        if (state.showMethods) {
-            LabeledRow("付款") {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PaymentMethod.entries.forEach { method ->
-                        val planned = method in state.plannedMethods
+            Spacer(Modifier.height(8.dp))
+            LabeledRow("項目") {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    state.items.forEach { item ->
                         FilterChip(
-                            selected = state.method == method,
-                            onClick = { onSelectMethod(method) },
-                            label = {
-                                Text(
-                                    method.label,
-                                    color = if (planned || state.method == method) {
-                                        MaterialTheme.colorScheme.onSurface
-                                    } else {
-                                        MaterialTheme.colorScheme.outline
-                                    },
-                                )
-                            },
+                            selected = item.id == state.selectedItemId,
+                            onClick = { onSelectItem(item.id) },
+                            label = { Text(item.name) },
                         )
                     }
-                    if (state.showRefund) {
+                    if (state.moreCount > 0 || state.showAll) {
                         FilterChip(
-                            selected = state.refund,
-                            onClick = onToggleRefund,
-                            label = { Text("退款") },
+                            selected = false,
+                            onClick = onToggleShowAll,
+                            label = { Text(if (state.showAll) "收起" else "更多 " + state.moreCount) },
                         )
                     }
                 }
             }
-        }
 
-        if (state.showCards) {
-            LabeledRow("卡片") {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    item {
-                        FilterChip(
-                            selected = state.cardId == null,
-                            onClick = { onSelectCard(null) },
-                            label = { Text("不指定") },
-                        )
-                    }
-                    items(state.cards.size) { index ->
-                        val card = state.cards[index]
-                        FilterChip(
-                            selected = state.cardId == card.id,
-                            onClick = { onSelectCard(card.id) },
-                            label = { Text(card.name) },
-                        )
+            if (state.showMethods) {
+                LabeledRow("付款") {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PaymentMethod.entries.forEach { method ->
+                            val planned = method in state.plannedMethods
+                            FilterChip(
+                                selected = state.method == method,
+                                onClick = { onSelectMethod(method) },
+                                label = {
+                                    Text(
+                                        method.label,
+                                        color = if (planned || state.method == method) {
+                                            MaterialTheme.colorScheme.onSurface
+                                        } else {
+                                            MaterialTheme.colorScheme.outline
+                                        },
+                                    )
+                                },
+                            )
+                        }
+                        if (state.showRefund) {
+                            FilterChip(
+                                selected = state.refund,
+                                onClick = onToggleRefund,
+                                label = { Text("退款") },
+                            )
+                        }
                     }
                 }
             }
-        }
 
-        if (state.showInstallment) {
-            LabeledRow("分期") {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (state.showCards) {
+                LabeledRow("卡片") {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         item {
                             FilterChip(
-                                selected = state.installmentOn,
-                                onClick = onToggleInstallment,
-                                label = { Text(if (state.installmentOn) "分期" else "一次付清") },
+                                selected = state.cardId == null,
+                                onClick = { onSelectCard(null) },
+                                label = { Text("不指定") },
                             )
+                        }
+                        items(state.cards.size) { index ->
+                            val card = state.cards[index]
+                            FilterChip(
+                                selected = state.cardId == card.id,
+                                onClick = { onSelectCard(card.id) },
+                                label = { Text(card.name) },
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (state.showInstallment) {
+                LabeledRow("分期") {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            item {
+                                FilterChip(
+                                    selected = state.installmentOn,
+                                    onClick = onToggleInstallment,
+                                    label = { Text(if (state.installmentOn) "分期" else "一次付清") },
+                                )
+                            }
+                            if (state.installmentOn) {
+                                items(INSTALLMENT_MONTHS.size) { index ->
+                                    val months = INSTALLMENT_MONTHS[index]
+                                    FilterChip(
+                                        selected = state.installmentMonths == months,
+                                        onClick = { onInstallmentMonths(months) },
+                                        label = { Text("$months 期") },
+                                    )
+                                }
+                            }
                         }
                         if (state.installmentOn) {
-                            items(INSTALLMENT_MONTHS.size) { index ->
-                                val months = INSTALLMENT_MONTHS[index]
-                                FilterChip(
-                                    selected = state.installmentMonths == months,
-                                    onClick = { onInstallmentMonths(months) },
-                                    label = { Text("$months 期") },
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(InstallmentFee.entries.size) { index ->
+                                    val fee = InstallmentFee.entries[index]
+                                    FilterChip(
+                                        selected = state.installmentFee == fee,
+                                        onClick = { onInstallmentFee(fee) },
+                                        label = { Text(fee.label) },
+                                    )
+                                }
+                            }
+                            if (state.installmentFee != InstallmentFee.NONE) {
+                                OutlinedTextField(
+                                    value = state.installmentFeeValue,
+                                    onValueChange = onInstallmentFeeValue,
+                                    label = { Text(if (state.installmentFee == InstallmentFee.PER_PERIOD) "每期手續費（元）" else "費率（%）") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier.fillMaxWidth(),
                                 )
+                            }
+                            state.installmentDescription?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
-                    if (state.installmentOn) {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(InstallmentFee.entries.size) { index ->
-                                val fee = InstallmentFee.entries[index]
-                                FilterChip(
-                                    selected = state.installmentFee == fee,
-                                    onClick = { onInstallmentFee(fee) },
-                                    label = { Text(fee.label) },
-                                )
-                            }
-                        }
-                        if (state.installmentFee != InstallmentFee.NONE) {
-                            OutlinedTextField(
-                                value = state.installmentFeeValue,
-                                onValueChange = onInstallmentFeeValue,
-                                label = { Text(if (state.installmentFee == InstallmentFee.PER_PERIOD) "每期手續費（元）" else "費率（%）") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                modifier = Modifier.fillMaxWidth(),
+                }
+            }
+
+            if (state.noteSuggestions.isNotEmpty()) {
+                LabeledRow("備註") {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(state.noteSuggestions.size) { index ->
+                            val note = state.noteSuggestions[index]
+                            FilterChip(
+                                selected = state.note == note,
+                                onClick = { onToggleNote(note) },
+                                label = { Text(note) },
                             )
                         }
-                        state.installmentDescription?.let {
-                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
                     }
                 }
             }
         }
-
-        if (state.noteSuggestions.isNotEmpty()) {
-            LabeledRow("備註") {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(state.noteSuggestions.size) { index ->
-                        val note = state.noteSuggestions[index]
-                        FilterChip(
-                            selected = state.note == note,
-                            onClick = { onToggleNote(note) },
-                            label = { Text(note) },
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(Modifier.weight(1f))
 
         Keypad(onPress = onPress, onBackspace = onBackspace)
 
