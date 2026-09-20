@@ -26,11 +26,12 @@ class ScenarioAndGoalTest {
     private val oct = Period(2026, 10, Half.FIRST)
 
     @Test fun `調整項目：只影響指定項目與起始期之後`() {
-        val applied = ScenarioApplier.apply(base, listOf(ScenarioChange.AdjustItems(listOf(LIVING), -20.0, oct.index)))
-        val sepCash = applied.events.first { it.itemId == LIVING && it.method == PaymentMethod.CASH && it.period.month == 9 }
-        val octCash = applied.events.first { it.itemId == LIVING && it.method == PaymentMethod.CASH && it.period == oct }
+        val food = SampleHousehold.FOOD_CASH
+        val applied = ScenarioApplier.apply(base, listOf(ScenarioChange.AdjustItems(listOf(food), -20.0, oct.index)))
+        val sepCash = applied.events.first { it.itemId == food && it.method == PaymentMethod.CASH && it.period.month == 9 }
+        val octCash = applied.events.first { it.itemId == food && it.method == PaymentMethod.CASH && it.period == oct }
         assertEquals(2_300L, sepCash.amount)
-        assertEquals(3_600L, octCash.amount)
+        assertEquals("9,000 ÷ 2 × 0.8", 3_600L, octCash.amount)
         assertEquals(base.events.first { it.itemId == SALARY }.amount, applied.events.first { it.itemId == SALARY }.amount)
     }
 
@@ -112,11 +113,11 @@ class ScenarioAndGoalTest {
 
     @Test fun `反推：最低點在開始減少之前，怎麼減都來不及（R-GS-04）`() {
         // 現況最低 18,465 在 2027/2 上半月；從 2027/6 才開始減，救不到
-        val late = GoalSeeker.seek(base, setOf(LIVING), GoalTarget.MinLiquid(30_000), fromIndex = Period(2027, 6, Half.FIRST).index)
+        val late = GoalSeeker.seek(base, setOf(LIVING, SampleHousehold.FOOD_CASH), GoalTarget.MinLiquid(30_000), fromIndex = Period(2027, 6, Half.FIRST).index)
         assertFalse(late.achievable)
         assertTrue(late.lowBeforeStart)
         // 從現在開始減就來得及
-        val now = GoalSeeker.seek(base, setOf(LIVING), GoalTarget.MinLiquid(30_000))
+        val now = GoalSeeker.seek(base, setOf(LIVING, SampleHousehold.FOOD_CASH), GoalTarget.MinLiquid(30_000))
         assertTrue(now.achievable)
         assertFalse(now.lowBeforeStart)
     }

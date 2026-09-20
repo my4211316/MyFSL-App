@@ -19,6 +19,7 @@ import tw.myfsl.app.ui.DeepLinks
 import tw.myfsl.app.ui.MyFslApp
 import tw.myfsl.app.ui.start.NewerDataScreen
 import tw.myfsl.app.ui.theme.MyFslTheme
+import tw.myfsl.app.ui.theme.rememberDarkTheme
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -33,7 +34,7 @@ class MainActivity : ComponentActivity() {
         handle(intent)
         if (!newerData) requestNotificationsIfNeeded()
         setContent {
-            MyFslTheme {
+            MyFslTheme(darkTheme = rememberDarkTheme()) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     if (newerData) NewerDataScreen() else MyFslApp()
                 }

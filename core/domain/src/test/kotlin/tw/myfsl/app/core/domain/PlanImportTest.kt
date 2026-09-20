@@ -59,10 +59,13 @@ class PlanImportTest {
         assertTrue(preview.errors.isEmpty())
         assertEquals(1, preview.itemCount)
         val item = preview.items.single()
-        assertEquals(setOf(PaymentMethod.CASH, PaymentMethod.CREDIT_CARD), item.amounts.keys)
+        // 兩列合併成一列：金額相加，支付方式取金額大的（R-MIX-05）
+        assertEquals(PaymentMethod.CREDIT_CARD, item.item.method)
+        assertEquals(List(12) { 25_000L }, item.amounts)
         assertEquals(300_000L, item.total)
-        assertEquals(192_000L, preview.cardSpending)
+        assertEquals("整個項目都算在刷卡上", 300_000L, preview.cardSpending)
         assertEquals(listOf(2, 3), item.lines)
+        assertTrue(preview.issues.any { it.message.contains("合併成一列") })
         assertEquals(Timing.SPLIT, item.item.timing)
         assertEquals(Flexibility.FLEXIBLE, item.item.flexibility)
         assertEquals(TrackingMode.LEDGER, item.item.tracking)
@@ -79,7 +82,7 @@ class PlanImportTest {
         val salary = preview.items.first { it.item.name == "薪資" }
         assertEquals(FlowType.INCOME, salary.item.type)
         assertEquals(SampleHousehold.BANK, salary.item.accountId)
-        assertEquals(setOf<PaymentMethod?>(null), salary.amounts.keys)
+        assertNull(salary.item.method)
         val pay = preview.items.first { it.item.name == "繳信用卡 A" }
         assertEquals(SampleHousehold.BANK, pay.item.accountId)
         assertEquals(SampleHousehold.CARD_A, pay.item.toAccountId)
@@ -240,10 +243,10 @@ class PlanImportTest {
 
         // 逐列比對金額
         val living = preview.items.first { it.item.name == "生活費" }
-        assertEquals(months(9_000, 9_000, 9_000, 9_000, 9_000, 9_000, 9_000, 9_000, 9_000, 9_000, 9_000, 9_000), living.amounts[PaymentMethod.CASH])
+        assertEquals(List(12) { 16_000L }, living.amounts)
         assertEquals(TrackingMode.LEDGER, living.item.tracking)
         val service = preview.items.first { it.item.name == "汽車保養" }
-        assertEquals(months(0, 0, 12_000, 0, 0, 0, 0, 0, 12_000, 0, 0, 0), service.amounts[PaymentMethod.CREDIT_CARD])
+        assertEquals(months(0, 0, 12_000, 0, 0, 0, 0, 0, 12_000, 0, 0, 0), service.amounts)
         assertEquals(TrackingMode.CONFIRM, service.item.tracking)
         assertEquals(Timing.SECOND_HALF, service.item.timing)
     }

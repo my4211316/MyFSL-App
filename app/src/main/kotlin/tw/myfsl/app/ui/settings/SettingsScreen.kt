@@ -48,6 +48,7 @@ import tw.myfsl.app.ui.components.NavAction
 import tw.myfsl.app.ui.components.NavigationRow
 import tw.myfsl.app.ui.components.ScreenTopBar
 import tw.myfsl.app.ui.components.SegmentedChoice
+import tw.myfsl.app.core.model.ThemeMode
 import tw.myfsl.app.ui.components.SelectionSheet
 import tw.myfsl.app.ui.components.SwitchRow
 import tw.myfsl.app.ui.components.TextInput
@@ -116,6 +117,13 @@ fun SettingsScreen(
                 "到期前幾天提醒", draft.reminderDays, { v -> onChange { it.copy(reminderDays = v) } },
                 error = errors[Field.REMINDER_DAYS], supporting = "用逗號分開，例如「7, 3」；空白為不提醒。卡費、貸款與每月固定的付款都會提醒",
             )
+
+            GroupLabel("外觀")
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                FieldLabel("深色或淺色")
+                SegmentedChoice(ThemeMode.entries, draft.themeMode, { it.label }, { m -> onChange { it.copy(themeMode = m) } })
+                HintText("「跟隨系統」會照手機的深色模式自動切換。")
+            }
 
             GroupLabel("記帳")
             ListCard {

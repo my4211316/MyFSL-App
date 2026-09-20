@@ -3,6 +3,13 @@ package tw.myfsl.app.core.model
 import java.time.DayOfWeek
 import java.time.LocalDate
 
+/** 畫面的深色／淺色（R-SET-08）。 */
+enum class ThemeMode(val label: String) {
+    SYSTEM("跟隨系統"),
+    LIGHT("淺色"),
+    DARK("深色"),
+}
+
 data class AppSettings(
     val checkInDay: DayOfWeek = DayOfWeek.SUNDAY,
     /** 現金水位低於此金額就警示。 */
@@ -33,6 +40,8 @@ data class AppSettings(
     val dataGeneration: Long = 0,
     /** 到期前幾天提醒（R-REM-01）；空的表示不提醒。 */
     val reminderDays: List<Int> = listOf(7, 3),
+    /** 深色／淺色（R-SET-08）。 */
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
 )
 
 /** 某個時間點的完整財務資料，供純計算函式使用。 */
@@ -113,16 +122,11 @@ data class FinanceSnapshot(
     fun planAmount(line: PlanLine, year: Int, month: Int): Money =
         planForYear(year)[line]?.getOrNull(month - 1) ?: 0
 
-    /** 項目在所有年度出現過的計畫列，依支付方式順序排列。 */
-    fun linesOf(itemId: Long): List<PlanLine> =
-        amountsByYear.values.flatMap { it.keys }
-            .filter { it.itemId == itemId }
-            .distinct()
-            .sortedBy { it.method?.ordinal ?: -1 }
+    /** 項目某月的計畫金額（R-MIX-01：一個項目一個數字）。 */
+    fun plannedAmount(itemId: Long, year: Int, month: Int): Money = planAmount(PlanLine(itemId), year, month)
 
-    /** 項目在某月有計畫金額的支付方式。 */
-    fun plannedMethods(itemId: Long, year: Int, month: Int): List<PaymentMethod> =
-        linesOf(itemId).filter { it.method != null && planAmount(it, year, month) > 0 }.mapNotNull { it.method }
+    /** 項目某月有沒有編計畫。 */
+    fun isPlanned(itemId: Long, year: Int, month: Int): Boolean = plannedAmount(itemId, year, month) > 0
 
     /** 支付方式對應的扣款帳戶；信用卡回傳 null（由卡片決定或歸入信用卡合計）。 */
     fun methodAccountId(method: PaymentMethod): Long? {

@@ -5,6 +5,7 @@ import tw.myfsl.app.core.model.FinanceSnapshot
 import tw.myfsl.app.core.model.FlowType
 import tw.myfsl.app.core.model.Flexibility
 import tw.myfsl.app.core.model.Money
+import tw.myfsl.app.core.model.MoneyFormat
 import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.PlanItem
 import tw.myfsl.app.core.model.PlanLine
@@ -29,10 +30,9 @@ enum class PaceStatus(val label: String, val severity: Int) {
 fun displayPercent(ratio: Double): Int =
     BigDecimal.valueOf(ratio).movePointRight(2).setScale(0, RoundingMode.HALF_UP).toInt()
 
-/** 可調支出某一列（項目 × 支付方式）的本月進度。 */
+/** 可調支出某個項目的本月進度（R-MIX-01：一個項目一列，不分支付方式）。 */
 data class LineProgress(
     val item: PlanItem,
-    val method: PaymentMethod,
     val groupName: String,
     val planned: Money,
     val actual: Money,
@@ -43,8 +43,15 @@ data class LineProgress(
     /** 剩下每天可用；已用完、已完成或時間已過時為 null。 */
     val dailyAllowance: Money?,
     val reported: Boolean,
+    /** 這個月實際花費依支付方式分解（R-MIX-04），金額大的在前；沒花錢時是空的。 */
+    val actualByMethod: List<Pair<PaymentMethod, Money>> = emptyList(),
 ) {
-    val line: PlanLine get() = PlanLine(item.id, method)
+    val line: PlanLine get() = PlanLine(item.id)
+
+    /** 「刷卡 $17,100 · 現金 $6,300」；這個月還沒花錢時為 null。 */
+    val methodBreakdown: String?
+        get() = actualByMethod.takeIf { it.isNotEmpty() }
+            ?.joinToString(" · ") { (method, amount) -> "${method.label} ${MoneyFormat.currency(amount)}" }
     val spentRatio: Double
         get() = when {
             planned > 0 -> actual.toDouble() / planned
@@ -58,7 +65,7 @@ data class LineProgress(
     val paceGapPercent: Int get() = spentPercent - timePercent
 }
 
-/** 項目合計：沒有規劃的支付方式花費也算進項目總額。 */
+/** 項目合計。一個項目一列之後就是那一列本身，保留型別讓畫面不用改寫。 */
 data class ItemBudget(
     val item: PlanItem,
     val lines: List<LineProgress>,
@@ -82,53 +89,53 @@ object BudgetProgressCalculator {
 
         return snapshot.activeItems
             .filter { it.type == FlowType.EXPENSE && it.flexibility == Flexibility.FLEXIBLE }
-            .flatMap { item ->
-                val methods = (snapshot.linesOf(item.id).mapNotNull { it.method } +
-                    snapshot.ledger.filter { it.itemId == item.id && it.date.year == year && it.date.monthValue == month }.mapNotNull { it.method } +
-                    snapshot.actuals.filter { it.itemId == item.id && it.year == year && it.month == month }.mapNotNull { it.method })
-                    .distinct()
-                    .sortedBy { it.ordinal }
+            .mapNotNull { item ->
+                val planned = snapshot.plannedAmount(item.id, year, month)
+                val actual = ActualCalculator.actualFor(item.id, year, month, snapshot.actuals, snapshot.ledger)
+                if (planned == 0L && actual.amount == 0L) return@mapNotNull null
 
-                methods.mapNotNull { method ->
-                    val line = PlanLine(item.id, method)
-                    val planned = snapshot.planAmount(line, year, month)
-                    val actual = ActualCalculator.actualFor(line, year, month, snapshot.actuals, snapshot.ledger)
-                    if (planned == 0L && actual.amount == 0L) return@mapNotNull null
-
-                    val timeRatio = timeRatio(item.timing, day, daysInMonth)
-                    val remaining = (planned - actual.amount).coerceAtLeast(0)
-                    val draft = LineProgress(
-                        item = item,
-                        method = method,
-                        groupName = snapshot.group(item.groupId)?.name.orEmpty(),
-                        planned = planned,
-                        actual = actual.amount,
-                        timeRatio = timeRatio,
-                        status = PaceStatus.ON_TRACK,
-                        remaining = remaining,
-                        dailyAllowance = null,
-                        reported = actual.reported,
-                    )
-                    val status = when {
-                        actual.status == ActualStatus.DONE -> PaceStatus.DONE
-                        planned == 0L -> PaceStatus.UNPLANNED
-                        actual.amount > planned -> PaceStatus.OVER
-                        draft.timePercent == 0 && actual.amount == 0L -> PaceStatus.NOT_STARTED
-                        draft.paceGapPercent > AHEAD_THRESHOLD_PERCENT -> PaceStatus.AHEAD
-                        else -> PaceStatus.ON_TRACK
-                    }
-                    val daysLeft = daysLeft(item.timing, day, daysInMonth)
-                    draft.copy(
-                        status = status,
-                        dailyAllowance = if (remaining > 0 && daysLeft > 0 && status != PaceStatus.DONE && planned > 0) remaining / daysLeft else null,
-                    )
+                val timeRatio = timeRatio(item.timing, day, daysInMonth)
+                val remaining = (planned - actual.amount).coerceAtLeast(0)
+                val draft = LineProgress(
+                    item = item,
+                    groupName = snapshot.group(item.groupId)?.name.orEmpty(),
+                    planned = planned,
+                    actual = actual.amount,
+                    timeRatio = timeRatio,
+                    status = PaceStatus.ON_TRACK,
+                    remaining = remaining,
+                    dailyAllowance = null,
+                    reported = actual.reported,
+                    actualByMethod = actualByMethod(snapshot, item.id, year, month),
+                )
+                val status = when {
+                    actual.status == ActualStatus.DONE -> PaceStatus.DONE
+                    planned == 0L -> PaceStatus.UNPLANNED
+                    actual.amount > planned -> PaceStatus.OVER
+                    draft.timePercent == 0 && actual.amount == 0L -> PaceStatus.NOT_STARTED
+                    draft.paceGapPercent > AHEAD_THRESHOLD_PERCENT -> PaceStatus.AHEAD
+                    else -> PaceStatus.ON_TRACK
                 }
+                val daysLeft = daysLeft(item.timing, day, daysInMonth)
+                draft.copy(
+                    status = status,
+                    dailyAllowance = if (remaining > 0 && daysLeft > 0 && status != PaceStatus.DONE && planned > 0) remaining / daysLeft else null,
+                )
             }
             .sortedWith(compareBy<LineProgress> { it.status.severity }.thenByDescending { it.paceGapPercent })
     }
 
+    /** 這個月這個項目實際花了多少、怎麼付的（R-MIX-04）。 */
+    fun actualByMethod(snapshot: FinanceSnapshot, itemId: Long, year: Int, month: Int): List<Pair<PaymentMethod, Money>> =
+        snapshot.ledger
+            .filter { it.itemId == itemId && it.method != null && it.countsForBudget && it.budgetMonth.year == year && it.budgetMonth.monthValue == month }
+            .groupBy { it.method!! }
+            .map { (method, entries) -> method to entries.sumOf { it.amount } }
+            .filter { it.second != 0L }
+            .sortedByDescending { it.second }
+
     fun byItem(lines: List<LineProgress>): List<ItemBudget> =
-        lines.groupBy { it.item.id }.values.map { ItemBudget(it.first().item, it.sortedBy { line -> line.method.ordinal }) }
+        lines.groupBy { it.item.id }.values.map { ItemBudget(it.first().item, it) }
 
     fun timeRatio(timing: Timing, day: Int, daysInMonth: Int): Double = when (timing) {
         Timing.SPLIT -> day.toDouble() / daysInMonth

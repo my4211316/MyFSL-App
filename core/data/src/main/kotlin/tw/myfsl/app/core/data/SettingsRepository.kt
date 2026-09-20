@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import tw.myfsl.app.core.model.AppSettings
 import tw.myfsl.app.core.model.Money
+import tw.myfsl.app.core.model.ThemeMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.time.DayOfWeek
@@ -35,6 +36,7 @@ class SettingsRepository @Inject constructor(
             autoPostFrom = prefs[AUTO_POST_FROM],
             dataGeneration = prefs[DATA_GENERATION] ?: 0L,
             reminderDays = prefs[REMINDER_DAYS]?.let { text -> text.split(',').mapNotNull { it.trim().toIntOrNull() } } ?: defaults.reminderDays,
+            themeMode = prefs[THEME_MODE]?.let { name -> runCatching { ThemeMode.valueOf(name) }.getOrNull() } ?: defaults.themeMode,
         )
     }
 
@@ -58,6 +60,10 @@ class SettingsRepository @Inject constructor(
 
     suspend fun setPickCard(value: Boolean) {
         dataStore.edit { it[PICK_CARD] = value }
+    }
+
+    suspend fun setThemeMode(mode: ThemeMode) {
+        dataStore.edit { it[THEME_MODE] = mode.name }
     }
 
     suspend fun setCashAccount(id: Long?) {
@@ -105,6 +111,7 @@ class SettingsRepository @Inject constructor(
             val card = settings.defaultCardId
             if (card == null) it.remove(DEFAULT_CARD) else it[DEFAULT_CARD] = card
             it[REMINDER_DAYS] = settings.reminderDays.joinToString(",")
+            it[THEME_MODE] = settings.themeMode.name
         }
     }
 
@@ -121,6 +128,7 @@ class SettingsRepository @Inject constructor(
         val DEFAULT_CARD = longPreferencesKey("default_card_id")
         val AUTO_POST_FROM = longPreferencesKey("auto_post_from_epoch_day")
         val DATA_GENERATION = longPreferencesKey("data_generation")
+        val THEME_MODE = stringPreferencesKey("theme_mode")
         val REMINDER_DAYS = stringPreferencesKey("reminder_days")
     }
 }

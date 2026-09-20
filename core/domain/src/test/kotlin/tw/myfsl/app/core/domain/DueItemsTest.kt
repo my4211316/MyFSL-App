@@ -77,8 +77,8 @@ class DueItemsTest {
     ): FinanceSnapshot {
         val amounts: MonthlyAmounts = mapOf(
             PlanLine(SALARY) to List(12) { 50_000L },
-            PlanLine(RENT, PaymentMethod.TRANSFER) to List(12) { 20_000L },
-            PlanLine(LATER, PaymentMethod.CASH) to List(12) { 1_000L },
+            PlanLine(RENT) to List(12) { 20_000L },
+            PlanLine(LATER) to List(12) { 1_000L },
             PlanLine(PAY_B) to List(12) { 9_000L },
             PlanLine(PAY_CARD) to List(12) { 5_000L },
         )
@@ -99,8 +99,8 @@ class DueItemsTest {
             groups = listOf(PlanGroup(1, "全部", 1)),
             items = listOf(
                 PlanItem(SALARY, "薪資", 1, FlowType.INCOME, accountId = BANK, dueDay = 5),
-                PlanItem(RENT, "房租", 1, FlowType.EXPENSE, dueDay = 10),
-                PlanItem(LATER, "月底才扣", 1, FlowType.EXPENSE, dueDay = 20),
+                PlanItem(RENT, "房租", 1, FlowType.EXPENSE, method = PaymentMethod.TRANSFER, dueDay = 10),
+                PlanItem(LATER, "月底才扣", 1, FlowType.EXPENSE, method = PaymentMethod.CASH, dueDay = 20),
                 PlanItem(PAY_B, "繳 B 卡", 1, FlowType.TRANSFER, accountId = BANK, toAccountId = CARD_B, dueDay = 12),
                 PlanItem(PAY_CARD, "多繳有條件的卡", 1, FlowType.TRANSFER, accountId = BANK, toAccountId = CARD, dueDay = 12, extraRepayment = extraRepayment),
             ),
@@ -146,7 +146,7 @@ class DueItemsTest {
         assertEquals(LoanAmortization.firstPayment(120_000, 12.0, 12, RepaymentMethod.EQUAL_PAYMENT), 10_662L)
 
         // 9/5 薪資
-        dues.item("plan:101:-:2026-09:5").run {
+        dues.item("plan:101:2026-09:5").run {
             assertEquals(50_000L, amount); assertTrue(isIncome); assertEquals(BANK, defaultAccountId)
             assertEquals(EntrySource.DUE, entries.single().source)
         }
@@ -164,12 +164,12 @@ class DueItemsTest {
         assertTrue("先繳上一期、再結帳計息", order.indexOf("cardpay:3:2026-08") < order.indexOf("cardint:3:2026-09"))
 
         // 9/10 房租：支出，可以選支付方式，預設計畫的「轉帳」
-        dues.item("plan:201:TRANSFER:2026-09:10").run {
+        dues.item("plan:201:2026-09:10").run {
             assertEquals(20_000L, amount); assertTrue(choosesMethod); assertEquals(PaymentMethod.TRANSFER, method)
         }
 
         // 9/12 繳 B 卡：計畫 9,000，但 B 卡只欠 3,000 ＋ 分期 2,000 ＋ 手續費 100 = 5,100（R-PAY-02）
-        assertEquals(5_100L, dues.item("plan:301:-:2026-09:12").amount)
+        assertEquals(5_100L, dues.item("plan:301:2026-09:12").amount)
 
         // 繳給依合約繳款的卡片，沒標額外還款不列（R-PAY-01）
         assertTrue(dues.none { it.item?.id == PAY_CARD })
@@ -177,7 +177,7 @@ class DueItemsTest {
 
         // 本月還沒到期的也列出（9/20），可以提早記下
         val month = DueItems.list(snapshot())
-        month.item("plan:202:CASH:2026-09:20").run { assertFalse(isDue(today)); assertEquals(1_000L, amount) }
+        month.item("plan:202:2026-09:20").run { assertFalse(isDue(today)); assertEquals(1_000L, amount) }
         assertEquals(8, month.size)
     }
 
@@ -193,7 +193,7 @@ class DueItemsTest {
     @Test fun `起算日（含）以前到期的視為已在餘額裡；沒有起算日時從今天算`() {
         assertTrue(reached(snapshot(from = null)).isEmpty())
         assertTrue(reached(snapshot(from = today)).isEmpty())
-        assertEquals("只剩今天以後的 9/20", listOf("plan:202:CASH:2026-09:20"), DueItems.list(snapshot(from = null)).map { it.key })
+        assertEquals("只剩今天以後的 9/20", listOf("plan:202:2026-09:20"), DueItems.list(snapshot(from = null)).map { it.key })
     }
 
     @Test fun `記下的不再列出；選「這個月沒有」的也不再列出；刪掉記帳就回來`() {
@@ -202,12 +202,12 @@ class DueItemsTest {
         val recorded = recordAll(s, first)
         assertTrue(reached(recorded).isEmpty())
 
-        val skipped = s.copy(postedKeys = setOf("plan:201:TRANSFER:2026-09:10"))
-        assertTrue(reached(skipped).none { it.key == "plan:201:TRANSFER:2026-09:10" })
+        val skipped = s.copy(postedKeys = setOf("plan:201:2026-09:10"))
+        assertTrue(reached(skipped).none { it.key == "plan:201:2026-09:10" })
 
         // 刪掉房租那筆：回到清單（R-REC-EDIT-07）
         val deleted = recorded.copy(ledger = recorded.ledger.filter { it.itemId != RENT })
-        assertEquals(listOf("plan:201:TRANSFER:2026-09:10"), reached(deleted).map { it.key })
+        assertEquals(listOf("plan:201:2026-09:10"), reached(deleted).map { it.key })
         assertEquals(listOf("loan:5:2026-09", "loan:5:2026-09:interest"), DueItems.groupKeys("loan:5:2026-09:interest"))
         assertEquals(listOf("inst:7:1", "instfee:7:1"), DueItems.groupKeys("instfee:7:1"))
         assertEquals(5L, DueItems.loanIdOf("loan:5:2026-09"))
@@ -215,18 +215,18 @@ class DueItemsTest {
 
     @Test fun `自己已經記了一部分：只列剩下的；用沒規劃的支付方式記的也算；已確認完成的不列`() {
         val manual = LedgerEntry(date = LocalDate.of(2026, 9, 3), type = FlowType.EXPENSE, amount = 8_000, itemId = RENT, method = PaymentMethod.TRANSFER, accountId = BANK)
-        assertEquals("20,000 − 8,000", 12_000L, reached(snapshot(ledger = listOf(manual))).item("plan:201:TRANSFER:2026-09:10").amount)
+        assertEquals("20,000 − 8,000", 12_000L, reached(snapshot(ledger = listOf(manual))).item("plan:201:2026-09:10").amount)
 
         val cash = manual.copy(method = PaymentMethod.CASH, amount = 20_000)
         assertTrue("計畫轉帳、實際付現金，一樣算付過", reached(snapshot(ledger = listOf(cash))).none { it.item?.id == RENT })
 
-        val done = ItemActual(RENT, PaymentMethod.TRANSFER, 2026, 9, ActualStatus.DONE, today)
+        val done = ItemActual(RENT, 2026, 9, ActualStatus.DONE, today)
         assertTrue(reached(snapshot(actuals = listOf(done))).none { it.item?.id == RENT })
     }
 
     @Test fun `標成額外還款的轉帳才列出`() {
         // 9/12 時欠 40,000 − 4,000 ＋ 360 = 36,360，額外還 5,000 不受限
-        assertEquals(5_000L, reached(snapshot(extraRepayment = true)).item("plan:302:-:2026-09:12").amount)
+        assertEquals(5_000L, reached(snapshot(extraRepayment = true)).item("plan:302:2026-09:12").amount)
     }
 
     @Test fun `逐期計息：每期結帳時算上一期沒繳清的；起算前就截止的那期視為繳清`() {
@@ -273,11 +273,11 @@ class DueItemsTest {
 
     @Test fun `記下時可以改支付方式、卡片、金額與扣款帳戶`() {
         val s = snapshot()
-        val rent = reached(s).item("plan:201:TRANSFER:2026-09:10")
+        val rent = reached(s).item("plan:201:2026-09:10")
         DueItems.record(s, rent, DueChoice(20_000, PaymentMethod.CREDIT_CARD, cardId = CARD_B)).entries.single().run {
             assertEquals(PaymentMethod.CREDIT_CARD, method)
             assertEquals(CARD_B, accountId)
-            assertEquals("識別碼不變，記下後不再列出", "plan:201:TRANSFER:2026-09:10", postingKey)
+            assertEquals("識別碼不變，記下後不再列出", "plan:201:2026-09:10", postingKey)
             assertEquals("付款日預設今天（F02）", today, date)
             assertEquals("預算仍算在 9 月", java.time.YearMonth.of(2026, 9), budgetMonth)
         }
@@ -298,7 +298,7 @@ class DueItemsTest {
         assertEquals("剩下 11 期", LOAN to 11, paid.loanRemaining)
 
         // 還沒到期就記下：日期用今天
-        val later = DueItems.list(s).item("plan:202:CASH:2026-09:20")
+        val later = DueItems.list(s).item("plan:202:2026-09:20")
         assertEquals(today, DueItems.record(s, later, DueItems.defaultChoice(s, later)).entries.single().date)
 
         // 檢查
@@ -326,7 +326,7 @@ class DueItemsTest {
         assertEquals("下一期是 10/5", Period(2026, 10, Half.FIRST), loanEvents(recorded).minOf { it.period })
 
         // 提早記下 9/20 那筆：9 月不再預測
-        val later = DueItems.list(s).item("plan:202:CASH:2026-09:20")
+        val later = DueItems.list(s).item("plan:202:2026-09:20")
         val early = s.copy(ledger = DueItems.record(s, later, DueItems.defaultChoice(s, later)).entries)
         assertTrue(BaselineBuilder.build(early).events.none { it.itemId == LATER && it.period.year == 2026 && it.period.month == 9 })
         assertTrue(BaselineBuilder.build(s).events.any { it.itemId == LATER && it.period == Period(2026, 9, Half.SECOND) })
@@ -349,14 +349,14 @@ class DueItemsTest {
             s,
             CheckInInput(
                 dues = mapOf(
-                    "plan:101:-:2026-09:5" to DueDecision(DueCheck.PAID),
+                    "plan:101:2026-09:5" to DueDecision(DueCheck.PAID),
                     "loan:5:2026-09" to DueDecision(DueCheck.DIFFERENT_AMOUNT, 10_000),
-                    "plan:201:TRANSFER:2026-09:10" to DueDecision(DueCheck.SKIP),
+                    "plan:201:2026-09:10" to DueDecision(DueCheck.SKIP),
                 ),
             ),
         )
         assertEquals("同一天先貸款、再收入（R-ORD-01）", listOf(8_800L, 1_200L, 50_000L), result.dueEntries.map { it.amount })
-        assertEquals(listOf("plan:201:TRANSFER:2026-09:10"), result.skippedKeys)
+        assertEquals(listOf("plan:201:2026-09:10"), result.skippedKeys)
         assertEquals(mapOf(LOAN to 11), result.loanRemaining)
         assertFalse(result.isEmpty)
         // 銀行推算：100,000 ＋ 50,000 − 10,000
@@ -426,10 +426,10 @@ class DueItemsTest {
     // ---------- 漏記取代（R-REC-03） ----------
 
     @Test fun `補登明細取代漏記差額：沿用差額的時間，超過的部分照今天記`() {
-        val missed = RecordRules.missedMatch(sample, SampleHousehold.LIVING, PaymentMethod.CASH, today)!!
+        val missed = RecordRules.missedMatch(sample, SampleHousehold.FOOD_CASH, PaymentMethod.CASH, today)!!
         assertEquals("示意資料 9/7 的漏記 120", 120L, missed.amount)
-        assertNull("其他月份不配對", RecordRules.missedMatch(sample, SampleHousehold.LIVING, PaymentMethod.CASH, LocalDate.of(2026, 10, 1)))
-        assertNull("其他付款方式不配對", RecordRules.missedMatch(sample, SampleHousehold.LIVING, PaymentMethod.CREDIT_CARD, today))
+        assertNull("其他月份不配對", RecordRules.missedMatch(sample, SampleHousehold.FOOD_CASH, PaymentMethod.CASH, LocalDate.of(2026, 10, 1)))
+        assertNull("其他付款方式不配對", RecordRules.missedMatch(sample, SampleHousehold.FOOD_CASH, PaymentMethod.CREDIT_CARD, today))
 
         val detail = LedgerEntry(date = today, type = FlowType.EXPENSE, amount = 80, itemId = SampleHousehold.LIVING, method = PaymentMethod.CASH, createdAt = 999)
         RecordRules.replaceMissed(missed, detail).run {
@@ -476,7 +476,7 @@ class DueItemsTest {
     @Test fun `到期記下的款項只能改金額、同月日期與備註`() {
         val due = LedgerEntry(
             id = 50, date = LocalDate.of(2026, 9, 5), type = FlowType.EXPENSE, amount = 2_000, itemId = SampleHousehold.PARKING,
-            method = PaymentMethod.TRANSFER, accountId = SampleHousehold.BANK, source = EntrySource.DUE, postingKey = "plan:401:TRANSFER:2026-09:1",
+            method = PaymentMethod.TRANSFER, accountId = SampleHousehold.BANK, source = EntrySource.DUE, postingKey = "plan:401:2026-09:1",
         )
         val draft = RecordDraft(due)
         val ok = RecordEditForm.validate(draft.copy(amount = "2100", date = LocalDate.of(2026, 9, 3), note = "漲價"), sample)

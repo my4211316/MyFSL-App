@@ -1,12 +1,16 @@
 package tw.myfsl.app.ui.plan
 
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import tw.myfsl.app.core.data.FinanceRepository
 import tw.myfsl.app.core.domain.TextDecoding
 import tw.myfsl.app.core.domain.ImportMode
 import tw.myfsl.app.core.domain.ImportPreview
+import tw.myfsl.app.core.domain.MethodMix
+import tw.myfsl.app.core.domain.MethodMixRules
 import tw.myfsl.app.core.domain.PlanEditRules
+import tw.myfsl.app.core.domain.displayPercent
 import tw.myfsl.app.core.domain.PlanImport
 import tw.myfsl.app.core.domain.PlanIssue
 import tw.myfsl.app.core.domain.PlanItemDraft
@@ -22,7 +26,9 @@ import tw.myfsl.app.core.model.FlowType
 import tw.myfsl.app.core.model.Money
 import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.PlanGroup
+import tw.myfsl.app.core.model.MoneyFormat
 import tw.myfsl.app.core.model.PlanItem
+import tw.myfsl.app.core.model.PlanLine
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -35,7 +41,8 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 import tw.myfsl.app.ui.WriteGuard
 
-/** 計畫表的一列（項目 × 支付方式）。 */
+/** 計畫表的一列（一個項目一列，R-MIX-01）。 */
+@Immutable
 data class PlanRow(
     val itemId: Long,
     val groupName: String,
@@ -45,6 +52,22 @@ data class PlanRow(
     val total: Money,
 )
 
+/** 清單的分組方式（R-MIX-06）。 */
+enum class PlanGrouping(val label: String) {
+    GROUP("依群組"),
+    METHOD("依支付方式"),
+}
+
+/** 依支付方式分組時的一組：小計與佔全年支出的百分比。 */
+@Immutable
+data class MethodGroup(
+    val method: PaymentMethod,
+    val total: Money,
+    val percent: Int,
+    val rows: List<PlanRow>,
+)
+
+@Immutable
 data class ImportState(
     val fileName: String,
     val encoding: String,
@@ -56,12 +79,13 @@ data class ImportState(
 )
 
 /** 項目編輯中的狀態。 */
+@Immutable
 data class ItemEditor(
     val draft: PlanItemDraft,
     val errors: Map<String, String> = emptyMap(),
     val warnings: List<String> = emptyList(),
-    /** 正在展開 12 個月的計畫列索引。 */
-    val expandedLine: Int? = 0,
+    /** 試算實際比例的說明（R-MIX-03）；資料不夠時為 null。 */
+    val mixText: String? = null,
     /** 已經有記帳，類型不能改（R-EDT-11）。 */
     val typeLocked: Boolean = false,
     /** 打開編輯時的資料世代（F11）。 */
@@ -70,6 +94,7 @@ data class ItemEditor(
     val isNew: Boolean get() = draft.id == 0L
 }
 
+@Immutable
 data class PlanUiState(
     val loading: Boolean = true,
     val year: Int = 0,
@@ -83,6 +108,9 @@ data class PlanUiState(
     val message: String? = null,
     val showTable: Boolean = false,
     val table: PlanTable? = null,
+    val grouping: PlanGrouping = PlanGrouping.GROUP,
+    /** 依支付方式分組的結果（R-MIX-06）。 */
+    val methodGroups: List<MethodGroup> = emptyList(),
 )
 
 @HiltViewModel
@@ -96,6 +124,7 @@ class PlanViewModel @Inject constructor(
         val editor: ItemEditor? = null,
         val message: String? = null,
         val showTable: Boolean = false,
+        val grouping: PlanGrouping = PlanGrouping.GROUP,
     )
 
     private val local = MutableStateFlow(Local())
@@ -109,16 +138,24 @@ class PlanViewModel @Inject constructor(
         val groups = snapshot.groups.associateBy { it.id }
         val rows = snapshot.activeItems
             .sortedWith(compareBy({ groups[it.groupId]?.sortOrder ?: Int.MAX_VALUE }, { it.sortOrder }))
-            .flatMap { item ->
-                val lines = amounts.filterKeys { it.itemId == item.id }
-                if (lines.isEmpty()) {
-                    listOf(PlanRow(item.id, groups[item.groupId]?.name.orEmpty(), item.name, null, detailOf(item, null), 0))
-                } else {
-                    lines.entries.sortedBy { it.key.method?.ordinal ?: -1 }.map { (line, months) ->
-                        PlanRow(item.id, groups[item.groupId]?.name.orEmpty(), item.name, line.method, detailOf(item, line.method), months.sum())
-                    }
-                }
+            .map { item ->
+                val months = amounts[PlanLine(item.id)]
+                PlanRow(
+                    itemId = item.id,
+                    groupName = groups[item.groupId]?.name.orEmpty(),
+                    itemName = item.name,
+                    method = if (item.type == FlowType.EXPENSE) MethodMixRules.methodOf(item) else null,
+                    detail = detailOf(snapshot, item),
+                    total = months?.sum() ?: 0L,
+                )
             }
+        val expenseTotal = rows.filter { it.method != null }.sumOf { it.total }
+        val methodGroups = PaymentMethod.entries.mapNotNull { method ->
+            val inMethod = rows.filter { it.method == method }
+            if (inMethod.isEmpty()) return@mapNotNull null
+            val total = inMethod.sumOf { it.total }
+            MethodGroup(method, total, if (expenseTotal > 0) displayPercent(total.toDouble() / expenseTotal) else 0, inMethod)
+        }
         return PlanUiState(
             loading = false,
             year = year,
@@ -132,13 +169,28 @@ class PlanViewModel @Inject constructor(
             message = local.message,
             showTable = local.showTable,
             table = if (local.showTable && snapshot.activeItems.isNotEmpty()) PlanTableBuilder.build(snapshot, year) else null,
+            grouping = local.grouping,
+            methodGroups = methodGroups,
         )
     }
 
     fun setShowTable(show: Boolean) = local.update { it.copy(showTable = show) }
 
-    private fun detailOf(item: PlanItem, method: PaymentMethod?): String =
-        listOfNotNull(method?.label ?: item.type.label, item.timing.label, item.flexibility.label, item.tracking.label).joinToString(" · ")
+    fun setGrouping(grouping: PlanGrouping) = local.update { it.copy(grouping = grouping) }
+
+    /**
+     * 列的說明文字。支出用「刷卡 72%（依實際）」取代原本的支付方式，
+     * 讓使用者在清單上就看得出試算是照哪個比例推（R-MIX-03）。
+     */
+    private fun detailOf(snapshot: FinanceSnapshot, item: PlanItem): String {
+        val head = if (item.type == FlowType.EXPENSE) {
+            val mix = MethodMixRules.of(snapshot, item)
+            if (mix.fromActual) "刷卡 ${mix.cardPercent}%（依實際）" else MethodMixRules.methodOf(item).label
+        } else {
+            item.type.label
+        }
+        return listOf(head, item.timing.label, item.flexibility.label, item.tracking.label).joinToString(" · ")
+    }
 
     fun previousYear() = local.update { it.copy(year = (it.year ?: state.value.year) - 1) }
 
@@ -159,7 +211,17 @@ class PlanViewModel @Inject constructor(
             val snapshot = repository.snapshot.first()
             val item = snapshot.item(itemId) ?: return@launch
             val draft = PlanItemForm.fromItem(item, snapshot, state.value.year)
-            local.update { it.copy(editor = ItemEditor(draft, typeLocked = PlanItemForm.typeLocked(draft, snapshot), generation = snapshot.generation)) }
+            val mix = MethodMixRules.of(snapshot, item)
+            local.update {
+                it.copy(
+                    editor = ItemEditor(
+                        draft,
+                        mixText = mixText(mix),
+                        typeLocked = PlanItemForm.typeLocked(draft, snapshot),
+                        generation = snapshot.generation,
+                    ),
+                )
+            }
         }
     }
 
@@ -170,35 +232,28 @@ class PlanViewModel @Inject constructor(
 
     fun setType(type: FlowType) = change { PlanItemForm.changeType(it, type) }
 
-    fun addLine(method: PaymentMethod) = local.update { current ->
-        val editor = current.editor ?: return@update current
-        val draft = PlanItemForm.addLine(editor.draft, method)
-        current.copy(editor = editor.copy(draft = draft, expandedLine = draft.lines.lastIndex))
+    /** 「最近 3 個月實際：刷卡 …、現金 …，共 N 筆」；資料不夠時為 null。 */
+    private fun mixText(mix: MethodMix): String? {
+        if (!mix.fromActual) return null
+        val card = MoneyFormat.currency(mix.sampleCard)
+        val rest = MoneyFormat.currency(mix.sampleTotal - mix.sampleCard)
+        return "最近 ${MethodMixRules.SAMPLE_MONTHS} 個月實際：刷卡 $card（${mix.cardPercent}%）、" +
+            "其他 $rest，共 ${mix.sampleCount} 筆。試算照刷卡 ${mix.cardPercent}% 推。"
     }
 
-    fun removeLine(index: Int) = local.update { current ->
-        val editor = current.editor ?: return@update current
-        current.copy(editor = editor.copy(draft = PlanItemForm.removeLine(editor.draft, index), expandedLine = 0))
-    }
+    fun setMethod(method: PaymentMethod) = change { PlanItemForm.setMethod(it, method) }
 
-    fun setMethod(index: Int, method: PaymentMethod) = change { PlanItemForm.setMethod(it, index, method) }
-
-    fun setMonth(index: Int, month: Int, value: String) = change { PlanItemForm.setMonth(it, index, month, value) }
-
-    fun toggleLine(index: Int) = local.update { current ->
-        val editor = current.editor ?: return@update current
-        current.copy(editor = editor.copy(expandedLine = if (editor.expandedLine == index) null else index))
-    }
+    fun setMonth(month: Int, value: String) = change { PlanItemForm.setMonth(it, month, value) }
 
     /** 金額快捷：12 個月同額／年金額平分／清空（R-EDT-01）。 */
-    fun quickFill(index: Int, kind: QuickFill, amountText: String) = change { draft ->
+    fun quickFill(kind: QuickFill, amountText: String) = change { draft ->
         val amount = amountText.replace(",", "").trim().toLongOrNull() ?: 0L
         val months = when (kind) {
             QuickFill.EVERY_MONTH -> PlanEditRules.everyMonth(amount)
             QuickFill.SPREAD_YEAR -> PlanEditRules.spreadYear(amount)
             QuickFill.CLEAR -> PlanEditRules.clear()
         }
-        PlanItemForm.fill(draft, index, months)
+        PlanItemForm.fill(draft, months)
     }
 
     fun cancelEdit() = local.update { it.copy(editor = null) }

@@ -50,14 +50,13 @@ class ReviewRegressionTest {
         assertTrue("Actual payment on Sep 18 must be after Sep 17 reconciliation", entry.isAfter(RecordMark(today.minusDays(1), 100)))
     }
 
-    @Test fun oneUnplannedPaymentMustNotCoverTwoBudgetLines() {
-        val item = PlanItem(10, "Utilities", 1, FlowType.EXPENSE, dueDay = 15)
+    @Test fun paymentWithAnotherMethodCountsTowardTheSameItem() {
+        val item = PlanItem(10, "Utilities", 1, FlowType.EXPENSE, method = PaymentMethod.CASH, dueDay = 15)
         val s = base().copy(items = listOf(item), amountsByYear = mapOf(2026 to mapOf(
-            PlanLine(10, PaymentMethod.CASH) to List(12) { 1000L },
-            PlanLine(10, PaymentMethod.CREDIT_CARD) to List(12) { 1000L }
+            PlanLine(10) to List(12) { 2000L }
         )), ledger = listOf(LedgerEntry(date = today.minusDays(4), type = FlowType.EXPENSE,
             amount = 500, itemId = 10, method = PaymentMethod.TRANSFER, accountId = 1)))
-        assertEquals("2000 planned minus one 500 payment", 1500L,
+        assertEquals("2000 planned minus one 500 payment, whatever method was used", 1500L,
             DueItems.list(s).filter { it.kind == DueKind.PLAN }.sumOf { it.amount })
     }
 
@@ -221,7 +220,7 @@ class ReviewRegressionTest {
 
     @Test fun deferredPaymentCountsInOriginalBudgetMonth() {
         val e = LedgerEntry(date = LocalDate.of(2026, 10, 3), type = FlowType.EXPENSE, amount = 100, itemId = 10,
-            method = PaymentMethod.CASH, source = EntrySource.DUE, postingKey = "plan:10:CASH:2026-09:15")
+            method = PaymentMethod.CASH, source = EntrySource.DUE, postingKey = "plan:10:2026-09:15")
         assertEquals(java.time.YearMonth.of(2026, 9), e.budgetMonth)
     }
 }

@@ -9,19 +9,13 @@ import tw.myfsl.app.core.model.MoneyFormat
 import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.PlanGroup
 import tw.myfsl.app.core.model.PlanItem
+import tw.myfsl.app.core.model.PlanLine
 import tw.myfsl.app.core.model.Timing
 import tw.myfsl.app.core.model.TrackingMode
 
-/** 項目的一個計畫列草稿：支出為一個支付方式，收入與轉帳 [method] 為 null。 */
-data class PlanLineDraft(
-    val method: PaymentMethod? = null,
-    /** 12 個月金額，索引 0 = 1 月；空白視為 0。 */
-    val months: List<String> = List(12) { "" },
-)
-
 /**
- * 計畫項目編輯畫面的草稿。支出可以有多個支付方式列（例如生活費的現金列與信用卡列），
- * 支付方式由使用者自己選。
+ * 計畫項目編輯畫面的草稿。一個項目只有一組 12 個月金額（R-MIX-01）；
+ * 支付方式是項目的屬性，不切分金額。
  */
 data class PlanItemDraft(
     val id: Long = 0,
@@ -36,7 +30,12 @@ data class PlanItemDraft(
     val flexibility: Flexibility = Flexibility.FIXED,
     val tracking: TrackingMode = TrackingMode.AUTO,
     val note: String = "",
-    val lines: List<PlanLineDraft> = listOf(PlanLineDraft(PaymentMethod.CASH)),
+    /** 支出的支付方式；收入與轉帳為 null。 */
+    val method: PaymentMethod? = PaymentMethod.CASH,
+    /** 試算是否依實際刷卡比例推估（R-MIX-03）。 */
+    val useActualMix: Boolean = true,
+    /** 12 個月金額，索引 0 = 1 月；空白視為 0。 */
+    val months: List<String> = List(12) { "" },
     val sortOrder: Int = 0,
     val archived: Boolean = false,
     /** 每月幾號（選填，1–31）。 */
@@ -44,11 +43,7 @@ data class PlanItemDraft(
     val extraRepayment: Boolean = false,
     val archivedFrom: Int? = null,
 ) {
-    /** 還沒用到的支付方式，給「新增支付方式列」用。 */
-    val unusedMethods: List<PaymentMethod>
-        get() = PaymentMethod.entries.filter { method -> lines.none { it.method == method } }
-
-    fun lineTotal(index: Int): Money = lines.getOrNull(index)?.months?.sumOf { MoneyFormat.parse(it.ifBlank { "0" }) ?: 0L } ?: 0L
+    val total: Money get() = months.sumOf { MoneyFormat.parse(it.ifBlank { "0" }) ?: 0L }
 }
 
 object PlanItemForm {
@@ -58,38 +53,34 @@ object PlanItemForm {
         const val GROUP = "group"
         const val ACCOUNT = "account"
         const val TO_ACCOUNT = "toAccount"
-        const val LINES = "lines"
+        const val METHOD = "method"
         const val TYPE = "type"
         const val DUE_DAY = "dueDay"
-        fun month(line: Int, month: Int) = "line$line-month$month"
-        fun method(line: Int) = "line$line-method"
+        fun month(month: Int) = "month$month"
     }
 
     data class Result(
         val item: PlanItem?,
         /** 需要先建立的新群組名稱；null 表示用既有群組。 */
         val newGroupName: String?,
-        val amounts: Map<PaymentMethod?, List<Money>>,
+        /** 12 個月金額，索引 0 = 1 月。 */
+        val amounts: List<Money>,
         val errors: Map<String, String>,
         val warnings: List<String>,
     ) {
         val ok: Boolean get() = errors.isEmpty() && item != null
     }
 
-    /** 新項目：支出預設一列現金，收入與轉帳一列不分支付方式。 */
+    /** 新項目：支出預設現金，收入與轉帳沒有支付方式。 */
     fun newDraft(type: FlowType, groupId: Long?, snapshot: FinanceSnapshot): PlanItemDraft = PlanItemDraft(
         groupId = groupId,
         type = type,
         accountId = if (type == FlowType.EXPENSE) null else snapshot.activeAccounts.firstOrNull { it.kind.isLiquid }?.id,
-        lines = listOf(PlanLineDraft(if (type == FlowType.EXPENSE) PaymentMethod.CASH else null)),
+        method = if (type == FlowType.EXPENSE) PaymentMethod.CASH else null,
     )
 
     fun fromItem(item: PlanItem, snapshot: FinanceSnapshot, year: Int): PlanItemDraft {
-        val amounts = snapshot.planForYear(year).filterKeys { it.itemId == item.id }
-        val lines = amounts.entries
-            .sortedBy { it.key.method?.ordinal ?: -1 }
-            .map { (line, months) -> PlanLineDraft(line.method, months.map { if (it == 0L) "" else it.toString() }) }
-            .ifEmpty { listOf(PlanLineDraft(if (item.type == FlowType.EXPENSE) PaymentMethod.CASH else null)) }
+        val months = snapshot.planForYear(year)[PlanLine(item.id)] ?: List(12) { 0L }
         return PlanItemDraft(
             id = item.id,
             name = item.name,
@@ -101,7 +92,9 @@ object PlanItemForm {
             flexibility = item.flexibility,
             tracking = item.tracking,
             note = item.note,
-            lines = lines,
+            method = if (item.type == FlowType.EXPENSE) MethodMixRules.methodOf(item) else null,
+            useActualMix = item.useActualMix,
+            months = months.map { if (it == 0L) "" else it.toString() },
             sortOrder = item.sortOrder,
             archived = item.archived,
             dueDay = item.dueDay?.toString().orEmpty(),
@@ -114,52 +107,28 @@ object PlanItemForm {
     fun typeLocked(draft: PlanItemDraft, snapshot: FinanceSnapshot): Boolean =
         draft.id != 0L && snapshot.ledger.any { it.itemId == draft.id }
 
-    /** 切換類型時整理計畫列：支出要有支付方式，收入與轉帳合併成一列。 */
+    /** 切換類型：支出要有支付方式，收入與轉帳沒有。 */
     fun changeType(draft: PlanItemDraft, type: FlowType): PlanItemDraft {
         if (type == draft.type) return draft
-        val lines = if (type == FlowType.EXPENSE) {
-            listOf(PlanLineDraft(PaymentMethod.CASH, merged(draft.lines)))
-        } else {
-            listOf(PlanLineDraft(null, merged(draft.lines)))
-        }
-        return draft.copy(type = type, lines = lines, toAccountId = if (type == FlowType.TRANSFER) draft.toAccountId else null)
-    }
-
-    /** 新增一個支付方式列（只有支出可以）。 */
-    fun addLine(draft: PlanItemDraft, method: PaymentMethod): PlanItemDraft {
-        if (draft.type != FlowType.EXPENSE || draft.lines.any { it.method == method }) return draft
-        return draft.copy(lines = draft.lines + PlanLineDraft(method))
-    }
-
-    /** 刪掉一列；至少保留一列。 */
-    fun removeLine(draft: PlanItemDraft, index: Int): PlanItemDraft {
-        if (draft.lines.size <= 1 || index !in draft.lines.indices) return draft
-        return draft.copy(lines = draft.lines.filterIndexed { i, _ -> i != index })
-    }
-
-    /** 改某一列的支付方式；如果另一列已經是這個支付方式，兩列交換。 */
-    fun setMethod(draft: PlanItemDraft, index: Int, method: PaymentMethod): PlanItemDraft {
-        if (index !in draft.lines.indices) return draft
-        val current = draft.lines[index].method
         return draft.copy(
-            lines = draft.lines.mapIndexed { i, line ->
-                when {
-                    i == index -> line.copy(method = method)
-                    line.method == method -> line.copy(method = current)
-                    else -> line
-                }
-            },
+            type = type,
+            method = if (type == FlowType.EXPENSE) draft.method ?: PaymentMethod.CASH else null,
+            toAccountId = if (type == FlowType.TRANSFER) draft.toAccountId else null,
         )
     }
 
-    fun setMonth(draft: PlanItemDraft, index: Int, month: Int, value: String): PlanItemDraft =
-        updateLine(draft, index) { line -> line.copy(months = line.months.mapIndexed { i, v -> if (i == month - 1) value else v }) }
+    /** 改支付方式（只有支出可以）。 */
+    fun setMethod(draft: PlanItemDraft, method: PaymentMethod): PlanItemDraft =
+        if (draft.type != FlowType.EXPENSE) draft else draft.copy(method = method)
+
+    fun setMonth(draft: PlanItemDraft, month: Int, value: String): PlanItemDraft =
+        draft.copy(months = draft.months.mapIndexed { i, v -> if (i == month - 1) value else v })
 
     /** 套用金額快捷（R-EDT-01）。 */
-    fun fill(draft: PlanItemDraft, index: Int, months: List<Money>): PlanItemDraft =
-        updateLine(draft, index) { it.copy(months = months.map { m -> if (m == 0L) "" else m.toString() }) }
+    fun fill(draft: PlanItemDraft, months: List<Money>): PlanItemDraft =
+        draft.copy(months = months.map { m -> if (m == 0L) "" else m.toString() })
 
-    fun parsedMonths(line: PlanLineDraft): List<Money> = line.months.map { MoneyFormat.parse(it.ifBlank { "0" }) ?: 0L }
+    fun parsedMonths(draft: PlanItemDraft): List<Money> = draft.months.map { MoneyFormat.parse(it.ifBlank { "0" }) ?: 0L }
 
     fun validate(draft: PlanItemDraft, snapshot: FinanceSnapshot): Result {
         val errors = linkedMapOf<String, String>()
@@ -213,33 +182,17 @@ object PlanItemForm {
         val dueDay = draft.dueDay.trim().takeIf { it.isNotEmpty() }?.let { raw ->
             raw.toIntOrNull()?.takeIf { it in 1..31 }.also { if (it == null) errors[Field.DUE_DAY] = "日期要是 1 到 31" }
         }
-        if (draft.lines.isEmpty()) errors[Field.LINES] = "至少要有一列金額"
-        if (draft.type == FlowType.EXPENSE) {
-            val seen = mutableSetOf<PaymentMethod>()
-            draft.lines.forEachIndexed { index, line ->
-                when {
-                    line.method == null -> errors[Field.method(index)] = "請選支付方式"
-                    !seen.add(line.method) -> errors[Field.method(index)] = "「${line.method.label}」重複了，同一個支付方式只能一列"
-                }
-            }
-        } else if (draft.lines.size > 1) {
-            errors[Field.LINES] = "${draft.type.label}只能有一列金額"
-        }
+        if (draft.type == FlowType.EXPENSE && draft.method == null) errors[Field.METHOD] = "請選支付方式"
 
-        val amounts = linkedMapOf<PaymentMethod?, List<Money>>()
-        draft.lines.forEachIndexed { index, line ->
-            val parsed = line.months.mapIndexed { m, text ->
-                val value = MoneyFormat.parse(text.ifBlank { "0" })
-                when {
-                    value == null -> { errors[Field.month(index, m + 1)] = "${m + 1} 月金額看不懂"; 0L }
-                    value < 0 -> { errors[Field.month(index, m + 1)] = "${m + 1} 月金額不能是負數"; 0L }
-                    else -> value
-                }
+        val amounts = draft.months.mapIndexed { m, text ->
+            val value = MoneyFormat.parse(text.ifBlank { "0" })
+            when {
+                value == null -> { errors[Field.month(m + 1)] = "${m + 1} 月金額看不懂"; 0L }
+                value < 0 -> { errors[Field.month(m + 1)] = "${m + 1} 月金額不能是負數"; 0L }
+                else -> value
             }
-            val method = if (draft.type == FlowType.EXPENSE) line.method else null
-            amounts[method] = parsed
         }
-        if (errors.isEmpty() && amounts.values.all { months -> months.all { it == 0L } }) {
+        if (errors.isEmpty() && amounts.all { it == 0L }) {
             warnings += "12 個月都是 0，這個項目不會出現在試算裡"
         }
         if (draft.flexibility == Flexibility.FLEXIBLE && draft.tracking == TrackingMode.AUTO) {
@@ -252,13 +205,15 @@ object PlanItemForm {
             warnings += "轉入的帳戶已依合約自動繳款，這個項目不會計入；若是額外還款請勾選「額外還款」"
         }
 
-        if (errors.isNotEmpty()) return Result(null, null, emptyMap(), errors, warnings)
+        if (errors.isNotEmpty()) return Result(null, null, emptyList(), errors, warnings)
 
         val item = PlanItem(
             id = draft.id,
             name = name,
             groupId = group?.id ?: existingGroupForNewName?.id ?: 0L,
             type = draft.type,
+            method = if (draft.type == FlowType.EXPENSE) draft.method else null,
+            useActualMix = draft.useActualMix,
             accountId = if (draft.type == FlowType.EXPENSE) null else draft.accountId,
             toAccountId = if (draft.type == FlowType.TRANSFER) draft.toAccountId else null,
             timing = draft.timing,
@@ -275,13 +230,4 @@ object PlanItemForm {
         return Result(item, createGroup, amounts, emptyMap(), warnings)
     }
 
-    private fun merged(lines: List<PlanLineDraft>): List<String> = List(12) { m ->
-        val total = lines.sumOf { MoneyFormat.parse(it.months.getOrElse(m) { "" }.ifBlank { "0" }) ?: 0L }
-        if (total == 0L) "" else total.toString()
-    }
-
-    private fun updateLine(draft: PlanItemDraft, index: Int, transform: (PlanLineDraft) -> PlanLineDraft): PlanItemDraft {
-        if (index !in draft.lines.indices) return draft
-        return draft.copy(lines = draft.lines.mapIndexed { i, line -> if (i == index) transform(line) else line })
-    }
 }

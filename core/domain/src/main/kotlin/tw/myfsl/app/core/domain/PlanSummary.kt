@@ -85,22 +85,27 @@ object PlanSummaryCalculator {
         val loanPay = LongArray(12)
         val byGroup = mutableMapOf<Long, LongArray>()
 
+        val mixes = MethodMixRules.all(snapshot)
         for (item in snapshot.items) {
-            val lines = amounts.filterKeys { it.itemId == item.id }
+            val monthly = amounts[PlanLine(item.id)] ?: continue
             val skipTransfer = item.type == FlowType.TRANSFER && snapshot.isAutoManagedDebt(item.toAccountId) && !item.extraRepayment
-            for ((line, monthly) in lines) {
+            val mix = mixes[item.id] ?: MethodMixRules.fromItem(item)
+            run {
                 for (m in 0 until 12) {
                     val amount = monthly.getOrElse(m) { 0L }
                     if (amount == 0L || !snapshot.isItemActiveIn(item, year, m + 1)) continue
                     when (item.type) {
-                        FlowType.INCOME -> if (line.method == null) income[m] += amount
-                        FlowType.EXPENSE -> if (line.method != null) {
+                        FlowType.INCOME -> income[m] += amount
+                        FlowType.EXPENSE -> {
                             expense[m] += amount
-                            if (line.method == PaymentMethod.CREDIT_CARD) card[m] += amount else nonCard[m] += amount
+                            // 刷卡與非刷卡依項目的支付結構拆（R-MIX-02）。
+                            val (cardPart, restPart) = mix.split(amount)
+                            card[m] += cardPart
+                            nonCard[m] += restPart
                             byGroup.getOrPut(item.groupId) { LongArray(12) }[m] += amount
                         }
 
-                        FlowType.TRANSFER -> if (line.method == null && !skipTransfer) {
+                        FlowType.TRANSFER -> if (!skipTransfer) {
                             when (kinds[item.toAccountId]) {
                                 AccountKind.CREDIT_CARD -> cardPay[m] += amount
                                 AccountKind.LOAN, AccountKind.POLICY_LOAN -> loanPay[m] += amount
@@ -207,7 +212,7 @@ object PlanValidator {
                     if (lines.isEmpty()) {
                         issues += PlanIssue(Severity.INFO, "「${item.name}」今年沒有任何計畫金額", item.id)
                     }
-                    usedMethods += lines.mapNotNull(PlanLine::method)
+                    if (lines.isNotEmpty()) usedMethods += MethodMixRules.methodOf(item)
                     if (item.flexibility == Flexibility.FLEXIBLE && item.tracking == TrackingMode.AUTO) {
                         issues += PlanIssue(
                             Severity.INFO,

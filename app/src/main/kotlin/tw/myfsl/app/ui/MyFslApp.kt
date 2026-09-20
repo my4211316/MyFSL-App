@@ -400,6 +400,7 @@ fun MyFslApp() {
                     onAddItem = viewModel::startNew,
                     onEditItem = viewModel::edit,
                     onShowTable = viewModel::setShowTable,
+                    onGrouping = viewModel::setGrouping,
                     editorContent = { editor ->
                         PlanItemEditorForm(
                             editor = editor,
@@ -408,11 +409,8 @@ fun MyFslApp() {
                             accounts = state.accounts,
                             onChange = viewModel::change,
                             onType = viewModel::setType,
-                            onAddLine = viewModel::addLine,
-                            onRemoveLine = viewModel::removeLine,
                             onMethod = viewModel::setMethod,
                             onMonth = viewModel::setMonth,
-                            onToggleLine = viewModel::toggleLine,
                             onQuickFill = viewModel::quickFill,
                             onSave = viewModel::saveItem,
                             onCancel = viewModel::cancelEdit,

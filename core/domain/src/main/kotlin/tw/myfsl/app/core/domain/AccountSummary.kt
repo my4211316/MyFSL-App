@@ -174,7 +174,7 @@ object AccountSummaryCalculator {
                 // 依帳單繳款：本期帳單照預設繳款方式＋標成額外還款的計畫轉帳；沒有：計畫中繳這張卡的轉帳（R-PAY-01）。
                 fixedPayment = (bill?.let { CardRules.suggested(assumption!!, it) } ?: 0L) +
                     transfers.filter { it.toAccountId == card.id && (!card.hasCardSchedule || it.extraRepayment) }
-                        .sumOf { snapshot.planAmount(PlanLine(it.id, null), year, month) },
+                        .sumOf { snapshot.planAmount(PlanLine(it.id), year, month) },
                 interest = if (assumption != null) CardRules.outlook(card.balance, card.card!!, assumption, monthlySpending = 0).interest else 0,
                 minimumPayment = cycle?.let { snapshot.statementOf(card.id, it.yearMonth)?.minimumPayment },
                 currentBill = bill?.full,
@@ -194,7 +194,7 @@ object AccountSummaryCalculator {
                 monthlyPayment = if (terms != null) {
                     LoanAmortization.firstPayment(loan.balance, terms.annualRatePercent, terms.remainingMonths, terms.method)
                 } else {
-                    transfers.filter { it.toAccountId == loan.id }.sumOf { snapshot.planAmount(PlanLine(it.id, null), year, month) }
+                    transfers.filter { it.toAccountId == loan.id }.sumOf { snapshot.planAmount(PlanLine(it.id), year, month) }
                 },
                 repaidPercent = loan.loanRepaidRatio?.let(::displayPercent),
             )

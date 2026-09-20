@@ -84,6 +84,7 @@ fun PlanScreen(
     onAddItem: () -> Unit,
     onEditItem: (Long) -> Unit,
     onShowTable: (Boolean) -> Unit,
+    onGrouping: (PlanGrouping) -> Unit,
     editorContent: @Composable (ItemEditor) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -167,27 +168,31 @@ fun PlanScreen(
                         SegmentedChoice(listOf(false, true), state.showTable, { if (it) "月份表格" else "清單" }, onShowTable)
                     }
                 }
+                if (state.rows.isNotEmpty() && !state.showTable) {
+                    item(key = "grouping") {
+                        SegmentedChoice(PlanGrouping.entries, state.grouping, { it.label }, onGrouping)
+                    }
+                }
                 val table = state.table
                 if (state.showTable && table != null) {
                     item(key = "table") { PlanMonthTable(table, onEditItem) }
                 } else if (state.rows.isNotEmpty()) {
-                    state.rows.groupBy { it.groupName }.forEach { (group, rows) ->
-                        item(key = "group-$group") {
-                            Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                                GroupLabel(group)
-                                ListCard {
-                                    rows.forEachIndexed { index, row ->
-                                        if (index > 0) ListDivider()
-                                        Surface(onClick = { onEditItem(row.itemId) }, color = Color.Transparent) {
-                                            ListRow(
-                                                title = row.itemName,
-                                                detail = row.detail,
-                                                lead = row.method?.let { method -> { MethodIcon(method) } },
-                                                trailing = MoneyFormat.currency(row.total),
-                                            )
-                                        }
-                                    }
-                                }
+                    when (state.grouping) {
+                        PlanGrouping.GROUP -> state.rows.groupBy { it.groupName }.forEach { (group, rows) ->
+                            item(key = "group-$group") {
+                                PlanRowGroup(group, null, rows, onEditItem)
+                            }
+                        }
+
+                        // 依支付方式：每組標出小計與佔全年支出多少，一眼看完支付結構（R-MIX-06）。
+                        PlanGrouping.METHOD -> state.methodGroups.forEach { group ->
+                            item(key = "method-${group.method.name}") {
+                                PlanRowGroup(
+                                    group.method.label,
+                                    "${MoneyFormat.currency(group.total)} · ${group.percent}%",
+                                    group.rows,
+                                    onEditItem,
+                                )
                             }
                         }
                     }
@@ -201,6 +206,34 @@ fun PlanScreen(
             text = { Text("新增項目") },
             modifier = Modifier.align(Alignment.BottomEnd).padding(Spacing.lg),
         )
+    }
+}
+
+/** 一組計畫列：標題（群組名或支付方式）可以帶小計。 */
+@Composable
+private fun PlanRowGroup(title: String, trailing: String?, rows: List<PlanRow>, onEditItem: (Long) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+        if (trailing == null) {
+            GroupLabel(title)
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                GroupLabel(title, Modifier.weight(1f))
+                Text(trailing, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        ListCard {
+            rows.forEachIndexed { index, row ->
+                if (index > 0) ListDivider()
+                Surface(onClick = { onEditItem(row.itemId) }, color = Color.Transparent) {
+                    ListRow(
+                        title = row.itemName,
+                        detail = row.detail,
+                        lead = row.method?.let { method -> { MethodIcon(method) } },
+                        trailing = MoneyFormat.currency(row.total),
+                    )
+                }
+            }
+        }
     }
 }
 

@@ -274,30 +274,15 @@ object DueItems {
         }
 
         /**
-         * 某計畫列某月已經有的實際金額：同一個支付方式的記帳（含前面已經列出的份額），
-         * 加上分配到這一列的「沒規劃的支付方式」記帳（例如計畫刷卡、實際付現金）。
-         * 沒規劃的金額依計畫列順序分配，每一筆只抵一次（F05）。延期款的付款不算。月份看預算月份。
+         * 某項目某月已經有的實際金額（含前面已經列出的份額）。
+         * 不分支付方式（R-MIX-01）：計畫刷卡、實際付現金也一樣抵掉，不會重複列出。
+         * 延期款的付款不算。月份看預算月份。
          */
-        fun covered(item: PlanItem, line: PlanLine, ym: YearMonth): Money {
-            val lines = if (item.type == FlowType.EXPENSE) {
-                snapshot.linesOf(item.id).filter { it.method != null }
-            } else {
-                listOf(PlanLine(item.id, null))
-            }
-            val planned = lines.map { it.method }.toSet()
-            val relevant = (snapshot.ledger + entries).filter {
+        fun covered(item: PlanItem, ym: YearMonth): Money =
+            (snapshot.ledger + entries).filter {
                 it.itemId == item.id && it.budgetMonth == ym && it.countsForBudget &&
                     it.postingKey?.startsWith(PostingKeys.DEFERRAL) != true
-            }
-            fun own(l: PlanLine) = relevant.filter { it.method == l.method }.sumOf { it.amount }
-            var unplanned = relevant.filter { it.method !in planned }.sumOf { it.amount }
-            for (l in lines) {
-                val take = minOf((snapshot.planAmount(l, ym.year, ym.monthValue) - own(l)).coerceAtLeast(0), unplanned.coerceAtLeast(0))
-                if (l == line) return own(l) + take
-                unplanned -= take
-            }
-            return own(line)
-        }
+            }.sumOf { it.amount }
     }
 
     private fun monthsBetween(from: YearMonth, to: YearMonth): List<YearMonth> =
@@ -307,8 +292,8 @@ object DueItems {
 
     fun ymKey(ym: YearMonth) = "%04d-%02d".format(ym.year, ym.monthValue)
 
-    fun planKey(item: PlanItem, method: PaymentMethod?, date: LocalDate) =
-        "${PostingKeys.PLAN}${item.id}:${method?.name ?: "-"}:${ymKey(YearMonth.from(date))}:${date.dayOfMonth}"
+    fun planKey(item: PlanItem, date: LocalDate) =
+        "${PostingKeys.PLAN}${item.id}:${ymKey(YearMonth.from(date))}:${date.dayOfMonth}"
 
     fun loanKey(loanId: Long, ym: YearMonth) = "${PostingKeys.LOAN}$loanId:${ymKey(ym)}"
     fun cardInterestKey(cardId: Long, ym: YearMonth) = "${PostingKeys.CARD_INTEREST}$cardId:${ymKey(ym)}"
@@ -322,29 +307,27 @@ object DueItems {
             for (item in snapshot.items) {
                 if (item.tracking != TrackingMode.AUTO || !snapshot.isItemActiveIn(item, ym.year, ym.monthValue)) continue
                 if (item.type == FlowType.TRANSFER && snapshot.isAutoManagedDebt(item.toAccountId) && !item.extraRepayment) continue
-                val lines = if (item.type == FlowType.EXPENSE) snapshot.linesOf(item.id).filter { it.method != null } else listOf(PlanLine(item.id, null))
-                for (line in lines) {
-                    val monthAmount = snapshot.planAmount(line, ym.year, ym.monthValue)
-                    if (monthAmount <= 0) continue
-                    val done = snapshot.actuals.any {
-                        it.line == line && it.year == ym.year && it.month == ym.monthValue &&
-                            (it.status == ActualStatus.DONE || it.status == ActualStatus.POSTPONED)
-                    }
-                    if (done) continue
-                    item.occurrences(ym.year, ym.monthValue, monthAmount).forEach { (date, amount) ->
-                        if (!inWindow(date)) return@forEach
-                        val key = planKey(item, line.method, date)
-                        tasks += Task(date, 4, key) { state ->
-                            // 已經自己記了多少，就少列多少；整月最多到計畫金額。
-                            var post = minOf(amount, monthAmount - state.covered(item, line, ym))
-                            // 還款最多還到欠款為 0（R-PAY-02）。
-                            if (item.type == FlowType.TRANSFER && state.isLiability(item.toAccountId)) {
-                                post = minOf(post, state.balance(item.toAccountId!!).coerceAtLeast(0))
-                            }
-                            if (post <= 0) return@Task null
-                            val entry = planEntry(snapshot, item, line.method, date, post, key) ?: return@Task null
-                            DueItem(key, DueKind.PLAN, date, item.name, listOf(entry), item, line.method)
+                val monthAmount = snapshot.plannedAmount(item.id, ym.year, ym.monthValue)
+                if (monthAmount <= 0) continue
+                val done = snapshot.actuals.any {
+                    it.itemId == item.id && it.year == ym.year && it.month == ym.monthValue &&
+                        (it.status == ActualStatus.DONE || it.status == ActualStatus.POSTPONED)
+                }
+                if (done) continue
+                val method = if (item.type == FlowType.EXPENSE) MethodMixRules.methodOf(item) else null
+                item.occurrences(ym.year, ym.monthValue, monthAmount).forEach { (date, amount) ->
+                    if (!inWindow(date)) return@forEach
+                    val key = planKey(item, date)
+                    tasks += Task(date, 4, key) { state ->
+                        // 已經自己記了多少，就少列多少；整月最多到計畫金額。
+                        var post = minOf(amount, monthAmount - state.covered(item, ym))
+                        // 還款最多還到欠款為 0（R-PAY-02）。
+                        if (item.type == FlowType.TRANSFER && state.isLiability(item.toAccountId)) {
+                            post = minOf(post, state.balance(item.toAccountId!!).coerceAtLeast(0))
                         }
+                        if (post <= 0) return@Task null
+                        val entry = planEntry(snapshot, item, method, date, post, key) ?: return@Task null
+                        DueItem(key, DueKind.PLAN, date, item.name, listOf(entry), item, method)
                     }
                 }
             }

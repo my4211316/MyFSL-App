@@ -5,6 +5,7 @@ import tw.myfsl.app.core.sample.SampleHousehold.BANK
 import tw.myfsl.app.core.sample.SampleHousehold.CARD_A
 import tw.myfsl.app.core.sample.SampleHousehold.CASH
 import tw.myfsl.app.core.sample.SampleHousehold.HOUSEHOLD
+import tw.myfsl.app.core.sample.SampleHousehold.FOOD_CASH
 import tw.myfsl.app.core.sample.SampleHousehold.LIVING
 import tw.myfsl.app.core.sample.SampleHousehold.SALARY
 import tw.myfsl.app.core.model.EntrySource
@@ -115,6 +116,6 @@ class RecordEditAndSettingsTest {
         assertTrue(PeriodOverviewCalculator.build(s).checkIn.due)
         val other = s.copy(settings = s.settings.copy(checkInDay = DayOfWeek.SUNDAY))
         assertFalse(PeriodOverviewCalculator.build(other).checkIn.due)
-        assertEquals(LIVING, entry(7).itemId)
+        assertEquals(FOOD_CASH, entry(7).itemId)
     }
 }

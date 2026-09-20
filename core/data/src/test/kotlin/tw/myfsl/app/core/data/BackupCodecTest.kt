@@ -25,7 +25,7 @@ class BackupCodecTest {
         groups = SampleHousehold.groups.map { it.toEntity() },
         items = SampleHousehold.items.map { it.toEntity() },
         amounts = SampleHousehold.yearlyPlan.flatMap { (line, months) ->
-            months.mapIndexedNotNull { i, v -> if (v != 0L) PlanAmountEntity(line.itemId, line.method.toColumn(), 2026, i + 1, v) else null }
+            months.mapIndexedNotNull { i, v -> if (v != 0L) PlanAmountEntity(line.itemId, 2026, i + 1, v) else null }
         },
         ledger = SampleHousehold.septemberLedger.map { it.toEntity() },
         scenarios = listOf(
@@ -39,7 +39,7 @@ class BackupCodecTest {
             ),
         ),
         // 選了「這個月沒有」的到期項目與延期款也要備份，還原後才不會再列出或重複記
-        postedKeys = listOf(PostedKeyEntity("plan:101:-:2026-09:15", 20_711), PostedKeyEntity("cardpay:3:2026-09", 20_711)),
+        postedKeys = listOf(PostedKeyEntity("plan:101:2026-09:15", 20_711), PostedKeyEntity("cardpay:3:2026-09", 20_711)),
         deferrals = listOf(Deferral(4, SampleHousehold.SUBSIDY, null, 2026, 9, 2026, 10, 5_000).toEntity()),
         // 帳單校正（R-CARD-23）也要備份
         cardStatements = listOf(CardStatement(SampleHousehold.CARD_A, 2026, 9, 52_000, 3_000, coversInterest = true).toEntity()),
@@ -92,5 +92,32 @@ class BackupCodecTest {
         assertTrue(result.file.deferrals.isEmpty())
         assertEquals(2, result.file.postedKeys.size)
         assertTrue("有對不上的資料時提供救援還原", result.summary.needsRescue)
+    }
+
+    @Test fun `第 1 版備份：同一個項目的兩個支付方式合併成一列，識別碼去掉方式（R-MIX-05）`() {
+        // 手寫一份第 1 版的備份：生活費有現金 9,000 與刷卡 16,000 兩列
+        val v1 = """
+            {"app":"MyFSL","formatVersion":1,"exportedAtMillis":1,
+             "groups":[{"id":5,"name":"生活","sortOrder":5}],
+             "items":[{"id":501,"name":"生活費","groupId":5,"type":"EXPENSE","accountId":null,"toAccountId":null,
+                       "timing":"SPLIT","flexibility":"FLEXIBLE","tracking":"LEDGER","note":"","archived":false,"sortOrder":0}],
+             "amounts":[{"itemId":501,"method":"CASH","year":2026,"month":1,"amount":9000},
+                        {"itemId":501,"method":"CREDIT_CARD","year":2026,"month":1,"amount":16000}],
+             "actuals":[{"itemId":501,"method":"CASH","year":2026,"month":1,"status":"POSTPONED","updatedEpochDay":20700},
+                        {"itemId":501,"method":"CREDIT_CARD","year":2026,"month":1,"status":"DONE","updatedEpochDay":20701}],
+             "postedKeys":[{"key":"plan:501:CASH:2026-01:15","epochDay":20700}]}
+        """.trimIndent()
+        val result = BackupCodec.decode(v1) as BackupReadResult.Ok
+        assertEquals(BackupFile.FORMAT_VERSION, result.file.formatVersion)
+        assertEquals("兩列相加", listOf(25_000L), result.file.amounts.map { it.amount })
+        assertEquals("支付方式取金額大的", "CREDIT_CARD", result.file.items.single().method)
+        assertEquals("同一個月只留一筆，已完成優先", listOf("DONE"), result.file.actuals.map { it.status })
+        assertEquals(listOf("plan:501:2026-01:15"), result.file.postedKeys.map { it.key })
+    }
+
+    @Test fun `識別碼升版只動 plan，其他原樣`() {
+        assertEquals("plan:12:2026-09:15", BackupCodec.upgradePlanKey("plan:12:CASH:2026-09:15"))
+        assertEquals("cardpay:3:2026-09", BackupCodec.upgradePlanKey("cardpay:3:2026-09"))
+        assertEquals("已經是新格式就不動", "plan:12:2026-09:15", BackupCodec.upgradePlanKey("plan:12:2026-09:15"))
     }
 }

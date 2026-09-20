@@ -50,7 +50,7 @@ data class ReportLine(
     /** 本月已記帳的金額。 */
     val recorded: Money,
 ) {
-    val line: PlanLine get() = PlanLine(item.id, method)
+    val line: PlanLine get() = PlanLine(item.id)
     val input: ReportInput get() = CheckInRules.inputFor(method)
     val prefill: Money get() = CheckInRules.prefill(input, planned, recorded)
 }
@@ -63,7 +63,7 @@ data class ConfirmLine(
     val recorded: Money,
     val deferral: Deferral? = null,
 ) {
-    val line: PlanLine get() = PlanLine(item.id, method)
+    val line: PlanLine get() = PlanLine(item.id)
 
     /** 在一次檢查裡辨識這一列。 */
     val key: String get() = deferral?.key ?: "line:${item.id}:${method?.name ?: "-"}"
@@ -193,7 +193,7 @@ object CheckInRules {
     fun reportLines(snapshot: FinanceSnapshot, date: LocalDate = snapshot.today): List<ReportLine> =
         rows(snapshot, date, TrackingMode.REPORT).mapNotNull { row ->
             if (row.item.type == FlowType.EXPENSE && (row.planned > 0 || row.recorded > 0)) {
-                ReportLine(row.item, row.line.method, row.planned, row.recorded)
+                ReportLine(row.item, row.item.method, row.planned, row.recorded)
             } else {
                 null
             }
@@ -206,9 +206,9 @@ object CheckInRules {
     fun confirmLines(snapshot: FinanceSnapshot, date: LocalDate = snapshot.today): List<ConfirmLine> {
         val planLines = rows(snapshot, date, TrackingMode.CONFIRM).mapNotNull { row ->
             val status = ActualCalculator
-                .actualFor(row.line, date.year, date.monthValue, snapshot.actuals, snapshot.ledger).status
+                .actualFor(row.item.id, date.year, date.monthValue, snapshot.actuals, snapshot.ledger).status
             if (row.planned > 0 && status != ActualStatus.DONE && status != ActualStatus.POSTPONED) {
-                ConfirmLine(row.item, row.line.method, row.planned, row.recorded)
+                ConfirmLine(row.item, row.item.method, row.planned, row.recorded)
             } else {
                 null
             }
@@ -222,21 +222,14 @@ object CheckInRules {
     private data class Row(val item: PlanItem, val line: PlanLine, val planned: Money, val recorded: Money)
 
     private fun rows(snapshot: FinanceSnapshot, date: LocalDate, tracking: TrackingMode): List<Row> =
-        snapshot.activeItems.filter { it.tracking == tracking }.flatMap { item ->
-            val lines = if (item.type == FlowType.EXPENSE) {
-                snapshot.linesOf(item.id).filter { it.method != null }
-            } else {
-                listOf(PlanLine(item.id, null))
-            }
-            lines.map { line ->
-                Row(
-                    item = item,
-                    line = line,
-                    planned = snapshot.planAmount(line, date.year, date.monthValue),
-                    recorded = ActualCalculator
-                        .actualFor(line, date.year, date.monthValue, snapshot.actuals, snapshot.ledger).amount,
-                )
-            }
+        snapshot.activeItems.filter { it.tracking == tracking }.map { item ->
+            Row(
+                item = item,
+                line = PlanLine(item.id),
+                planned = snapshot.plannedAmount(item.id, date.year, date.monthValue),
+                recorded = ActualCalculator
+                    .actualFor(item.id, date.year, date.monthValue, snapshot.actuals, snapshot.ledger).amount,
+            )
         }
 
     /** 帳戶對帳的列；[pending] 是本次檢查前面步驟已經產生的補記。 */
@@ -333,13 +326,20 @@ object CheckInRules {
             }
     }
 
-    /** 差額預設歸到的項目：本月這個支付方式計畫金額最大的可調項目。 */
+    /**
+     * 差額預設歸到的項目：先找支付方式相同、本月計畫金額最大的可調項目；
+     * 沒有就放寬到任何支付方式，再沒有就放寬到不可調的項目。
+     */
     fun defaultItemFor(snapshot: FinanceSnapshot, method: PaymentMethod, date: LocalDate = snapshot.today): PlanItem? {
         val expenses = snapshot.activeItems.filter { it.type == FlowType.EXPENSE }
-        fun plan(item: PlanItem) = snapshot.planAmount(PlanLine(item.id, method), date.year, date.monthValue)
-        return expenses.filter { it.flexibility == Flexibility.FLEXIBLE && plan(it) > 0 }.maxByOrNull { plan(it) }
-            ?: expenses.filter { plan(it) > 0 }.maxByOrNull { plan(it) }
-            ?: expenses.firstOrNull { item -> snapshot.linesOf(item.id).any { it.method == method } }
+        fun plan(item: PlanItem) = snapshot.plannedAmount(item.id, date.year, date.monthValue)
+        fun pick(candidates: List<PlanItem>) = candidates.filter { plan(it) > 0 }.maxByOrNull { plan(it) }
+        val flexible = expenses.filter { it.flexibility == Flexibility.FLEXIBLE }
+        return pick(flexible.filter { it.method == method })
+            ?: pick(flexible)
+            ?: pick(expenses.filter { it.method == method })
+            ?: pick(expenses)
+            ?: expenses.firstOrNull { it.method == method }
     }
 
     /** 把整份輸入換算成要寫入的記帳、狀態與校正餘額。純函式。 */
@@ -376,7 +376,7 @@ object CheckInRules {
             }
             if (decision.choice == ConfirmChoice.POSTPONE) {
                 // 延到下月：本月標為延期，還沒付的金額變成一筆獨立的延期款（R-DEF-01）。
-                actuals += ItemActual(line.item.id, line.method, date.year, date.monthValue, ActualStatus.POSTPONED, date)
+                actuals += ItemActual(line.item.id, date.year, date.monthValue, ActualStatus.POSTPONED, date)
                 val unpaid = (line.planned - line.recorded).coerceAtLeast(0)
                 if (unpaid > 0) {
                     deferrals += Deferral(
@@ -394,7 +394,7 @@ object CheckInRules {
             }
             val diff = amount - line.recorded
             if (diff != 0L) entries += adjustment(snapshot, line.item, line.method, diff, date, EntrySource.CONFIRMED)
-            actuals += ItemActual(line.item.id, line.method, date.year, date.monthValue, ActualStatus.DONE, date)
+            actuals += ItemActual(line.item.id, date.year, date.monthValue, ActualStatus.DONE, date)
         }
 
         // 到期還沒記下的項目：已付就照建議金額記下，金額不同就記實際金額，這個月沒有就略過（R-DUE-05）。

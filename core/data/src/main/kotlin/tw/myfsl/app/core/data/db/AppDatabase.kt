@@ -20,13 +20,13 @@ import androidx.room.RoomDatabase
         CardStatementEntity::class,
         DataGenerationEntity::class,
     ],
-    // 1.0.0 首發的結構。之後改 schema：提高版本，並在 Migrations 加上升級 SQL（MigrationTest 會檢查）。
+    // 第 2 版：預算不再分支付方式（R-MIX-01）。改 schema：提高版本，並在 Migrations 加上升級 SQL（MigrationTest 會檢查）。
     version = AppDatabase.VERSION,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     companion object {
-        const val VERSION = 1
+        const val VERSION = 2
         const val NAME = "myfsl.db"
     }
 

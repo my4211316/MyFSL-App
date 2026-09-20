@@ -3,6 +3,7 @@ package tw.myfsl.app.core.domain
 import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.AppSettings
+import tw.myfsl.app.core.model.ThemeMode
 import tw.myfsl.app.core.model.MoneyFormat
 import java.time.DayOfWeek
 
@@ -18,6 +19,8 @@ data class SettingsDraft(
     val defaultCardId: Long? = null,
     /** 到期前幾天提醒，例如「7, 3」；空白為不提醒（R-REM-01）。 */
     val reminderDays: String = "7, 3",
+    /** 深色／淺色（R-SET-08）。 */
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
 )
 
 object SettingsForm {
@@ -47,6 +50,7 @@ object SettingsForm {
         cardPostingDays = settings.cardPostingDays.toString(),
         defaultCardId = settings.defaultCardId,
         reminderDays = settings.reminderDays.joinToString(", "),
+        themeMode = settings.themeMode,
     )
 
     fun validate(draft: SettingsDraft, current: AppSettings, accounts: List<Account>): Result {
@@ -77,6 +81,7 @@ object SettingsForm {
                 cardPostingDays = days!!,
                 defaultCardId = draft.defaultCardId,
                 reminderDays = reminders!!,
+                themeMode = draft.themeMode,
             ),
             emptyMap(),
         )

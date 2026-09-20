@@ -104,8 +104,8 @@ interface ActualDao {
     @Query("UPDATE deferrals SET settled = :settled WHERE id = :id")
     suspend fun setDeferralSettled(id: Long, settled: Boolean)
 
-    @Query("DELETE FROM item_actuals WHERE itemId = :itemId AND method = :method AND year = :year AND month = :month")
-    suspend fun deleteActual(itemId: Long, method: String, year: Int, month: Int)
+    @Query("DELETE FROM item_actuals WHERE itemId = :itemId AND year = :year AND month = :month")
+    suspend fun deleteActual(itemId: Long, year: Int, month: Int)
 
     @Query("DELETE FROM ledger_entries WHERE id = :id")
     suspend fun deleteLedger(id: Long)

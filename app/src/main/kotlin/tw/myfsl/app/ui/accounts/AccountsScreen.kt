@@ -112,10 +112,12 @@ fun AccountsScreen(
                     HeroCard(
                         label = "可動用現金",
                         value = MoneyFormat.currency(overview.liquid),
-                        figures = listOfNotNull(
-                            ("扣掉卡費後可用" to MoneyFormat.currency(overview.freeCash)).takeIf { overview.cardReserve > 0 },
-                            "負債合計" to MoneyFormat.currency(overview.totalDebt),
-                        ),
+                        // 現金旁邊只放和現金有關的數字；負債放在下面信用卡、貸款區段（使用者要求）。
+                        figures = if (overview.cardReserve > 0) {
+                            listOf("要留給卡費" to MoneyFormat.currency(overview.cardReserve), "扣掉後可用" to MoneyFormat.currency(overview.freeCash))
+                        } else {
+                            emptyList()
+                        },
                     )
                 }
 
@@ -166,7 +168,7 @@ fun AccountsScreen(
                 if (overview.loans.isNotEmpty()) {
                     item(key = "loans") {
                         Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                            SectionHeader("貸款")
+                            SectionHeader("貸款", trailing = "負債合計 ${MoneyFormat.currency(overview.totalDebt)}")
                             overview.loans.forEach { loan -> LoanItem(loan, onEdit) }
                         }
                     }

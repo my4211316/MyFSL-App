@@ -192,15 +192,16 @@ private fun BudgetRow(line: LineProgress) {
             .fillMaxWidth()
             .padding(horizontal = Spacing.lg, vertical = Spacing.md)
             .clearAndSetSemantics {
-                contentDescription = "${line.item.name} ${line.method.label}，${line.status.label}，" +
+                contentDescription = "${line.item.name}，${line.status.label}，" +
                     "已花 ${MoneyFormat.currency(line.actual)}，計畫 ${MoneyFormat.currency(line.planned)}" +
-                    (line.dailyAllowance?.let { "，每日可用 ${MoneyFormat.currency(it)}" } ?: "")
+                    (line.dailyAllowance?.let { "，每日可用 ${MoneyFormat.currency(it)}" } ?: "") +
+                    (line.methodBreakdown?.let { "，這個月 $it" } ?: "")
             },
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
             Icon(ItemIcons.of(line.item.name, line.item.type), contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(20.dp))
-            Text("${line.item.name} · ${line.method.label}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            Text(line.item.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
             StatusBadge(line.status.label, tone = tone)
         }
         ToneProgress(line.spentRatio.toFloat(), tone)
@@ -212,6 +213,10 @@ private fun BudgetRow(line: LineProgress) {
                 modifier = Modifier.weight(1f),
             )
             line.dailyAllowance?.let { Text("每日可用 ${MoneyFormat.currency(it)}", style = MaterialTheme.typography.bodySmall) }
+        }
+        // 預算不分支付方式，所以這裡補上這個月實際怎麼付的（R-MIX-04）。
+        line.methodBreakdown?.let {
+            Text("這個月：$it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

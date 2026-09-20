@@ -161,7 +161,7 @@ class RecordsViewModel @Inject constructor(
             val itemId = entry.itemId
             val method = entry.method
             itemId != null && method != null &&
-                snapshot.planAmount(PlanLine(itemId, method), entry.date.year, entry.date.monthValue) == 0L
+                snapshot.planAmount(PlanLine(itemId), entry.date.year, entry.date.monthValue) == 0L
         }
     }
 

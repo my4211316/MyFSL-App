@@ -44,21 +44,20 @@ data class Deferral(
     val amount: Money,
     val settled: Boolean = false,
 ) {
-    val line: PlanLine get() = PlanLine(itemId, method)
+    val line: PlanLine get() = PlanLine(itemId)
     val key: String get() = "deferral:$id"
     fun isDueBy(year: Int, month: Int): Boolean = dueYear * 12 + dueMonth <= year * 12 + month
 }
 
-/** 某計畫列某月的狀態，由到期確認寫入；金額一律由記帳加總得到。 */
+/** 某項目某月的狀態，由到期確認寫入；金額一律由記帳加總得到（R-MIX-01：不再分支付方式）。 */
 data class ItemActual(
     val itemId: Long,
-    val method: PaymentMethod?,
     val year: Int,
     val month: Int,
     val status: ActualStatus,
     val updatedOn: LocalDate,
 ) {
-    val line: PlanLine get() = PlanLine(itemId, method)
+    val line: PlanLine get() = PlanLine(itemId)
 }
 
 /** 一筆記帳。本週檢查的差額與補記也是記帳，只是 [source] 不同。 */
@@ -106,7 +105,8 @@ data class LedgerEntry(
         get() {
             val key = postingKey
             if (key != null && key.startsWith(PostingKeys.PLAN)) {
-                key.split(':').getOrNull(3)?.let { runCatching { java.time.YearMonth.parse(it) }.getOrNull() }?.let { return it }
+                // plan:<項目>:<年月>:<日>
+                key.split(':').getOrNull(2)?.let { runCatching { java.time.YearMonth.parse(it) }.getOrNull() }?.let { return it }
             }
             return java.time.YearMonth.from(date)
         }

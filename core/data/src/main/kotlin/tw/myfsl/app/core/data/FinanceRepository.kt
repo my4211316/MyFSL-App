@@ -219,7 +219,7 @@ class FinanceRepository @Inject constructor(
             groups = d.groups.map { it.toModel() },
             items = d.items.map { it.toModel() },
             amountsByYear = d.amounts.groupBy { it.year }.mapValues { (_, rows) ->
-                rows.groupBy { PlanLine(it.itemId, it.method.toPaymentMethod()) }.mapValues { (_, lineRows) ->
+                rows.groupBy { PlanLine(it.itemId) }.mapValues { (_, lineRows) ->
                     List(12) { m -> lineRows.firstOrNull { it.month == m + 1 }?.amount ?: 0L }
                 }
             },
@@ -301,22 +301,20 @@ class FinanceRepository @Inject constructor(
         return if (entity.id == 0L) result else entity.id
     }
 
-    /** 儲存項目與各年度、各支付方式的 12 個月金額（收入與轉帳的支付方式為 null）。 */
-    suspend fun saveItem(item: PlanItem, amountsByYear: Map<Int, Map<PaymentMethod?, List<Money>>>, generation: Long): Long =
+    /** 儲存項目與各年度的 12 個月金額（R-MIX-01：一個項目一組金額）。 */
+    suspend fun saveItem(item: PlanItem, amountsByYear: Map<Int, List<Money>>, generation: Long): Long =
         writing(generation) { saveItemLocked(item, amountsByYear) }
 
-    private suspend fun saveItemLocked(item: PlanItem, amountsByYear: Map<Int, Map<PaymentMethod?, List<Money>>>): Long =
+    private suspend fun saveItemLocked(item: PlanItem, amountsByYear: Map<Int, List<Money>>): Long =
         db.withTransaction {
             val entity = item.toEntity()
             val result = planDao.upsertItem(entity)
             val id = if (entity.id == 0L) result else entity.id
-            amountsByYear.forEach { (year, byMethod) ->
+            amountsByYear.forEach { (year, months) ->
                 planDao.deleteAmounts(id, year)
                 planDao.upsertAmounts(
-                    byMethod.flatMap { (method, months) ->
-                        months.mapIndexedNotNull { index, amount ->
-                            if (amount != 0L) PlanAmountEntity(id, method.toColumn(), year, index + 1, amount) else null
-                        }
+                    months.mapIndexedNotNull { index, amount ->
+                        if (amount != 0L) PlanAmountEntity(id, year, index + 1, amount) else null
                     },
                 )
             }
@@ -391,7 +389,7 @@ class FinanceRepository @Inject constructor(
             if (plan.ledgerKeys.isNotEmpty()) actualDao.deleteLedgerByKeys(plan.ledgerKeys)
             if (plan.postedKeys.isNotEmpty()) actualDao.deletePostedKeys(plan.postedKeys)
             plan.unsettleDeferralId?.let { actualDao.setDeferralSettled(it, false) }
-            plan.reopenActual?.let { actualDao.deleteActual(it.itemId, it.method.toColumn(), it.year, it.month) }
+            plan.reopenActual?.let { actualDao.deleteActual(it.itemId, it.year, it.month) }
             plan.addLoanMonthTo?.let { accountDao.addLoanRemainingMonth(it) }
             plan.removeStatement?.let { (cardId, ym) -> db.maintenanceDao().deleteStatement(cardId, ym.year, ym.monthValue) }
         }
@@ -520,7 +518,7 @@ class FinanceRepository @Inject constructor(
                 planDao.upsertAmounts(
                     SampleHousehold.yearlyPlan.flatMap { (line, months) ->
                         months.mapIndexedNotNull { index, amount ->
-                            if (amount != 0L) PlanAmountEntity(line.itemId, line.method.toColumn(), year, index + 1, amount) else null
+                            if (amount != 0L) PlanAmountEntity(line.itemId, year, index + 1, amount) else null
                         }
                     },
                 )

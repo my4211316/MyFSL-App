@@ -35,20 +35,17 @@ object PlanTableBuilder {
         val rows = mutableListOf<TableRow>()
 
         snapshot.groups.sortedBy { it.sortOrder }.forEach { group ->
-            val lines = items.filter { it.groupId == group.id }.sortedBy { it.sortOrder }.flatMap { item ->
-                amounts.filterKeys { it.itemId == item.id }.entries
-                    .sortedBy { it.key.method?.ordinal ?: -1 }
-                    .filter { (_, months) -> months.any { it != 0L } }
-                    .map { (line, months) ->
-                        TableRow(
-                            kind = TableRowKind.ITEM,
-                            label = item.name,
-                            monthly = months,
-                            itemId = item.id,
-                            method = line.method,
-                            flexible = item.flexibility == Flexibility.FLEXIBLE,
-                        )
-                    }
+            val lines = items.filter { it.groupId == group.id }.sortedBy { it.sortOrder }.mapNotNull { item ->
+                val months = amounts[PlanLine(item.id)] ?: return@mapNotNull null
+                if (months.none { it != 0L }) return@mapNotNull null
+                TableRow(
+                    kind = TableRowKind.ITEM,
+                    label = item.name,
+                    monthly = months,
+                    itemId = item.id,
+                    method = if (item.type == FlowType.EXPENSE) MethodMixRules.methodOf(item) else null,
+                    flexible = item.flexibility == Flexibility.FLEXIBLE,
+                )
             }
             if (lines.isNotEmpty()) {
                 rows += TableRow(TableRowKind.GROUP, group.name)
@@ -60,7 +57,7 @@ object PlanTableBuilder {
         val plannedDebt = LongArray(12)
         val kinds = snapshot.accounts.associate { it.id to it.kind }
         items.filter { it.type == FlowType.TRANSFER && kinds[it.toAccountId]?.isLiability == true }.forEach { item ->
-            amounts[PlanLine(item.id, null)]?.forEachIndexed { m, v -> plannedDebt[m] += v }
+            amounts[PlanLine(item.id)]?.forEachIndexed { m, v -> plannedDebt[m] += v }
         }
         val autoDebt = List(12) { m -> (summary.debtPayments[m] - plannedDebt[m]).coerceAtLeast(0) }
         if (autoDebt.any { it != 0L }) {

@@ -7,6 +7,7 @@ import tw.myfsl.app.core.sample.SampleHousehold.CASH
 import tw.myfsl.app.core.sample.SampleHousehold.FUEL
 import tw.myfsl.app.core.sample.SampleHousehold.HOUSEHOLD
 import tw.myfsl.app.core.sample.SampleHousehold.LESSONS
+import tw.myfsl.app.core.sample.SampleHousehold.FOOD_CASH
 import tw.myfsl.app.core.sample.SampleHousehold.LIVING
 import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.ActualStatus
@@ -34,23 +35,27 @@ class BudgetPlanAccountTest {
     @Test fun `9月14日可調支出：5 列、狀態、百分比與每日可用`() {
         val lines = BudgetProgressCalculator.forMonth(snapshot)
         assertEquals(5, lines.size)
-        fun line(item: Long, method: PaymentMethod) = lines.single { it.item.id == item && it.method == method }
+        fun line(item: Long) = lines.single { it.item.id == item }
 
-        line(FUEL, PaymentMethod.CREDIT_CARD).run {
+        line(FUEL).run {
             assertEquals(PaceStatus.AHEAD, status); assertEquals(66, spentPercent); assertEquals(47, timePercent)
             assertEquals(19, paceGapPercent); assertEquals(70L, dailyAllowance)
         }
-        line(LIVING, PaymentMethod.CREDIT_CARD).run {
+        // 生活費：計畫 16,000、刷卡 9,800（61%），時間 47%
+        line(LIVING).run {
             assertEquals(PaceStatus.AHEAD, status); assertEquals(61, spentPercent); assertEquals(14, paceGapPercent)
-            assertEquals(364L, dailyAllowance)
+            assertEquals("剩 6,200 ÷ 17 天", 364L, dailyAllowance)
+            assertEquals("信用卡 \$9,800", methodBreakdown)
         }
-        line(LIVING, PaymentMethod.CASH).run {
+        // 現金伙食：計畫 9,000、現金 4,400（49%）
+        line(FOOD_CASH).run {
             assertEquals(PaceStatus.ON_TRACK, status); assertEquals(49, spentPercent); assertEquals(270L, dailyAllowance)
+            assertEquals("現金 \$4,400", methodBreakdown)
         }
-        line(HOUSEHOLD, PaymentMethod.CASH).run {
+        line(HOUSEHOLD).run {
             assertEquals(PaceStatus.ON_TRACK, status); assertEquals(30, spentPercent); assertEquals(41L, dailyAllowance)
         }
-        line(LESSONS, PaymentMethod.TRANSFER).run { assertEquals(PaceStatus.ON_TRACK, status) }
+        line(LESSONS).run { assertEquals(PaceStatus.ON_TRACK, status) }
         // 排序：花太快在前，超前多的排前面
         assertEquals(FUEL, lines[0].item.id)
         assertEquals(LIVING, lines[1].item.id)
@@ -58,19 +63,16 @@ class BudgetPlanAccountTest {
         assertEquals(745L, lines.filter { it.groupName == "生活" }.sumOf { it.dailyAllowance ?: 0 })
     }
 
-    @Test fun `沒規劃的支付方式：列為未規劃、不提醒，但算進項目總額`() {
+    @Test fun `其他支付方式的花費也算在同一個項目的預算裡（R-MIX-01）`() {
         val withTransfer = snapshot.copy(
             ledger = snapshot.ledger +
                 LedgerEntry(date = snapshot.today, type = FlowType.EXPENSE, amount = 500, itemId = LIVING, method = PaymentMethod.TRANSFER, accountId = BANK),
         )
-        val lines = BudgetProgressCalculator.forMonth(withTransfer)
-        val unplanned = lines.single { it.item.id == LIVING && it.method == PaymentMethod.TRANSFER }
-        assertEquals(PaceStatus.UNPLANNED, unplanned.status)
-        assertNull(unplanned.dailyAllowance)
-        val living = BudgetProgressCalculator.byItem(lines).single { it.item.id == LIVING }
-        assertEquals(25_000L, living.planned)
-        assertEquals(14_700L, living.actual)
-        assertEquals(10_300L, living.remaining)
+        val living = BudgetProgressCalculator.forMonth(withTransfer).single { it.item.id == LIVING }
+        assertEquals(16_000L, living.planned)
+        assertEquals("轉帳付的 500 也算進來，不再是「未規劃」", 10_300L, living.actual)
+        assertEquals(PaceStatus.AHEAD, living.status)
+        assertEquals("這個月的支付結構仍看得到", "信用卡 \$9,800 · 轉帳 \$500", living.methodBreakdown)
     }
 
     @Test fun `超支、已完成、尚未開始`() {
@@ -81,14 +83,17 @@ class BudgetPlanAccountTest {
         assertEquals(PaceStatus.OVER, BudgetProgressCalculator.forMonth(over).single { it.item.id == HOUSEHOLD }.status)
 
         val done = snapshot.copy(
-            actuals = listOf(ItemActual(HOUSEHOLD, PaymentMethod.CASH, 2026, 9, ActualStatus.DONE, snapshot.today)),
+            actuals = listOf(ItemActual(HOUSEHOLD, 2026, 9, ActualStatus.DONE, snapshot.today)),
         )
         val doneLine = BudgetProgressCalculator.forMonth(done).single { it.item.id == HOUSEHOLD }
         assertEquals(PaceStatus.DONE, doneLine.status)
         assertNull(doneLine.dailyAllowance)
 
-        val secondHalfItem = PlanItem(900, "月底聚餐", 5, FlowType.EXPENSE, timing = Timing.SECOND_HALF, flexibility = tw.myfsl.app.core.model.Flexibility.FLEXIBLE)
-        val plan = snapshot.amountsByYear.mapValues { (_, amounts) -> amounts + (PlanLine(900, PaymentMethod.CASH) to List(12) { 3_000L }) }
+        val secondHalfItem = PlanItem(
+            900, "月底聚餐", 5, FlowType.EXPENSE, method = PaymentMethod.CASH,
+            timing = Timing.SECOND_HALF, flexibility = tw.myfsl.app.core.model.Flexibility.FLEXIBLE,
+        )
+        val plan = snapshot.amountsByYear.mapValues { (_, amounts) -> amounts + (PlanLine(900) to List(12) { 3_000L }) }
         val notStarted = snapshot.copy(items = snapshot.items + secondHalfItem, amountsByYear = plan, today = LocalDate.of(2026, 9, 10))
         assertEquals(PaceStatus.NOT_STARTED, BudgetProgressCalculator.forMonth(notStarted).single { it.item.id == 900L }.status)
     }
@@ -151,7 +156,7 @@ class BudgetPlanAccountTest {
                 PlanItem(951, "自己轉自己", 8, FlowType.TRANSFER, accountId = BANK, toAccountId = BANK),
                 PlanItem(952, "沒有轉入", 8, FlowType.TRANSFER, accountId = BANK),
                 PlanItem(953, "重複繳信貸", 8, FlowType.TRANSFER, accountId = BANK, toAccountId = SampleHousehold.LOAN),
-                PlanItem(954, "空項目", 5, FlowType.EXPENSE),
+                PlanItem(954, "空項目", 5, FlowType.EXPENSE, method = PaymentMethod.CASH),
             ),
             settings = AppSettings(cashAccountId = null, transferAccountId = BANK),
             amountsByYear = snapshot.amountsByYear.mapValues { (_, a) -> a + (PlanLine(953) to List(12) { 5_000L }) },

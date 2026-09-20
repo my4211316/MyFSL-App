@@ -59,7 +59,12 @@ class MigrationTest {
             old.forEach { (table, columns) ->
                 val now = new[table]?.map { it.name }.orEmpty()
                 val removed = columns.map { it.name } - now.toSet()
-                assertTrue("v$to 刪了 $table 的欄位 $removed，需要重建資料表的 migration", removed.isEmpty())
+                // 刪欄位一定要重建資料表：建新表 → 搬資料 → 丟舊表 → 改名。
+                val rebuilt = sql.contains("CREATE TABLE IF NOT EXISTS `${table}_new`") &&
+                    sql.contains("INSERT INTO `${table}_new`") &&
+                    sql.contains("DROP TABLE `$table`") &&
+                    sql.contains("ALTER TABLE `${table}_new` RENAME TO `$table`")
+                assertTrue("v$to 刪了 $table 的欄位 $removed，需要重建資料表的 migration", removed.isEmpty() || rebuilt)
             }
             new.forEach { (table, columns) ->
                 if (table !in old) {

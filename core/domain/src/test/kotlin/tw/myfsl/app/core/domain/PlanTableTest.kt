@@ -14,10 +14,10 @@ class PlanTableTest {
     private val table = PlanTableBuilder.build(snapshot, 2026)
     private val summary = PlanSummaryCalculator.summarize(snapshot, 2026)
 
-    @Test fun `明細依群組排列，每個支付方式一列，全為 0 的列不顯示`() {
+    @Test fun `明細依群組排列，一個項目一列，全為 0 的列不顯示`() {
         val living = table.rows.filter { it.itemId == LIVING }
-        assertEquals(listOf(PaymentMethod.CASH, PaymentMethod.CREDIT_CARD), living.map { it.method })
-        assertEquals(9_000L * 12, living[0].total)
+        assertEquals("一個項目只有一列（R-MIX-01）", listOf(PaymentMethod.CREDIT_CARD), living.map { it.method })
+        assertEquals(16_000L * 12, living[0].total)
         assertTrue(living.all { it.flexible })
         val groupIndex = table.rows.indexOfFirst { it.kind == TableRowKind.GROUP && it.label == "生活" }
         assertTrue(table.rows.indexOf(living[0]) > groupIndex)

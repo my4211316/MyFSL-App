@@ -80,7 +80,7 @@ class DesignGoldenTest {
     }
 
     @Test fun `情境：可調支出減少 20%`() {
-        val flexible = listOf(LIVING, HOUSEHOLD, FUEL, LESSONS, CONTEST, RED_ENVELOPE, BIRTHDAY, TRIP)
+        val flexible = listOf(LIVING, SampleHousehold.FOOD_CASH, HOUSEHOLD, FUEL, LESSONS, CONTEST, RED_ENVELOPE, BIRTHDAY, TRIP)
         val result = ScenarioApplier.run(base, listOf(ScenarioChange.AdjustItems(flexible, -20.0, base.start.index)))
         assertEquals(44_725L, result.lowestLiquid)
         assertEquals(Period(2027, 2, Half.FIRST), result.lowest?.period)

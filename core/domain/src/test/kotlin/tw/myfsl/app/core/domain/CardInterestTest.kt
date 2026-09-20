@@ -69,7 +69,7 @@ class CardInterestTest {
     ): FinanceSnapshot {
         val amounts: MonthlyAmounts = buildMap {
             put(PlanLine(SALARY), List(12) { 80_000L })
-            if (living > 0) put(PlanLine(LIVING, PaymentMethod.CREDIT_CARD), List(12) { living })
+            if (living > 0) put(PlanLine(LIVING), List(12) { living })
             if (payCardPlan > 0) put(PlanLine(PAY_CARD), List(12) { payCardPlan })
         }
         return FinanceSnapshot(
@@ -84,7 +84,10 @@ class CardInterestTest {
             groups = listOf(PlanGroup(1, "收入", 1), PlanGroup(5, "生活", 5), PlanGroup(8, "繳款", 8)),
             items = listOfNotNull(
                 PlanItem(SALARY, "薪資", 1, FlowType.INCOME, accountId = BANK, timing = Timing.FIRST_HALF, dueDay = 5),
-                PlanItem(LIVING, "生活費", 5, FlowType.EXPENSE, timing = Timing.SPLIT, flexibility = Flexibility.FLEXIBLE, tracking = TrackingMode.LEDGER)
+                PlanItem(
+                    LIVING, "生活費", 5, FlowType.EXPENSE, method = PaymentMethod.CREDIT_CARD,
+                    timing = Timing.SPLIT, flexibility = Flexibility.FLEXIBLE, tracking = TrackingMode.LEDGER,
+                )
                     .takeIf { living > 0 },
                 PlanItem(PAY_CARD, "繳信用卡", 8, FlowType.TRANSFER, accountId = BANK, toAccountId = CARD, timing = Timing.FIRST_HALF, dueDay = 5)
                     .takeIf { payCardPlan > 0 },

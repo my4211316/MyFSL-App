@@ -24,15 +24,15 @@ enum class ImportMode(val label: String) {
     ADD_ONLY("只新增"),
 }
 
-/** 一個要匯入的項目：項目本身＋各支付方式的 12 個月金額。 */
+/** 一個要匯入的項目：項目本身＋12 個月金額（R-MIX-01：不分支付方式）。 */
 data class ImportItem(
     val groupName: String,
     val item: PlanItem,
-    val amounts: Map<PaymentMethod?, List<Money>>,
+    val amounts: List<Money>,
     /** 這個項目來自檔案的哪幾列。 */
     val lines: List<Int>,
 ) {
-    val total: Money get() = amounts.values.sumOf { it.sum() }
+    val total: Money get() = amounts.sum()
 }
 
 data class ImportPreview(
@@ -43,12 +43,12 @@ data class ImportPreview(
     val issues: List<PlanIssue>,
 ) {
     val itemCount: Int get() = items.size
-    val lineCount: Int get() = items.sumOf { it.amounts.size }
+    val lineCount: Int get() = items.size
     val income: Money get() = items.filter { it.item.type == FlowType.INCOME }.sumOf { it.total }
     val expense: Money get() = items.filter { it.item.type == FlowType.EXPENSE }.sumOf { it.total }
     val cardSpending: Money
-        get() = items.filter { it.item.type == FlowType.EXPENSE }
-            .sumOf { it.amounts[PaymentMethod.CREDIT_CARD]?.sum() ?: 0L }
+        get() = items.filter { it.item.type == FlowType.EXPENSE && it.item.method == PaymentMethod.CREDIT_CARD }
+            .sumOf { it.total }
     val errors: List<PlanIssue> get() = issues.filter { it.severity == Severity.ERROR }
     val canImport: Boolean get() = errors.isEmpty() && items.isNotEmpty()
 }
@@ -86,15 +86,13 @@ object PlanImport {
         return buildString {
             appendLine(COLUMNS.joinToString(","))
             items.filter { !it.archived }.forEach { item ->
-                val lines = amounts.keys.filter { it.itemId == item.id }.sortedBy { it.method?.ordinal ?: -1 }
-                val rows = lines.ifEmpty { listOf(PlanLine(item.id, if (item.type == FlowType.EXPENSE) PaymentMethod.CASH else null)) }
-                rows.forEach { line ->
-                    val months = amounts[line] ?: List(12) { 0L }
+                run {
+                    val months = amounts[PlanLine(item.id)] ?: List(12) { 0L }
                     val cells = listOf(
                         groupName[item.groupId].orEmpty(),
                         item.name,
                         item.type.label,
-                        line.method?.label.orEmpty(),
+                        if (item.type == FlowType.EXPENSE) MethodMixRules.methodOf(item).label else "",
                         item.timing.label,
                         item.dueDay?.toString().orEmpty(),
                         if (item.flexibility == Flexibility.FLEXIBLE) "是" else "否",
@@ -242,6 +240,7 @@ object PlanImport {
                         name = name,
                         groupId = 0,
                         type = type,
+                        method = if (type == FlowType.EXPENSE) method ?: PaymentMethod.CASH else null,
                         accountId = accountId,
                         toAccountId = toAccountId,
                         timing = timing(cell("時點")),
@@ -250,7 +249,7 @@ object PlanImport {
                         note = cell("備註"),
                         dueDay = dueDay,
                     ),
-                    amounts = linkedMapOf(method to months),
+                    amounts = months.toMutableList(),
                     lines = mutableListOf(lineNumber),
                 )
             } else {
@@ -270,23 +269,31 @@ object PlanImport {
                 conflict("追蹤", tracking(cell("追蹤")) == first.tracking)
                 conflict("帳戶", accountId == first.accountId)
                 conflict("轉入帳戶", toAccountId == first.toAccountId)
-                if (existing.amounts.containsKey(method)) {
+                // 同一個項目分成好幾個支付方式的列：合併成一列，支付方式取金額大的那個（R-MIX-05）。
+                // 支付方式相同的兩列則是重複，照舊報錯。
+                if (type == FlowType.EXPENSE && method != null && method != existing.item.method) {
+                    val was = existing.amounts.sum()
+                    issues += PlanIssue(
+                        Severity.INFO,
+                        "「$name」有兩種支付方式（第 ${existing.lines.joinToString("、")} 列與第 $lineNumber 列），金額會合併成一列",
+                    )
+                    if (months.sum() > was) existing.item = existing.item.copy(method = method)
+                    for (m in 0 until 12) existing.amounts[m] = existing.amounts[m] + months[m]
+                } else {
                     issues += PlanIssue(
                         Severity.ERROR,
                         "「$name」的${method?.label ?: type.label}出現兩次（第 ${existing.lines.joinToString("、")} 列與第 $lineNumber 列）",
                     )
-                } else {
-                    existing.amounts[method] = months
                 }
                 existing.lines += lineNumber
             }
         }
 
-        val items = byKey.values.map { ImportItem(it.groupName, it.item, it.amounts.toMap(), it.lines.toList()) }
+        val items = byKey.values.map { ImportItem(it.groupName, it.item, it.amounts.toList(), it.lines.toList()) }
         val existingGroups = groups.map { normalize(it.name) }.toSet()
         val newGroups = items.map { it.groupName }.distinct().filter { normalize(it) !in existingGroups }
         if (items.isNotEmpty()) {
-            issues += PlanIssue(Severity.INFO, "共 ${items.size} 個項目、${items.sumOf { it.amounts.size }} 個計畫列")
+            issues += PlanIssue(Severity.INFO, "共 ${items.size} 個項目")
             if (newGroups.isNotEmpty()) issues += PlanIssue(Severity.INFO, "會新增群組：${newGroups.joinToString("、")}")
         } else {
             issues += PlanIssue(Severity.ERROR, "檔案裡沒有可以匯入的項目")
@@ -296,8 +303,8 @@ object PlanImport {
 
     private class MutableImportItem(
         val groupName: String,
-        val item: PlanItem,
-        val amounts: LinkedHashMap<PaymentMethod?, List<Money>>,
+        var item: PlanItem,
+        val amounts: MutableList<Money>,
         val lines: MutableList<Int>,
     )
 

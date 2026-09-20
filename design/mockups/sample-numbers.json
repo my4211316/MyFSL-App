@@ -75,11 +75,11 @@
             ]
           },
           "progress": [
-    {"item": "交通油資", "method": "信用卡", "group": "生活", "planned": 3500, "actual": 2300, "spentPercent": 66, "timePercent": 47, "paceGap": 19, "status": "花太快", "dailyAllowance": 70},
-    {"item": "生活費", "method": "信用卡", "group": "生活", "planned": 16000, "actual": 9800, "spentPercent": 61, "timePercent": 47, "paceGap": 14, "status": "花太快", "dailyAllowance": 364},
-    {"item": "生活費", "method": "現金", "group": "生活", "planned": 9000, "actual": 4400, "spentPercent": 49, "timePercent": 47, "paceGap": 2, "status": "正常", "dailyAllowance": 270},
-    {"item": "家用", "method": "現金", "group": "生活", "planned": 1000, "actual": 300, "spentPercent": 30, "timePercent": 47, "paceGap": -17, "status": "正常", "dailyAllowance": 41},
-    {"item": "才藝課", "method": "轉帳", "group": "小孩活動", "planned": 6000, "actual": 0, "spentPercent": 0, "timePercent": 93, "paceGap": -93, "status": "正常", "dailyAllowance": 3000}
+    {"item": "交通油資", "group": "生活", "planned": 3500, "actual": 2300, "spentPercent": 66, "timePercent": 47, "paceGap": 19, "status": "花太快", "dailyAllowance": 70},
+    {"item": "生活費", "group": "生活", "planned": 16000, "actual": 9800, "spentPercent": 61, "timePercent": 47, "paceGap": 14, "status": "花太快", "dailyAllowance": 364},
+    {"item": "現金伙食", "group": "生活", "planned": 9000, "actual": 4400, "spentPercent": 49, "timePercent": 47, "paceGap": 2, "status": "正常", "dailyAllowance": 270},
+    {"item": "家用", "group": "生活", "planned": 1000, "actual": 300, "spentPercent": 30, "timePercent": 47, "paceGap": -17, "status": "正常", "dailyAllowance": 41},
+    {"item": "才藝課", "group": "小孩活動", "planned": 6000, "actual": 0, "spentPercent": 0, "timePercent": 93, "paceGap": -93, "status": "正常", "dailyAllowance": 3000}
           ],
           "accounts": {
             "liquid": 135000,
@@ -102,7 +102,7 @@
             "reportLines": 0,
             "reconciles": [
     {"name": "薪轉帳戶", "computed": 120000, "pendingRecent": 0, "defaultItem": "才藝課"},
-    {"name": "零用現金", "computed": 15000, "pendingRecent": 0, "defaultItem": "生活費"},
+    {"name": "零用現金", "computed": 15000, "pendingRecent": 0, "defaultItem": "現金伙食"},
     {"name": "信用卡合計", "computed": 105000, "pendingRecent": 12100, "defaultItem": "生活費"}
             ],
             "missedLabel": "本月漏記 1 筆 · $120",

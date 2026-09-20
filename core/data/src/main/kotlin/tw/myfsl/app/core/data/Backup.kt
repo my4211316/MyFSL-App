@@ -77,7 +77,11 @@ data class BackupFile(
 ) {
     companion object {
         const val APP = "MyFSL"
-        const val FORMAT_VERSION = 1
+
+        /**
+         * 2：預算不再分支付方式（R-MIX-01）。舊的第 1 版備份還原時會自動合併（見 [BackupCodec.upgradeFromV1]）。
+         */
+        const val FORMAT_VERSION = 2
     }
 }
 
@@ -111,14 +115,68 @@ object BackupCodec {
 
     fun encode(file: BackupFile): String = json.encodeToString(BackupFile.serializer(), file)
 
+    /** 第 1 版備份裡「項目 × 支付方式」的一列計畫金額。 */
+    @Serializable
+    private data class V1Amount(val itemId: Long, val method: String = "", val year: Int, val month: Int, val amount: Long = 0)
+
+    @Serializable
+    private data class V1File(val amounts: List<V1Amount> = emptyList())
+
+    /**
+     * 把第 1 版備份升到第 2 版（R-MIX-05）：
+     * 同一個項目的多個支付方式列合併成一列（金額相加），項目的支付方式取金額最大的那一個；
+     * 每月狀態去掉支付方式只留一筆（已完成優先）；到期識別碼拿掉中間的支付方式段。
+     */
+    private fun upgradeFromV1(file: BackupFile, text: String): BackupFile {
+        val legacy = try {
+            json.decodeFromString(V1File.serializer(), text).amounts
+        } catch (e: SerializationException) {
+            emptyList()
+        }
+        val methodByItem = legacy
+            .filter { it.method.isNotEmpty() && it.method != "-" }
+            .groupBy { it.itemId }
+            .mapValues { (_, rows) ->
+                rows.groupBy { it.method }.maxByOrNull { (_, ms) -> ms.sumOf { it.amount } }?.key
+            }
+        val items = file.items.map { item ->
+            if (item.type != "EXPENSE") item else item.copy(method = item.method ?: methodByItem[item.id] ?: "CASH")
+        }
+        val amounts = file.amounts
+            .groupBy { Triple(it.itemId, it.year, it.month) }
+            .map { (key, rows) -> PlanAmountEntity(key.first, key.second, key.third, rows.sumOf { it.amount }) }
+        val actuals = file.actuals
+            .groupBy { Triple(it.itemId, it.year, it.month) }
+            .map { (_, rows) -> rows.minByOrNull { it.status } ?: rows.first() }
+        val ledger = file.ledger.map { it.copy(postingKey = it.postingKey?.let(::upgradePlanKey)) }
+        val postedKeys = file.postedKeys.map { it.copy(key = upgradePlanKey(it.key)) }
+        return file.copy(
+            formatVersion = BackupFile.FORMAT_VERSION,
+            items = items,
+            amounts = amounts,
+            actuals = actuals,
+            ledger = ledger,
+            postedKeys = postedKeys,
+        )
+    }
+
+    /** `plan:12:CASH:2026-09:15` → `plan:12:2026-09:15`；其他識別碼原樣保留。 */
+    internal fun upgradePlanKey(key: String): String {
+        if (!key.startsWith("plan:")) return key
+        val parts = key.split(":")
+        if (parts.size != 5) return key
+        return listOf(parts[0], parts[1], parts[3], parts[4]).joinToString(":")
+    }
+
     fun decode(text: String): BackupReadResult {
-        val file = try {
+        val raw = try {
             json.decodeFromString(BackupFile.serializer(), text.removePrefix(BOM))
         } catch (e: SerializationException) {
             return BackupReadResult.Error("這不是 MyFSL 的備份檔，或檔案已損壞")
         } catch (e: IllegalArgumentException) {
             return BackupReadResult.Error("這不是 MyFSL 的備份檔，或檔案已損壞")
         }
+        val file = if (raw.formatVersion < 2) upgradeFromV1(raw, text.removePrefix(BOM)) else raw
         if (file.app != BackupFile.APP) return BackupReadResult.Error("這不是 MyFSL 的備份檔")
         if (file.formatVersion > BackupFile.FORMAT_VERSION) {
             return BackupReadResult.Error("這個備份來自較新版本的 App，請先更新 App 再還原")
@@ -131,7 +189,7 @@ object BackupCodec {
             "項目".takeIf { duplicates(file.items) { it.id } },
             "記帳".takeIf { duplicates(file.ledger) { it.id } },
             "分期".takeIf { duplicates(file.installments) { it.id } },
-            "計畫金額".takeIf { duplicates(file.amounts) { listOf(it.itemId, it.method, it.year, it.month) } },
+            "計畫金額".takeIf { duplicates(file.amounts) { listOf(it.itemId, it.year, it.month) } },
             "延期款".takeIf { duplicates(file.deferrals) { it.id } },
             "帳單".takeIf { duplicates(file.cardStatements) { listOf(it.cardId, it.year, it.month) } },
             "到期項目識別碼".takeIf { duplicates(file.ledger.mapNotNull { it.postingKey }) { it } },

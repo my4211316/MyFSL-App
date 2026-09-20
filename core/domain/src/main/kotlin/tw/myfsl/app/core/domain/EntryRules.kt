@@ -33,22 +33,14 @@ object AmountInput {
 
 /** 記帳時顯示在金額下方的預算提示。 */
 sealed interface BudgetHint {
-    /** 這個支付方式有計畫金額。 */
+    /** 項目本月有計畫金額；怎麼付的都算在同一筆預算裡（R-MIX-01）。 */
     data class Planned(
         val itemName: String,
-        val method: PaymentMethod,
         val left: Money,
         val amount: Money,
     ) : BudgetHint {
         val after: Money get() = left - amount
     }
-
-    /** 項目有計畫，但沒有規劃這個支付方式：金額仍算進項目總額。 */
-    data class UnplannedMethod(
-        val itemName: String,
-        val method: PaymentMethod,
-        val itemLeftAfter: Money,
-    ) : BudgetHint
 
     /** 項目本月沒有任何計畫金額。 */
     data object NotInPlan : BudgetHint
@@ -59,7 +51,7 @@ sealed interface BudgetHint {
 
 object EntryRules {
 
-    /** 預設支付方式：這個項目上次用的；沒用過就用本月計畫金額最大的；再沒有就用第一個計畫列；都沒有則為現金。 */
+    /** 預設支付方式：這個項目上次用的；沒用過就用項目設定的支付方式；都沒有則為現金。 */
     fun defaultMethod(snapshot: FinanceSnapshot, item: PlanItem, date: LocalDate = snapshot.today): PaymentMethod? {
         if (item.type != FlowType.EXPENSE) return null
         snapshot.ledger
@@ -67,13 +59,7 @@ object EntryRules {
             .maxWithOrNull(compareBy({ it.date }, { it.id }))
             ?.method
             ?.let { return it }
-        val lines = snapshot.linesOf(item.id).filter { it.method != null }
-        lines.map { it to snapshot.planAmount(it, date.year, date.monthValue) }
-            .filter { it.second > 0 }
-            .maxByOrNull { it.second }
-            ?.first?.method
-            ?.let { return it }
-        return lines.firstOrNull()?.method ?: PaymentMethod.CASH
+        return item.method ?: PaymentMethod.CASH
     }
 
     /** 預設卡片：「指定信用卡」開啟時，用這個項目上次刷的卡；否則為不指定（null）。 */
@@ -97,24 +83,15 @@ object EntryRules {
         if (item.type != FlowType.EXPENSE || method == null) return BudgetHint.NotExpense
         val year = date.year
         val month = date.monthValue
-        val line = PlanLine(item.id, method)
-        val planned = snapshot.planAmount(line, year, month)
-        if (planned > 0) {
-            val spent = ActualCalculator.actualFor(line, year, month, snapshot.actuals, snapshot.ledger).amount
-            return BudgetHint.Planned(item.name, method, planned - spent, amount)
-        }
-        val plannedMethods = snapshot.plannedMethods(item.id, year, month)
-        if (plannedMethods.isEmpty()) return BudgetHint.NotInPlan
-        val totalPlanned = plannedMethods.sumOf { snapshot.planAmount(PlanLine(item.id, it), year, month) }
-        val totalSpent = PaymentMethod.entries.sumOf {
-            ActualCalculator.actualFor(PlanLine(item.id, it), year, month, snapshot.actuals, snapshot.ledger).amount
-        }
-        return BudgetHint.UnplannedMethod(item.name, method, totalPlanned - totalSpent - amount)
+        val planned = snapshot.plannedAmount(item.id, year, month)
+        if (planned <= 0) return BudgetHint.NotInPlan
+        val spent = ActualCalculator.actualFor(item.id, year, month, snapshot.actuals, snapshot.ledger).amount
+        return BudgetHint.Planned(item.name, planned - spent, amount)
     }
 
     fun hintText(hint: BudgetHint): String = when (hint) {
         is BudgetHint.Planned -> {
-            val name = "${hint.itemName}・${hint.method.label}"
+            val name = hint.itemName
             when {
                 hint.amount == 0L && hint.left >= 0 -> "$name 本月剩 ${MoneyFormat.currency(hint.left)}"
                 hint.amount == 0L -> "$name 本月已超出 ${MoneyFormat.currency(-hint.left)}"
@@ -123,9 +100,6 @@ object EntryRules {
             }
         }
 
-        is BudgetHint.UnplannedMethod ->
-            "${hint.itemName}沒有規劃用${hint.method.label}，會算進${hint.itemName}總額（剩 ${MoneyFormat.currency(hint.itemLeftAfter)}）"
-
         BudgetHint.NotInPlan -> "不在本月計畫內，會列入計畫外支出"
         BudgetHint.NotExpense -> "不影響支出進度"
     }
@@ -133,7 +107,6 @@ object EntryRules {
     /** 提示是否要用警示色。 */
     fun isWarning(hint: BudgetHint): Boolean = when (hint) {
         is BudgetHint.Planned -> if (hint.amount == 0L) hint.left < 0 else hint.after < 0
-        is BudgetHint.UnplannedMethod -> true
         else -> false
     }
 
@@ -186,12 +159,13 @@ object EntryRules {
         val name = note.trim().ifEmpty { item.name }
         val base = "已記下 $name ${MoneyFormat.currency(amount)}"
         val hint = budgetHint(snapshot, item, method, amount)
-        return if (hint is BudgetHint.Planned) "$base · ${hint.itemName}・${hint.method.label}剩 ${MoneyFormat.currency(hint.after)}" else base
+        return if (hint is BudgetHint.Planned) "$base · ${hint.itemName}剩 ${MoneyFormat.currency(hint.after)}" else base
     }
 
     /**
      * 常用項目（R-ENT-02）：這個種類最近自己記過的（最多 5 個），加上本月有計畫金額的，最多 8 個；
-     * 其餘收在「更多」裡。
+     * 本月沒有計畫（例如年中才開始用、這個月沒設預算）時，用下個月有計畫的、再依排序補滿，
+     * 記帳畫面不會只剩一個項目。其餘收在「更多」裡。
      */
     fun commonItems(snapshot: FinanceSnapshot, type: FlowType): List<PlanItem> {
         val all = itemsOf(snapshot, type)
@@ -203,10 +177,11 @@ object EntryRules {
             .distinct()
             .take(5)
             .toList()
-        val planned = all.filter { item ->
-            snapshot.plannedMethods(item.id, snapshot.today.year, snapshot.today.monthValue).isNotEmpty()
+        fun plannedIn(month: java.time.YearMonth) = all.filter { item ->
+            snapshot.isPlanned(item.id, month.year, month.monthValue)
         }
-        return (recent + planned).distinct().take(8)
+        val thisMonth = java.time.YearMonth.from(snapshot.today)
+        return (recent + plannedIn(thisMonth) + plannedIn(thisMonth.plusMonths(1)) + all).distinct().take(8)
     }
 
     /**

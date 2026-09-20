@@ -29,21 +29,22 @@ data class ItemActualView(
 object ActualCalculator {
 
     /**
-     * 計畫列某月至今的實際金額 = 當月該列記帳的合計（含對帳差額、到期確認、到期記下）。
+     * 項目某月至今的實際金額 = 當月這個項目記帳的合計（含對帳差額、到期確認、到期記下）。
+     * 不分支付方式（R-MIX-01）：怎麼付的都算在同一筆預算裡。
      * 分期各期入帳的本金不算（消費當月已經算過全額）；延期付款算在原本的月份以外，不在這裡。
      */
     fun actualFor(
-        line: PlanLine,
+        itemId: Long,
         year: Int,
         month: Int,
         actuals: List<ItemActual>,
         ledger: List<LedgerEntry>,
     ): ItemActualView {
         val status = actuals.firstOrNull {
-            it.itemId == line.itemId && it.method == line.method && it.year == year && it.month == month
+            it.itemId == itemId && it.year == year && it.month == month
         }?.status
         val entries = ledger.filter {
-            it.itemId == line.itemId && it.method == line.method && it.countsForBudget &&
+            it.itemId == itemId && it.countsForBudget &&
                 it.postingKey?.startsWith(tw.myfsl.app.core.model.PostingKeys.DEFERRAL) != true &&
                 it.budgetMonth.year == year && it.budgetMonth.monthValue == month
         }
@@ -90,6 +91,7 @@ object BaselineBuilder {
         }
         val input = ForecastInput(start, periodCount, seeds, emptyList(), snapshot.settings.safetyLevel, methodAccounts)
         val events = ArrayList<FlowEvent>()
+        val mixes = MethodMixRules.all(snapshot, today)
 
         val months = Period.range(start, periodCount).map { it.yearMonth }.distinct()
         val currentMonth = YearMonth.from(today)
@@ -99,35 +101,29 @@ object BaselineBuilder {
                 if (!snapshot.isItemActiveIn(item, ym.year, ym.monthValue)) continue
                 // 繳給已依合約自動繳款的卡片或貸款：除非標成額外還款，否則不計（R-PAY-01）。
                 if (item.type == FlowType.TRANSFER && snapshot.isAutoManagedDebt(item.toAccountId) && !item.extraRepayment) continue
-                val lines = if (item.type == FlowType.EXPENSE) {
-                    snapshot.linesOf(item.id).filter { it.method != null }
-                } else {
-                    listOf(PlanLine(item.id, null))
+                val mix = mixes[item.id] ?: MethodMixRules.fromItem(item)
+                val planned = snapshot.plannedAmount(item.id, ym.year, ym.monthValue)
+                if (planned <= 0) continue
+                if (item.tracking == TrackingMode.AUTO) {
+                    // 每月固定：本月以前看到期清單（還沒記下的才算，見 addDueItems）；之後的月份依到期日放。
+                    if (!ym.isAfter(currentMonth)) continue
+                    item.occurrences(ym.year, ym.monthValue, planned)
+                        .forEach { (date, amount) -> events.addPlanned(item, mix, Period.of(date), amount, input, end) }
+                    continue
                 }
-                for (line in lines) {
-                    val planned = snapshot.planAmount(line, ym.year, ym.monthValue)
-                    if (planned <= 0) continue
-                    if (item.tracking == TrackingMode.AUTO) {
-                        // 每月固定：本月以前看到期清單（還沒記下的才算，見 addDueItems）；之後的月份依到期日放。
-                        if (!ym.isAfter(currentMonth)) continue
-                        item.occurrences(ym.year, ym.monthValue, planned)
-                            .forEach { (date, amount) -> events.addIfInRange(item, line, Period.of(date), amount, input, end) }
-                        continue
+                var monthAmount = planned
+                if (ym == currentMonth) {
+                    val actual = ActualCalculator.actualFor(item.id, ym.year, ym.monthValue, snapshot.actuals, snapshot.ledger)
+                    monthAmount = when (actual.status) {
+                        ActualStatus.DONE, ActualStatus.POSTPONED -> 0
+                        else -> (planned - actual.amount).coerceAtLeast(0)
                     }
-                    var monthAmount = planned
-                    if (ym == currentMonth) {
-                        val actual = ActualCalculator.actualFor(line, ym.year, ym.monthValue, snapshot.actuals, snapshot.ledger)
-                        monthAmount = when (actual.status) {
-                            ActualStatus.DONE, ActualStatus.POSTPONED -> 0
-                            else -> (planned - actual.amount).coerceAtLeast(0)
-                        }
-                    }
-                    if (monthAmount <= 0L) continue
-                    // 已經過了的發生日，剩下的額度移到今天所在的半月。
-                    item.occurrences(ym.year, ym.monthValue, monthAmount).forEach { (date, amount) ->
-                        val period = if (date.isAfter(today)) Period.of(date) else start
-                        events.addIfInRange(item, line, period, amount, input, end)
-                    }
+                }
+                if (monthAmount <= 0L) continue
+                // 已經過了的發生日，剩下的額度移到今天所在的半月。
+                item.occurrences(ym.year, ym.monthValue, monthAmount).forEach { (date, amount) ->
+                    val period = if (date.isAfter(today)) Period.of(date) else start
+                    events.addPlanned(item, mix, period, amount, input, end)
                 }
             }
         }
@@ -142,7 +138,7 @@ object BaselineBuilder {
 
     private fun MutableList<FlowEvent>.addIfInRange(
         item: PlanItem,
-        line: PlanLine,
+        method: PaymentMethod?,
         period: Period,
         amount: Money,
         input: ForecastInput,
@@ -150,7 +146,29 @@ object BaselineBuilder {
         source: EventSource = EventSource.PLAN,
     ) {
         if (amount <= 0L || period.index < input.start.index || period.index >= endIndex) return
-        add(toEvent(item, line.method, period, amount, input).copy(source = source))
+        add(toEvent(item, method, period, amount, input).copy(source = source))
+    }
+
+    /**
+     * 依項目的支付結構放入事件（R-MIX-02）：支出照刷卡比例拆成「刷卡」與「非刷卡」兩筆，
+     * 比例是 0 或 1 時只會有一筆；收入與轉帳不分支付方式。
+     */
+    private fun MutableList<FlowEvent>.addPlanned(
+        item: PlanItem,
+        mix: MethodMix,
+        period: Period,
+        amount: Money,
+        input: ForecastInput,
+        endIndex: Int,
+        source: EventSource = EventSource.PLAN,
+    ) {
+        if (item.type != FlowType.EXPENSE) {
+            addIfInRange(item, null, period, amount, input, endIndex, source)
+            return
+        }
+        val (card, rest) = mix.split(amount)
+        addIfInRange(item, PaymentMethod.CREDIT_CARD, period, card, input, endIndex, source)
+        addIfInRange(item, mix.rest, period, rest, input, endIndex, source)
     }
 
     /** 下一個到期日：本月的 [day] 還沒到就是本月，否則下個月（短月份取月底）。 */
@@ -166,7 +184,7 @@ object BaselineBuilder {
     private fun addDueItems(snapshot: FinanceSnapshot, input: ForecastInput, endIndex: Int, events: MutableList<FlowEvent>) {
         DueItems.list(snapshot).filter { it.kind == DueKind.PLAN }.forEach { due ->
             val item = due.item ?: return@forEach
-            events.addIfInRange(item, PlanLine(item.id, due.method), periodFor(snapshot, due.date, input), due.amount, input, endIndex)
+            events.addIfInRange(item, due.method, periodFor(snapshot, due.date, input), due.amount, input, endIndex)
         }
     }
 
@@ -180,12 +198,13 @@ object BaselineBuilder {
         snapshot.deferrals.filter { !it.settled && it.amount > 0 }.forEach { deferral ->
             val item = snapshot.item(deferral.itemId) ?: return@forEach
             val due = YearMonth.of(deferral.dueYear, deferral.dueMonth)
-            val line = deferral.line
+            // 延期款的支付方式在延期當下就固定了，不照項目目前的支付結構重算。
+            val method = deferral.method ?: item.method
             if (!due.isAfter(YearMonth.from(today))) {
-                events.addIfInRange(item, line, input.start, deferral.amount, input, endIndex, EventSource.DEFERRAL)
+                events.addIfInRange(item, method, input.start, deferral.amount, input, endIndex, EventSource.DEFERRAL)
             } else {
                 item.occurrences(due.year, due.monthValue, deferral.amount).forEach { (date, amount) ->
-                    events.addIfInRange(item, line, Period.of(date), amount, input, endIndex, EventSource.DEFERRAL)
+                    events.addIfInRange(item, method, Period.of(date), amount, input, endIndex, EventSource.DEFERRAL)
                 }
             }
         }

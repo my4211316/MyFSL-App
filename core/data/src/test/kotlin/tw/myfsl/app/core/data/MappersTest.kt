@@ -30,11 +30,9 @@ class MappersTest {
 
     @Test fun `項目、實際數字、記帳來回轉換；沒有支付方式時存成空字串`() {
         SampleHousehold.items.forEach { assertEquals(it, it.toEntity().toModel()) }
-        val actual = ItemActual(1, null, 2026, 9, ActualStatus.POSTPONED, LocalDate.of(2026, 9, 14))
-        assertEquals("", actual.toEntity().method)
+        assertEquals("收入沒有支付方式", null, SampleHousehold.items.first { it.type == FlowType.INCOME }.toEntity().method)
+        val actual = ItemActual(1, 2026, 9, ActualStatus.POSTPONED, LocalDate.of(2026, 9, 14))
         assertEquals(actual, actual.toEntity().toModel())
-        val cardActual = actual.copy(method = PaymentMethod.CREDIT_CARD)
-        assertEquals(cardActual, cardActual.toEntity().toModel())
         val entry = LedgerEntry(
             7, LocalDate.of(2026, 9, 13), FlowType.EXPENSE, 800, 503, PaymentMethod.CREDIT_CARD,
             null, null, "加油", EntrySource.MISSED, createdAt = 1_757_830_123_456,

@@ -1,0 +1,472 @@
+<title>支付結構改版</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500&family=Roboto+Flex:opsz,wght@8..144,400;8..144,500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0..1,0&display=swap">
+<style>
+  :root {
+    --page-bg: #EEF3F1; --page-ink: #171D1B; --page-muted: #4A5753; --page-line: #C9D6D1; --page-card: #F8FBFA; --page-accent: #1B6B61;
+    --num: "Roboto Flex", "Noto Sans TC", system-ui, sans-serif;
+    --text: "Noto Sans TC", "Roboto Flex", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --page-bg: #0F1513; --page-ink: #DDE4E1; --page-muted: #9DAAA6; --page-line: #2C3633; --page-card: #171D1B; --page-accent: #8AD5C8; }
+  }
+  :root[data-theme="dark"] { --page-bg: #0F1513; --page-ink: #DDE4E1; --page-muted: #9DAAA6; --page-line: #2C3633; --page-card: #171D1B; --page-accent: #8AD5C8; }
+
+  .app {
+    --primary: #1B6B61; --on-primary: #FFFFFF; --primary-container: #A6F2E4; --on-primary-container: #00201C;
+    --secondary-container: #CCE8E2; --on-secondary-container: #05201C;
+    --surface: #F5FAF8; --lowest: #FFFFFF; --low: #EFF5F2; --container: #E9EFEC; --high: #E3EAE7; --highest: #DDE4E1;
+    --on-surface: #171D1B; --on-variant: #3F4946; --outline: #6F7976; --outline-variant: #BEC9C5; --error: #BA1A1A;
+    --warn: #7A5900; --warn-container: #FFDF9E; --on-warn-container: #261A00;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  }
+  .app.dark {
+    --primary: #8BD6C9; --on-primary: #003731; --primary-container: #005048; --on-primary-container: #A6F2E4;
+    --secondary-container: #334B47; --on-secondary-container: #CCE8E2;
+    --surface: #0E1513; --lowest: #090F0E; --low: #171D1B; --container: #1B211F; --high: #252B2A; --highest: #303634;
+    --on-surface: #DDE4E1; --on-variant: #BEC9C5; --outline: #899390; --outline-variant: #3F4946; --error: #FFB4AB;
+    --warn: #F0C048; --warn-container: #5C4300; --on-warn-container: #FFDF9E;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  }
+
+  * { box-sizing: border-box; }
+  body { background: var(--page-bg); color: var(--page-ink); font-family: var(--text); padding-inline: 16px; padding-block: 32px 64px; margin: 0; }
+  .wrap { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+  header.intro { display: flex; flex-direction: column; gap: 12px; max-width: 820px; }
+  .eyebrow { font-size: 13px; letter-spacing: .08em; color: var(--page-accent); font-weight: 500; }
+  h1 { font-size: 28px; line-height: 1.3; margin: 0; text-wrap: balance; }
+  h2.group { font-size: 20px; margin: 0; padding-top: 8px; border-top: 1px solid var(--page-line); }
+  .lede { font-size: 16px; line-height: 1.7; color: var(--page-muted); margin: 0; }
+  .rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; list-style: none; padding: 0; margin: 0; }
+  .rules li { background: var(--page-card); border: 1px solid var(--page-line); border-radius: 12px; padding: 12px 16px; font-size: 14px; line-height: 1.6; }
+  .rules b { display: block; font-weight: 500; }
+  .row { display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start; }
+  .col { display: flex; flex-direction: column; gap: 12px; width: 360px; max-width: 100%; }
+  .col h3 { font-size: 16px; margin: 0; }
+  .note { font-size: 14px; line-height: 1.65; color: var(--page-muted); margin: 0; }
+
+  .phone { width: 360px; max-width: 100%; height: 800px; background: var(--surface); color: var(--on-surface); border-radius: 28px; outline: 6px solid #1d2422; overflow: hidden; position: relative; display: flex; flex-direction: column; font-family: var(--text); }
+  .status { height: 32px; flex: none; display: flex; justify-content: space-between; align-items: center; padding: 0 24px; font: 500 12px var(--num); color: var(--on-variant); }
+  .ms { font-family: "Material Symbols Rounded"; font-weight: normal; font-style: normal; font-size: 24px; line-height: 1; display: inline-block; font-feature-settings: "liga"; -webkit-font-smoothing: antialiased; }
+  .s20 { font-size: 20px; } .s18 { font-size: 18px; }
+  .fill { font-variation-settings: "FILL" 1; }
+  .num { font-family: var(--num); font-variant-numeric: tabular-nums; }
+  .t45 { font: 400 45px/52px var(--num); }
+  .t22 { font-size: 22px; line-height: 28px; font-weight: 400; }
+  .t14 { font-size: 14px; line-height: 20px; }
+  .t12 { font-size: 12px; line-height: 16px; }
+  .w5 { font-weight: 500; }
+  .mut { color: var(--on-variant); }
+  .err { color: var(--error); }
+  .wrn { color: var(--warn); }
+  .pri { color: var(--primary); }
+
+  .topbar { height: 64px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 4px 0 16px; }
+  .topbar.nav { padding-left: 4px; }
+  .topbar .tt { flex: 1; min-width: 0; }
+  .ib { width: 48px; height: 48px; display: grid; place-items: center; color: var(--on-variant); flex: none; }
+  .body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 16px; padding: 0 16px 16px; position: relative; }
+  .body::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 24px; background: linear-gradient(transparent, var(--surface)); }
+  .hero { background: var(--primary); color: var(--on-primary); border-radius: 28px; padding: 16px; display: flex; flex-direction: column; gap: 8px; flex: none; }
+  .figs { display: flex; gap: 16px; }
+  .card { background: var(--low); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 12px; flex: none; }
+  .list { background: var(--lowest); border-radius: 16px; overflow: hidden; flex: none; }
+  .li { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 16px; }
+  .li + .li { border-top: 1px solid var(--outline-variant); }
+  .li .lead { width: 40px; display: grid; place-items: center; flex: none; color: var(--on-variant); }
+  .li .bd { flex: 1; min-width: 0; }
+  .li .bd .t14, .li .bd .t12 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sec { display: flex; align-items: center; justify-content: space-between; min-height: 24px; flex: none; }
+  .sec a { color: var(--primary); font-size: 14px; font-weight: 500; }
+  .track { height: 4px; border-radius: 2px; background: var(--highest); overflow: hidden; }
+  .track i { display: block; height: 100%; background: var(--primary); border-radius: 2px; }
+  .track.w i { background: var(--warn); } .track.e i { background: var(--error); }
+  .badge { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 8px; font-size: 12px; font-weight: 500; background: var(--secondary-container); color: var(--on-secondary-container); white-space: nowrap; }
+  .badge.w { background: var(--warn-container); color: var(--on-warn-container); }
+  .badge.e { background: var(--error); color: #fff; }
+  .btn { height: 56px; border-radius: 999px; background: var(--primary); color: var(--on-primary); display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; font-weight: 500; flex: none; }
+  .btn.sm { height: 40px; padding: 0 24px; align-self: flex-start; }
+  .btn.tonal { background: var(--secondary-container); color: var(--on-secondary-container); }
+  .btn.out { background: transparent; color: var(--primary); border: 1px solid var(--outline); }
+  .btn.text { background: transparent; color: var(--primary); height: 40px; }
+  .btn.danger { background: transparent; color: var(--error); height: 40px; }
+  .fab { position: absolute; right: 16px; bottom: 112px; height: 56px; padding: 0 20px 0 16px; border-radius: 16px; background: var(--primary-container); color: var(--on-primary-container); display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; box-shadow: 0 4px 8px 3px rgba(0,0,0,.15), 0 1px 3px rgba(0,0,0,.3); z-index: 2; }
+  .bottom { flex: none; display: flex; gap: 8px; padding: 12px 16px 24px; background: var(--surface); border-top: 1px solid var(--outline-variant); }
+  .bottom .btn { flex: 1; }
+  .bottom.stack { flex-direction: column; border-top: none; }
+  .bottom.stack .btn { flex: none; }
+  .bottom.stack .btn.text { height: 40px; }
+  .seg { display: flex; height: 40px; border: 1px solid var(--outline); border-radius: 999px; overflow: hidden; flex: none; }
+  .seg > span { flex: 1; display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 14px; font-weight: 500; }
+  .seg > span + span { border-left: 1px solid var(--outline); }
+  .seg > span.on { background: var(--secondary-container); color: var(--on-secondary-container); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chips.nowrap { flex-wrap: nowrap; overflow: hidden; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--outline-variant); font-size: 14px; font-weight: 500; white-space: nowrap; flex: none; }
+  .chip.on { background: var(--secondary-container); border-color: transparent; color: var(--on-secondary-container); padding-left: 8px; }
+  .field { border: 1px solid var(--outline); border-radius: 4px; min-height: 56px; padding: 0 16px; display: flex; align-items: center; position: relative; flex: none; }
+  .field .fl { position: absolute; top: -8px; left: 12px; background: var(--fbg, var(--surface)); padding: 0 4px; font-size: 12px; color: var(--on-variant); }
+  .help { font-size: 12px; line-height: 16px; color: var(--on-variant); padding: 4px 16px 0; }
+  .switch { width: 52px; height: 32px; border-radius: 999px; background: var(--highest); border: 2px solid var(--outline); position: relative; flex: none; }
+  .switch::after { content: ""; position: absolute; left: 6px; top: 6px; width: 16px; height: 16px; border-radius: 50%; background: var(--outline); }
+  .switch.on { background: var(--primary); border-color: var(--primary); }
+  .switch.on::after { left: 24px; top: 2px; width: 24px; height: 24px; background: var(--on-primary); }
+  .nav5 { flex: none; height: 96px; background: var(--container); display: grid; grid-template-columns: repeat(5, 1fr); padding: 12px 0 28px; }
+  .nav5 > span { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; color: var(--on-variant); }
+  .nav5 > span .pill { width: 64px; height: 32px; border-radius: 999px; display: grid; place-items: center; }
+  .nav5 > span.on { color: var(--on-surface); }
+  .nav5 > span.on .pill { background: var(--secondary-container); color: var(--on-secondary-container); }
+  .tiles2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; flex: none; }
+  .tile { background: var(--low); border-radius: 16px; padding: 12px 16px; display: flex; flex-direction: column; gap: 4px; }
+  .banner { background: var(--warn-container); color: var(--on-warn-container); border-radius: 16px; padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex: none; }
+  .chart { height: 120px; position: relative; flex: none; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; }
+  .legend i { width: 16px; height: 2px; display: inline-block; }
+  .steps { display: flex; gap: 8px; flex: none; }
+  .steps span { flex: 1; height: 4px; border-radius: 2px; background: var(--highest); }
+  .steps span.on { background: var(--primary); }
+  table.cmp { border-collapse: collapse; font-size: 12px; color: var(--on-surface); }
+  table.cmp th, table.cmp td { padding: 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--outline-variant); }
+  table.cmp th:first-child, table.cmp td:first-child { text-align: left; color: var(--on-variant); }
+  table.cmp th { font-weight: 500; }
+  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; }
+  .grid { display: grid; grid-template-columns: 112px repeat(4, 64px); font-size: 12px; }
+  .grid div { height: 36px; display: flex; align-items: center; justify-content: flex-end; padding: 0 4px; border-bottom: 1px solid var(--outline-variant); }
+  .grid div.n { justify-content: flex-start; gap: 8px; }
+  .grid div.h { color: var(--on-variant); font-weight: 500; }
+  .grid div.g { background: var(--container); color: var(--primary); font-weight: 500; }
+  .grid div.cur { background: color-mix(in srgb, var(--primary-container) 40%, transparent); }
+  .scrim { position: absolute; inset: 0; background: rgba(0,0,0,.32); z-index: 3; }
+  .sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; background: var(--low); border-radius: 28px 28px 0 0; padding: 0 16px 24px; display: flex; flex-direction: column; gap: 16px; --fbg: var(--low); }
+  .grab { width: 32px; height: 4px; border-radius: 2px; background: var(--on-variant); opacity: .4; margin: 16px auto 0; }
+  .center { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 16px; padding: 0 24px; }
+  .bigicon { width: 64px; height: 64px; border-radius: 20px; display: grid; place-items: center; background: var(--primary-container); color: var(--on-primary-container); }
+  .stepn { width: 32px; height: 32px; border-radius: 50%; background: var(--primary-container); color: var(--on-primary-container); display: grid; place-items: center; font: 500 14px var(--num); flex: none; }
+  .foot { font-size: 14px; color: var(--page-muted); line-height: 1.7; max-width: 820px; border-top: 1px solid var(--page-line); padding-top: 16px; margin: 0; }
+</style>
+
+<div class="wrap">
+  <header class="intro">
+    <div class="eyebrow">支付結構改版 · 設計稿 v1 · 沿用全畫面改版 v1 的樣式</div>
+    <h1>預算不再分刷卡與現金</h1>
+    <p class="lede">編預算時一個項目只填一個金額，支付方式改成項目本身的屬性，設定一次就好。手機框是實機尺寸（360×800）。數字是示意資料。</p>
+    <ul class="rules">
+      <li><b>預算只填金額</b>同一個項目不再拆成「現金一列＋信用卡一列」，年度表與清單都只有一列。</li>
+      <li><b>支付方式在項目上</b>在項目編輯裡選一次；記帳當下想用什麼付還是自由選，不受限制。</li>
+      <li><b>試算會自己學</b>項目累積足夠實際紀錄後，改照實際刷卡比例推算卡債；比例寫在項目上，可以鎖回預設。</li>
+      <li><b>支付結構看得到</b>計畫清單可以切換「依群組／依支付方式」，後者列出刷卡、現金、轉帳三組與佔比。</li>
+      <li><b>本期看得到當月實況</b>可調支出每一列底下補一行：這個月刷卡多少、現金多少。</li>
+    </ul>
+  </header>
+
+  <!-- ===================== 計畫：兩種分組 ===================== -->
+  <h2 class="group">計畫 · 清單的兩種分組</h2>
+  <div class="row">
+
+    <section class="col">
+      <h3>依群組（原本的分法）</h3>
+      <div class="phone app">
+        <div class="status"><span class="num">9:41</span><span class="ms s18">signal_cellular_alt</span></div>
+        <div class="topbar">
+          <div class="tt"><div class="t22">計畫</div></div>
+          <div class="ib"><span class="ms">chevron_left</span></div>
+          <div class="t14 w5 num">2027</div>
+          <div class="ib"><span class="ms">chevron_right</span></div>
+          <div class="ib"><span class="ms">more_vert</span></div>
+        </div>
+        <div class="body">
+          <div class="tiles2">
+            <div class="tile"><span class="t12 mut">全年收入</span><span class="t22 num">$1,319,500</span></div>
+            <div class="tile"><span class="t12 mut">全年支出</span><span class="t22 num">$1,072,853</span></div>
+          </div>
+          <div class="seg">
+            <span class="on"><span class="ms s18">check</span>清單</span>
+            <span>月份表格</span>
+          </div>
+          <div class="seg">
+            <span class="on"><span class="ms s18">check</span>依群組</span>
+            <span>依支付方式</span>
+          </div>
+          <div class="sec"><span class="t14 w5 pri">生活</span></div>
+          <div class="list">
+            <div class="li">
+              <span class="lead"><span class="ms s20">restaurant</span></span>
+              <span class="bd"><span class="t14">生活費</span><br><span class="t12 mut">支出 · 上下各半 · 可調 · 依記帳</span></span>
+              <span class="t14 num">$360,000</span>
+            </div>
+            <div class="li">
+              <span class="lead"><span class="ms s20">home</span></span>
+              <span class="bd"><span class="t14">家用</span><br><span class="t12 mut">支出 · 上半月 · 可調 · 依記帳</span></span>
+              <span class="t14 num">$120,000</span>
+            </div>
+            <div class="li">
+              <span class="lead"><span class="ms s20">content_cut</span></span>
+              <span class="bd"><span class="t14">頭髮</span><br><span class="t12 mut">支出 · 下半月 · 可調 · 依記帳</span></span>
+              <span class="t14 num">$14,400</span>
+            </div>
+          </div>
+          <div class="sec"><span class="t14 w5 pri">居住</span></div>
+          <div class="list">
+            <div class="li">
+              <span class="lead"><span class="ms s20">bolt</span></span>
+              <span class="bd"><span class="t14">電費</span><br><span class="t12 mut">支出 · 下半月 · 固定 · 到期確認</span></span>
+              <span class="t14 num">$24,000</span>
+            </div>
+            <div class="li">
+              <span class="lead"><span class="ms s20">apartment</span></span>
+              <span class="bd"><span class="t14">管理費</span><br><span class="t12 mut">支出 · 上半月 · 固定 · 每月固定</span></span>
+              <span class="t14 num">$18,000</span>
+            </div>
+          </div>
+        </div>
+        <div class="fab"><span class="ms">add</span>新增項目</div>
+        <div class="nav5">
+          <span><span class="pill"><span class="ms">edit_note</span></span>記帳</span>
+          <span><span class="pill"><span class="ms">home</span></span>本期</span>
+          <span class="on"><span class="pill"><span class="ms fill">calendar_view_month</span></span>計畫</span>
+          <span><span class="pill"><span class="ms">show_chart</span></span>試算</span>
+          <span><span class="pill"><span class="ms">credit_card</span></span>帳戶</span>
+        </div>
+      </div>
+      <p class="note">項目列不再出現「・現金」「・信用卡」的後綴，一個項目就是一列。</p>
+    </section>
+
+    <section class="col">
+      <h3>依支付方式（新）</h3>
+      <div class="phone app">
+        <div class="status"><span class="num">9:41</span><span class="ms s18">signal_cellular_alt</span></div>
+        <div class="topbar">
+          <div class="tt"><div class="t22">計畫</div></div>
+          <div class="ib"><span class="ms">chevron_left</span></div>
+          <div class="t14 w5 num">2027</div>
+          <div class="ib"><span class="ms">chevron_right</span></div>
+          <div class="ib"><span class="ms">more_vert</span></div>
+        </div>
+        <div class="body">
+          <div class="tiles2">
+            <div class="tile"><span class="t12 mut">全年收入</span><span class="t22 num">$1,319,500</span></div>
+            <div class="tile"><span class="t12 mut">全年支出</span><span class="t22 num">$1,072,853</span></div>
+          </div>
+          <div class="seg">
+            <span class="on"><span class="ms s18">check</span>清單</span>
+            <span>月份表格</span>
+          </div>
+          <div class="seg">
+            <span>依群組</span>
+            <span class="on"><span class="ms s18">check</span>依支付方式</span>
+          </div>
+          <div class="sec">
+            <span class="t14 w5 pri">信用卡</span>
+            <span class="t12 mut num">$591,794 · 55%</span>
+          </div>
+          <div class="list">
+            <div class="li">
+              <span class="lead"><span class="ms s20">restaurant</span></span>
+              <span class="bd"><span class="t14">生活費</span><br><span class="t12 mut">刷卡 72%（依實際）· 可調</span></span>
+              <span class="t14 num">$360,000</span>
+            </div>
+            <div class="li">
+              <span class="lead"><span class="ms s20">bolt</span></span>
+              <span class="bd"><span class="t14">電費</span><br><span class="t12 mut">到期確認</span></span>
+              <span class="t14 num">$24,000</span>
+            </div>
+            <div class="li">
+              <span class="lead"><span class="ms s20">content_cut</span></span>
+              <span class="bd"><span class="t14">頭髮</span><br><span class="t12 mut">依記帳</span></span>
+              <span class="t14 num">$14,400</span>
+            </div>
+          </div>
+          <div class="sec">
+            <span class="t14 w5 pri">現金</span>
+            <span class="t12 mut num">$481,059 · 45%</span>
+          </div>
+          <div class="list">
+            <div class="li">
+              <span class="lead"><span class="ms s20">apartment</span></span>
+              <span class="bd"><span class="t14">管理費</span><br><span class="t12 mut">每月固定</span></span>
+              <span class="t14 num">$18,000</span>
+            </div>
+            <div class="li">
+              <span class="lead"><span class="ms s20">home</span></span>
+              <span class="bd"><span class="t14">家用</span><br><span class="t12 mut">依記帳</span></span>
+              <span class="t14 num">$120,000</span>
+            </div>
+          </div>
+        </div>
+        <div class="fab"><span class="ms">add</span>新增項目</div>
+        <div class="nav5">
+          <span><span class="pill"><span class="ms">edit_note</span></span>記帳</span>
+          <span><span class="pill"><span class="ms">home</span></span>本期</span>
+          <span class="on"><span class="pill"><span class="ms fill">calendar_view_month</span></span>計畫</span>
+          <span><span class="pill"><span class="ms">show_chart</span></span>試算</span>
+          <span><span class="pill"><span class="ms">credit_card</span></span>帳戶</span>
+        </div>
+      </div>
+      <p class="note">三組各有小計與佔全年支出的百分比，點任一列直接改那個項目的支付方式。這一頁就是「管理」也是「分析」。</p>
+    </section>
+
+  </div>
+
+  <!-- ===================== 項目編輯 ===================== -->
+  <h2 class="group">項目編輯 · 支付方式搬到這裡</h2>
+  <div class="row">
+
+    <section class="col">
+      <h3>支付方式固定（大多數項目）</h3>
+      <div class="phone app">
+        <div class="status"><span class="num">9:41</span><span class="ms s18">signal_cellular_alt</span></div>
+        <div class="topbar nav">
+          <div class="ib"><span class="ms">close</span></div>
+          <div class="tt"><div class="t22">修改項目</div></div>
+        </div>
+        <div class="body">
+          <div class="field"><span class="fl">名稱</span><span class="t14">管理費</span></div>
+          <div class="field"><span class="fl">群組</span><span class="t14" style="flex:1">居住</span><span class="ms mut">arrow_drop_down</span></div>
+          <div>
+            <div class="t12 mut" style="padding-bottom:8px">支付方式</div>
+            <div class="seg">
+              <span><span class="ms s18">payments</span>現金</span>
+              <span><span class="ms s18">credit_card</span>信用卡</span>
+              <span class="on"><span class="ms s18">account_balance</span>轉帳</span>
+            </div>
+            <div class="help">試算用這個方式推算現金流。記帳當下還是可以選別的方式付。</div>
+          </div>
+          <div class="sec"><span class="t14 w5">2027 年每月金額</span><a>整年填同一個數</a></div>
+          <div class="list">
+            <div class="li"><span class="bd t14">1 月</span><span class="t14 num">$1,500</span></div>
+            <div class="li"><span class="bd t14">2 月</span><span class="t14 num">$1,500</span></div>
+            <div class="li"><span class="bd t14">3 月</span><span class="t14 num">$1,500</span></div>
+          </div>
+        </div>
+        <div class="bottom">
+          <div class="btn out">取消</div>
+          <div class="btn">儲存</div>
+        </div>
+      </div>
+      <p class="note">每月金額只有一欄，不再是「現金一欄＋信用卡一欄」。</p>
+    </section>
+
+    <section class="col">
+      <h3>試算改用實際比例時</h3>
+      <div class="phone app">
+        <div class="status"><span class="num">9:41</span><span class="ms s18">signal_cellular_alt</span></div>
+        <div class="topbar nav">
+          <div class="ib"><span class="ms">close</span></div>
+          <div class="tt"><div class="t22">修改項目</div></div>
+        </div>
+        <div class="body">
+          <div class="field"><span class="fl">名稱</span><span class="t14">生活費</span></div>
+          <div class="field"><span class="fl">群組</span><span class="t14" style="flex:1">生活</span><span class="ms mut">arrow_drop_down</span></div>
+          <div>
+            <div class="t12 mut" style="padding-bottom:8px">支付方式</div>
+            <div class="seg">
+              <span><span class="ms s18">payments</span>現金</span>
+              <span class="on"><span class="ms s18">credit_card</span>信用卡</span>
+              <span><span class="ms s18">account_balance</span>轉帳</span>
+            </div>
+            <div class="help">試算用這個方式推算現金流。記帳當下還是可以選別的方式付。</div>
+          </div>
+          <div class="card" style="gap:8px">
+            <div class="sec"><span class="t14 w5">試算依實際比例</span><span class="switch on"></span></div>
+            <div class="t12 mut">最近 3 個月實際：刷卡 $19,400（72%）、現金 $7,600（28%），共 24 筆。試算照 <b class="num">刷卡 72%</b> 推。</div>
+            <div class="t12 mut">關掉就一律照上面選的「信用卡」推。</div>
+          </div>
+          <div class="sec"><span class="t14 w5">2027 年每月金額</span><a>整年填同一個數</a></div>
+          <div class="list">
+            <div class="li"><span class="bd t14">1 月</span><span class="t14 num">$30,000</span></div>
+            <div class="li"><span class="bd t14">2 月</span><span class="t14 num">$30,000</span></div>
+          </div>
+        </div>
+        <div class="bottom">
+          <div class="btn out">取消</div>
+          <div class="btn">儲存</div>
+        </div>
+      </div>
+      <p class="note">這張卡只在該項目「本月以前 3 個完整月」至少有 6 筆實際支出時才出現；資料不夠就不顯示，一律照上面選的方式推。</p>
+    </section>
+
+  </div>
+
+  <!-- ===================== 本期 ===================== -->
+  <h2 class="group">本期 · 可調支出合併成一列</h2>
+  <div class="row">
+
+    <section class="col">
+      <h3>本期（合併後）</h3>
+      <div class="phone app">
+        <div class="status"><span class="num">9:41</span><span class="ms s18">signal_cellular_alt</span></div>
+        <div class="topbar">
+          <div class="tt"><div class="t22">本期</div><div class="t12 mut">2026年9月下半月 · 時間進度 67%</div></div>
+          <div class="ib"><span class="ms">settings</span></div>
+        </div>
+        <div class="body">
+          <div class="sec"><span class="t14 w5">本月可調支出</span><a>全部 7 項</a></div>
+          <div class="list">
+            <div class="li" style="flex-direction:column; align-items:stretch; gap:8px; padding:12px 16px">
+              <div style="display:flex; align-items:center; gap:12px">
+                <span class="ms s20 mut">restaurant</span>
+                <span class="t14" style="flex:1">生活費</span>
+                <span class="badge w">花太快</span>
+              </div>
+              <div class="track w"><i style="width:78%"></i></div>
+              <div style="display:flex; gap:8px">
+                <span class="t12 mut num" style="flex:1">$23,400 / $30,000 · 時間 67%</span>
+                <span class="t12 num">每日可用 $660</span>
+              </div>
+              <div class="t12 mut num">這個月：刷卡 $17,100 · 現金 $6,300</div>
+            </div>
+            <div class="li" style="flex-direction:column; align-items:stretch; gap:8px; padding:12px 16px">
+              <div style="display:flex; align-items:center; gap:12px">
+                <span class="ms s20 mut">home</span>
+                <span class="t14" style="flex:1">家用</span>
+                <span class="badge">正常</span>
+              </div>
+              <div class="track"><i style="width:60%"></i></div>
+              <div style="display:flex; gap:8px">
+                <span class="t12 mut num" style="flex:1">$6,000 / $10,000 · 時間 67%</span>
+                <span class="t12 num">每日可用 $400</span>
+              </div>
+              <div class="t12 mut num">這個月：現金 $6,000</div>
+            </div>
+          </div>
+        </div>
+        <div class="nav5">
+          <span><span class="pill"><span class="ms">edit_note</span></span>記帳</span>
+          <span class="on"><span class="pill"><span class="ms fill">home</span></span>本期</span>
+          <span><span class="pill"><span class="ms">calendar_view_month</span></span>計畫</span>
+          <span><span class="pill"><span class="ms">show_chart</span></span>試算</span>
+          <span><span class="pill"><span class="ms">credit_card</span></span>帳戶</span>
+        </div>
+      </div>
+      <p class="note">原本「生活費・現金」「生活費・信用卡」兩列合併成一列，多一行小字保留當月的支付結構。只用一種方式付的項目就只寫那一種。</p>
+    </section>
+
+    <section class="col">
+      <h3>改動前後對照</h3>
+      <div class="card" style="background:var(--page-card); border:1px solid var(--page-line); gap:16px; padding:20px">
+        <div>
+          <div class="t14 w5" style="padding-bottom:8px">編預算</div>
+          <div class="t12 mut">改前：生活費要決定「現金 12,000 ＋ 信用卡 18,000」。<br>改後：生活費 30,000，就這樣。</div>
+        </div>
+        <div>
+          <div class="t14 w5" style="padding-bottom:8px">記帳</div>
+          <div class="t12 mut">改前：預算編現金、實際刷卡，會算成「計畫外支出」。<br>改後：同一個項目不管怎麼付都算在同一筆預算內。</div>
+        </div>
+        <div>
+          <div class="t14 w5" style="padding-bottom:8px">試算</div>
+          <div class="t12 mut">改前：照預算列的支付方式決定哪些變卡債。<br>改後：照項目的支付方式；有足夠實際紀錄的項目改照實際刷卡比例。</div>
+        </div>
+        <div>
+          <div class="t14 w5" style="padding-bottom:8px">你的資料會怎麼轉</div>
+          <div class="t12 mut">只有「生活費」現在拆成兩列，會合併成一列、支付方式取金額較大的那個（信用卡）。其他 30 幾個項目本來就只有一種方式，原樣保留。</div>
+        </div>
+      </div>
+      <p class="note">資料庫會升一版，備份格式一起升版；舊備份還原時照同一套規則合併。</p>
+    </section>
+
+  </div>
+
+  <p class="foot">照這份稿實作：規則層先改（計畫金額的 key 從「項目×支付方式」變成「項目」，支付方式搬到項目上，試算加實際比例推估），再改資料層（DB 升版與轉換、備份升版），最後改畫面。改完跑完整測試、lint 與正式版建置，在模擬器上逐頁截圖確認，再更新規格書。</p>
+</div>

@@ -49,7 +49,7 @@ class DesignNumbersDump {
     )
     private val cut20 = listOf(
         ScenarioChange.AdjustItems(
-            listOf(LIVING, HOUSEHOLD, FUEL, LESSONS, CONTEST, RED_ENVELOPE, BIRTHDAY, TRIP),
+            listOf(LIVING, SampleHousehold.FOOD_CASH, HOUSEHOLD, FUEL, LESSONS, CONTEST, RED_ENVELOPE, BIRTHDAY, TRIP),
             -20.0,
             base.start.index,
         ),
@@ -81,7 +81,7 @@ class DesignNumbersDump {
 
         val groups = plan.groups.joinToString(",\n    ") { """"${it.group.name}": ${it.total}""" }
         val progressJson = progress.joinToString(",\n    ") {
-            """{"item": "${it.item.name}", "method": "${it.method.label}", "group": "${it.groupName}", """ +
+            """{"item": "${it.item.name}", "group": "${it.groupName}", """ +
                 """"planned": ${it.planned}, "actual": ${it.actual}, "spentPercent": ${it.spentPercent}, """ +
                 """"timePercent": ${it.timePercent}, "paceGap": ${it.paceGapPercent}, "status": "${it.status.label}", """ +
                 """"dailyAllowance": ${it.dailyAllowance}}"""

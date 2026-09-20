@@ -281,7 +281,7 @@ class EntryViewModel @Inject constructor(
             selectedItemId = item.id,
             method = method,
             showMethods = item.type == FlowType.EXPENSE,
-            plannedMethods = snapshot.plannedMethods(item.id, snapshot.today.year, snapshot.today.monthValue).toSet(),
+            plannedMethods = setOfNotNull(item.method),
             showCards = showCards,
             cards = cards,
             cardId = cardId,
@@ -433,7 +433,7 @@ class EntryViewModel @Inject constructor(
                 "本金 ${MoneyFormat.currency(due.amount - fee)}" + if (fee > 0) " ＋ 手續費 ${MoneyFormat.currency(fee)}" else ""
             }
             DueKind.PLAN -> due.item?.let { item ->
-                val planned = snapshot.planAmount(tw.myfsl.app.core.model.PlanLine(item.id, due.method), due.date.year, due.date.monthValue)
+                val planned = snapshot.planAmount(tw.myfsl.app.core.model.PlanLine(item.id), due.date.year, due.date.monthValue)
                 "本月計畫 ${MoneyFormat.currency(planned)}"
             }.orEmpty()
         }

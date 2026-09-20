@@ -6,7 +6,7 @@ enum class FlowType(val label: String) {
     TRANSFER("轉帳"),
 }
 
-/** 支出的支付方式。預算依「項目 × 支付方式」歸屬。 */
+/** 支出的支付方式。預算只記在項目上（R-MIX-01）：支付方式是項目的屬性，不再切分預算金額。 */
 enum class PaymentMethod(val label: String) {
     CASH("現金"),
     CREDIT_CARD("信用卡"),
@@ -45,12 +45,22 @@ data class PlanGroup(
     val sortOrder: Int = 0,
 )
 
-/** 預算項目，例如「生活費」。支出的金額依支付方式分列在 [PlanLine]。 */
+/** 預算項目，例如「生活費」。一個項目一年只有一組 12 個月金額（R-MIX-01）。 */
 data class PlanItem(
     val id: Long = 0,
     val name: String,
     val groupId: Long,
     val type: FlowType,
+    /**
+     * 支出的支付方式（R-MIX-01）：試算用它推算這筆錢是當月從帳戶扣掉、還是變成卡債。
+     * 收入與轉帳不使用。記帳當下仍可自由選別的方式付，不受這裡限制。
+     */
+    val method: PaymentMethod? = null,
+    /**
+     * true 時，這個項目累積足夠實際紀錄後，試算改照實際的刷卡比例推算（R-MIX-03）；
+     * false 時一律照 [method] 推。
+     */
+    val useActualMix: Boolean = true,
     /** 收入：入帳帳戶；轉帳：轉出帳戶。支出不使用（由支付方式決定扣款帳戶）。 */
     val accountId: Long? = null,
     /** 轉帳：轉入帳戶，例如繳卡費時的信用卡。 */
@@ -88,10 +98,9 @@ data class PlanItem(
     }
 }
 
-/** 計畫表的一列：支出為「項目 × 支付方式」；收入與轉帳的 [method] 為 null。 */
+/** 計畫表的一列：一個項目一列（R-MIX-01）。 */
 data class PlanLine(
     val itemId: Long,
-    val method: PaymentMethod? = null,
 )
 
 /** 某年度所有計畫列的 12 個月金額：索引 0 = 1 月。 */
