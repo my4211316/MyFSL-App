@@ -91,7 +91,7 @@ object BaselineBuilder {
         }
         val input = ForecastInput(start, periodCount, seeds, emptyList(), snapshot.settings.safetyLevel, methodAccounts)
         val events = ArrayList<FlowEvent>()
-        val mixes = MethodMixRules.all(snapshot, today)
+        val mix = PaymentAssumption.of(snapshot)
 
         val months = Period.range(start, periodCount).map { it.yearMonth }.distinct()
         val currentMonth = YearMonth.from(today)
@@ -101,7 +101,6 @@ object BaselineBuilder {
                 if (!snapshot.isItemActiveIn(item, ym.year, ym.monthValue)) continue
                 // 繳給已依合約自動繳款的卡片或貸款：除非標成額外還款，否則不計（R-PAY-01）。
                 if (item.type == FlowType.TRANSFER && snapshot.isAutoManagedDebt(item.toAccountId) && !item.extraRepayment) continue
-                val mix = mixes[item.id] ?: MethodMixRules.fromItem(item)
                 val planned = snapshot.plannedAmount(item.id, ym.year, ym.monthValue)
                 if (planned <= 0) continue
                 if (item.tracking == TrackingMode.AUTO) {
@@ -155,7 +154,7 @@ object BaselineBuilder {
      */
     private fun MutableList<FlowEvent>.addPlanned(
         item: PlanItem,
-        mix: MethodMix,
+        mix: PaymentAssumptionMix,
         period: Period,
         amount: Money,
         input: ForecastInput,
@@ -198,8 +197,8 @@ object BaselineBuilder {
         snapshot.deferrals.filter { !it.settled && it.amount > 0 }.forEach { deferral ->
             val item = snapshot.item(deferral.itemId) ?: return@forEach
             val due = YearMonth.of(deferral.dueYear, deferral.dueMonth)
-            // 延期款的支付方式在延期當下就固定了，不照項目目前的支付結構重算。
-            val method = deferral.method ?: item.method
+            // 延期款的支付方式在延期當下就固定了。
+            val method = deferral.method
             if (!due.isAfter(YearMonth.from(today))) {
                 events.addIfInRange(item, method, input.start, deferral.amount, input, endIndex, EventSource.DEFERRAL)
             } else {

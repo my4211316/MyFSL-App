@@ -60,10 +60,6 @@ data class PlanItemEntity(
     val accountId: Long?,
     val toAccountId: Long?,
     val timing: String,
-    /** 支出的支付方式（R-MIX-01）；收入與轉帳為 null。 */
-    val method: String? = null,
-    /** 試算是否依實際刷卡比例推估（R-MIX-03）。 */
-    val useActualMix: Boolean = true,
     val flexibility: String,
     val tracking: String,
     val note: String,

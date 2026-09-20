@@ -281,7 +281,7 @@ class EntryViewModel @Inject constructor(
             selectedItemId = item.id,
             method = method,
             showMethods = item.type == FlowType.EXPENSE,
-            plannedMethods = setOfNotNull(item.method),
+            plannedMethods = setOfNotNull(method),
             showCards = showCards,
             cards = cards,
             cardId = cardId,

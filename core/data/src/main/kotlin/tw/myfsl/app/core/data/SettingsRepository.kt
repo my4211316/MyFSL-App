@@ -37,6 +37,7 @@ class SettingsRepository @Inject constructor(
             dataGeneration = prefs[DATA_GENERATION] ?: 0L,
             reminderDays = prefs[REMINDER_DAYS]?.let { text -> text.split(',').mapNotNull { it.trim().toIntOrNull() } } ?: defaults.reminderDays,
             themeMode = prefs[THEME_MODE]?.let { name -> runCatching { ThemeMode.valueOf(name) }.getOrNull() } ?: defaults.themeMode,
+            forecastCardPercent = prefs[FORECAST_CARD_PERCENT] ?: defaults.forecastCardPercent,
         )
     }
 
@@ -112,6 +113,7 @@ class SettingsRepository @Inject constructor(
             if (card == null) it.remove(DEFAULT_CARD) else it[DEFAULT_CARD] = card
             it[REMINDER_DAYS] = settings.reminderDays.joinToString(",")
             it[THEME_MODE] = settings.themeMode.name
+            it[FORECAST_CARD_PERCENT] = settings.forecastCardPercent
         }
     }
 
@@ -129,6 +131,7 @@ class SettingsRepository @Inject constructor(
         val AUTO_POST_FROM = longPreferencesKey("auto_post_from_epoch_day")
         val DATA_GENERATION = longPreferencesKey("data_generation")
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val FORECAST_CARD_PERCENT = intPreferencesKey("forecast_card_percent")
         val REMINDER_DAYS = stringPreferencesKey("reminder_days")
     }
 }

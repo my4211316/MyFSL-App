@@ -51,7 +51,10 @@ sealed interface BudgetHint {
 
 object EntryRules {
 
-    /** 預設支付方式：這個項目上次用的；沒用過就用項目設定的支付方式；都沒有則為現金。 */
+    /**
+     * 預設支付方式（R-ENT-02）：這個項目上次自己記的那一筆用的方式；
+     * 沒記過就看所有記帳裡最常用的；都沒有則為現金。計畫不帶支付方式（R-MIX-01）。
+     */
     fun defaultMethod(snapshot: FinanceSnapshot, item: PlanItem, date: LocalDate = snapshot.today): PaymentMethod? {
         if (item.type != FlowType.EXPENSE) return null
         snapshot.ledger
@@ -59,7 +62,13 @@ object EntryRules {
             .maxWithOrNull(compareBy({ it.date }, { it.id }))
             ?.method
             ?.let { return it }
-        return item.method ?: PaymentMethod.CASH
+        return snapshot.ledger
+            .filter { it.source == EntrySource.MANUAL && it.type == FlowType.EXPENSE && it.method != null }
+            .groupingBy { it.method!! }
+            .eachCount()
+            .maxByOrNull { it.value }
+            ?.key
+            ?: PaymentMethod.CASH
     }
 
     /** 預設卡片：「指定信用卡」開啟時，用這個項目上次刷的卡；否則為不指定（null）。 */

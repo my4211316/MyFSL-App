@@ -118,6 +118,32 @@ fun SettingsScreen(
                 error = errors[Field.REMINDER_DAYS], supporting = "用逗號分開，例如「7, 3」；空白為不提醒。卡費、貸款與每月固定的付款都會提醒",
             )
 
+            GroupLabel("試算")
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                FieldLabel("未來的支出怎麼付")
+                SegmentedChoice(
+                    listOf(false, true),
+                    draft.forecastUsesCard,
+                    { if (it) "依比例刷卡" else "全部當現金付" },
+                    { uses -> onChange { it.copy(forecastUsesCard = uses) } },
+                )
+                if (draft.forecastUsesCard) {
+                    TextInput(
+                        "刷卡比例（%）", draft.forecastCardPercent, { v -> onChange { it.copy(forecastCardPercent = v) } },
+                        error = errors[Field.CARD_PERCENT], number = true,
+                    )
+                }
+                HintText(
+                    if (draft.forecastUsesCard) {
+                        "試算假設計畫的支出有這個比例會刷卡，之後靠繳卡費扣款；其餘當月從帳戶扣。"
+                    } else {
+                        "試算假設計畫的支出在消費當月就從帳戶扣。刷卡遞延、分期、卡循是調度現金的手段，" +
+                            "想看那樣的結果請到試算開一個情境比較。"
+                    },
+                )
+                HintText("已經欠的卡債、分期與每期要繳的卡費不受影響，一律照合約算。")
+            }
+
             GroupLabel("外觀")
             Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 FieldLabel("深色或淺色")

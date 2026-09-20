@@ -42,8 +42,12 @@ class ScenarioAndGoalTest {
     }
 
     @Test fun `改支付方式：刷卡改現金後改由現金帳戶扣款`() {
+        // 基準線的付款假設要先是刷卡，才有東西可以改（R-MIX-02）
+        val swiping = BaselineBuilder.build(
+            SampleHousehold.snapshot().let { it.copy(settings = it.settings.copy(forecastCardPercent = 100)) },
+        )
         val applied = ScenarioApplier.apply(
-            base,
+            swiping,
             listOf(ScenarioChange.ChangeMethod(listOf(LIVING), PaymentMethod.CREDIT_CARD, PaymentMethod.CASH, oct.index)),
         )
         val moved = applied.events.filter { it.itemId == LIVING && it.period >= oct }

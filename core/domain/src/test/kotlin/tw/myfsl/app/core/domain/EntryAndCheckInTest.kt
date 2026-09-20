@@ -59,17 +59,22 @@ class EntryAndCheckInTest {
 
     // ---------- 預設支付方式與卡片 ----------
 
-    @Test fun `預設支付方式：上次用的 優先，否則用項目設定的`() {
+    @Test fun `預設支付方式：這個項目上次用的 優先，否則整體最常用的，都沒有則現金`() {
         // 示意資料最後一筆現金伙食是現金（早餐 $85）
         assertEquals(PaymentMethod.CASH, EntryRules.defaultMethod(snapshot, item(FOOD_CASH)))
         val fresh = snapshot.copy(ledger = emptyList())
-        assertEquals("沒記過就用項目設定的", PaymentMethod.CREDIT_CARD, EntryRules.defaultMethod(fresh, item(LIVING)))
+        assertEquals("完全沒有紀錄時用現金", PaymentMethod.CASH, EntryRules.defaultMethod(fresh, item(LIVING)))
+        // 這個項目沒記過，但整體最常刷卡時帶刷卡
+        val mostlyCard = snapshot.copy(
+            ledger = List(6) { expense(FUEL, PaymentMethod.CREDIT_CARD, 500, null).copy(id = 600L + it) },
+        )
+        assertEquals(PaymentMethod.CREDIT_CARD, EntryRules.defaultMethod(mostlyCard, item(CONTEST)))
         val used = snapshot.copy(ledger = snapshot.ledger + expense(LIVING, PaymentMethod.TRANSFER, 500, BANK).copy(id = 100))
         assertEquals(PaymentMethod.TRANSFER, EntryRules.defaultMethod(used, item(LIVING)))
         assertEquals(PaymentMethod.CREDIT_CARD, EntryRules.defaultMethod(snapshot, item(FUEL)))
-        // 比賽報名 9 月沒有計畫：用項目設定的（現金）
+        // 比賽報名沒記過：示意資料現金 5 筆多於刷卡 4 筆，所以帶現金
         assertEquals(PaymentMethod.CASH, EntryRules.defaultMethod(snapshot, item(CONTEST)))
-        val brandNew = PlanItem(990, "新項目", 5, FlowType.EXPENSE, method = PaymentMethod.CASH)
+        val brandNew = PlanItem(990, "新項目", 5, FlowType.EXPENSE)
         assertEquals(PaymentMethod.CASH, EntryRules.defaultMethod(snapshot.copy(items = snapshot.items + brandNew), brandNew))
         // 本週檢查產生的漏記差額不算「上次用的」
         val missedOnly = snapshot.copy(

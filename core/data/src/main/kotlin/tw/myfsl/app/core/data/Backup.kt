@@ -32,9 +32,12 @@ data class SettingsBackup(
     val autoPostFrom: Long? = null,
     /** 到期前幾天提醒；舊備份沒有時用預設的 7、3 天。 */
     val reminderDays: List<Int>? = null,
+    /** 試算的付款假設（R-MIX-02）；舊備份沒有時用預設的「全部當現金付」。 */
+    val forecastCardPercent: Int? = null,
 ) {
     fun toSettings(current: AppSettings) = current.copy(
         reminderDays = reminderDays ?: AppSettings().reminderDays,
+        forecastCardPercent = forecastCardPercent ?: AppSettings().forecastCardPercent,
         safetyLevel = safetyLevel,
         horizonMonths = horizonMonths,
         checkInDay = DayOfWeek.of(checkInDay.coerceIn(1, 7)),
@@ -48,7 +51,7 @@ data class SettingsBackup(
     companion object {
         fun of(s: AppSettings) = SettingsBackup(
             s.safetyLevel, s.horizonMonths, s.checkInDay.value, s.pickCard, s.cashAccountId, s.transferAccountId, s.cardPostingDays,
-            s.defaultCardId, s.autoPostFrom, s.reminderDays,
+            s.defaultCardId, s.autoPostFrom, s.reminderDays, s.forecastCardPercent,
         )
     }
 }
@@ -79,9 +82,11 @@ data class BackupFile(
         const val APP = "MyFSL"
 
         /**
-         * 2：預算不再分支付方式（R-MIX-01）。舊的第 1 版備份還原時會自動合併（見 [BackupCodec.upgradeFromV1]）。
+         * 3：計畫不再帶支付方式（R-MIX-01），試算的付款假設改成設定裡的一個數字（R-MIX-02）。
+         * 第 1 版（項目 × 支付方式）與第 2 版（項目帶支付方式）的備份還原時會自動轉換，
+         * 見 [BackupCodec.upgradeFromV1] 與 [BackupCodec.upgradeFromV2]。
          */
-        const val FORMAT_VERSION = 2
+        const val FORMAT_VERSION = 3
     }
 }
 
@@ -139,9 +144,11 @@ object BackupCodec {
             .mapValues { (_, rows) ->
                 rows.groupBy { it.method }.maxByOrNull { (_, ms) -> ms.sumOf { it.amount } }?.key
             }
-        val items = file.items.map { item ->
-            if (item.type != "EXPENSE") item else item.copy(method = item.method ?: methodByItem[item.id] ?: "CASH")
-        }
+        // 第 3 版的項目沒有支付方式；舊檔的刷卡比例改成試算的付款假設（R-MIX-02）。
+        val cardTotal = legacy.filter { it.method == "CREDIT_CARD" }.sumOf { it.amount }
+        val allTotal = legacy.sumOf { it.amount }
+        val cardPercent = if (allTotal > 0) Math.round(cardTotal * 100.0 / allTotal).toInt() else 0
+        val settings = file.settings?.copy(forecastCardPercent = cardPercent)
         val amounts = file.amounts
             .groupBy { Triple(it.itemId, it.year, it.month) }
             .map { (key, rows) -> PlanAmountEntity(key.first, key.second, key.third, rows.sumOf { it.amount }) }
@@ -152,11 +159,39 @@ object BackupCodec {
         val postedKeys = file.postedKeys.map { it.copy(key = upgradePlanKey(it.key)) }
         return file.copy(
             formatVersion = BackupFile.FORMAT_VERSION,
-            items = items,
             amounts = amounts,
             actuals = actuals,
             ledger = ledger,
             postedKeys = postedKeys,
+            settings = settings,
+        )
+    }
+
+    /** 第 2 版備份裡帶著支付方式的項目。 */
+    @Serializable
+    private data class V2Item(val id: Long = 0, val type: String = "", val method: String? = null)
+
+    @Serializable
+    private data class V2File(val items: List<V2Item> = emptyList(), val amounts: List<V1Amount> = emptyList())
+
+    /**
+     * 把第 2 版備份升到第 3 版（R-MIX-02）：項目上的支付方式換算成整體的刷卡比例，
+     * 寫進設定的「試算付款假設」；項目本身不再帶支付方式。
+     */
+    private fun upgradeFromV2(file: BackupFile, text: String): BackupFile {
+        val legacy = try {
+            json.decodeFromString(V2File.serializer(), text)
+        } catch (e: SerializationException) {
+            null
+        }
+        val cardItems = legacy?.items.orEmpty().filter { it.method == "CREDIT_CARD" }.map { it.id }.toSet()
+        val byItem = legacy?.amounts.orEmpty().groupBy { it.itemId }.mapValues { (_, rows) -> rows.sumOf { it.amount } }
+        val cardTotal = byItem.filterKeys { it in cardItems }.values.sum()
+        val allTotal = byItem.values.sum()
+        val cardPercent = if (allTotal > 0) Math.round(cardTotal * 100.0 / allTotal).toInt() else 0
+        return file.copy(
+            formatVersion = BackupFile.FORMAT_VERSION,
+            settings = file.settings?.copy(forecastCardPercent = cardPercent),
         )
     }
 
@@ -176,7 +211,8 @@ object BackupCodec {
         } catch (e: IllegalArgumentException) {
             return BackupReadResult.Error("這不是 MyFSL 的備份檔，或檔案已損壞")
         }
-        val file = if (raw.formatVersion < 2) upgradeFromV1(raw, text.removePrefix(BOM)) else raw
+        val v2 = if (raw.formatVersion < 2) upgradeFromV1(raw, text.removePrefix(BOM)) else raw
+        val file = if (v2.formatVersion < 3) upgradeFromV2(v2, text.removePrefix(BOM)) else v2
         if (file.app != BackupFile.APP) return BackupReadResult.Error("這不是 MyFSL 的備份檔")
         if (file.formatVersion > BackupFile.FORMAT_VERSION) {
             return BackupReadResult.Error("這個備份來自較新版本的 App，請先更新 App 再還原")

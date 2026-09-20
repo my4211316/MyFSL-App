@@ -56,8 +56,8 @@ class ScenarioFormTest {
         val comparison = ForecastComparisonCalculator.compare(snapshot, listOf(result.scenario), 24)
         assertEquals(14_133L, comparison.outcomes[1].lowest)
         assertEquals(0L, comparison.outcomes[1].endCardDebt)
-        assertEquals(18_465L, comparison.outcomes[0].lowest)
-        assertEquals(18_465L, comparison.bestLowest)
+        assertEquals("現況：全部當現金付，最低 −127,561", -127_561L, comparison.outcomes[0].lowest)
+        assertEquals("整合之後比較好", 14_133L, comparison.bestLowest)
     }
 
     @Test fun `存回草稿：新增貸款與同期清償合併回貸款整合`() {
@@ -113,10 +113,11 @@ class ScenarioFormTest {
         assertEquals(7L, overview.checkIn.daysSinceLast)
         assertTrue(overview.checkIn.due)
         assertEquals("本月漏記 1 筆 · $120", overview.checkIn.missedLabel)
-        assertEquals(18_465L, overview.lowest)
+        assertEquals(-127_561L, overview.lowest)
         assertEquals(24, overview.monthlyLows.size)
-        // 零用現金只出不進：12,350 → 9,700 → 10 月上 4,700 → 10 月下 −6,300（R-FC-12）
-        assertEquals("「零用現金」約 2026/10 會不夠扣款，記得先從其他帳戶轉入", overview.shortfall)
+        // 零用現金只出不進，而且付款假設是全部當現金付：9 月上 15,000 − 6,350 = 8,650，
+        // 9 月下再扣 19,850（含汽車保養 12,000、電費 1,500）就變負數（R-FC-12）
+        assertEquals("「零用現金」約 2026/9 會不夠扣款，記得先從其他帳戶轉入", overview.shortfall)
         assertEquals("9/14 ÷ 30 天", 47, overview.timePercent)
         assertTrue("到期清單不含刷卡消費", overview.upcoming.none { it.label.contains("生活費") })
         assertTrue(overview.upcoming.isNotEmpty())

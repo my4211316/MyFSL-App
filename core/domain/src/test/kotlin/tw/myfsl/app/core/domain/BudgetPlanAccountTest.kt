@@ -90,7 +90,7 @@ class BudgetPlanAccountTest {
         assertNull(doneLine.dailyAllowance)
 
         val secondHalfItem = PlanItem(
-            900, "月底聚餐", 5, FlowType.EXPENSE, method = PaymentMethod.CASH,
+            900, "月底聚餐", 5, FlowType.EXPENSE,
             timing = Timing.SECOND_HALF, flexibility = tw.myfsl.app.core.model.Flexibility.FLEXIBLE,
         )
         val plan = snapshot.amountsByYear.mapValues { (_, amounts) -> amounts + (PlanLine(900) to List(12) { 3_000L }) }
@@ -114,18 +114,24 @@ class BudgetPlanAccountTest {
     @Test fun `2026 年度計畫彙總`() {
         val summary = PlanSummaryCalculator.summarize(snapshot, 2026)
         assertEquals(940_000L, summary.totalIncome)
-        assertEquals(840_000L, summary.totalExpense)
-        assertEquals(338_980L, summary.totalCardSpending)
-        assertEquals("A 卡自由繳預估 18,000 ＋ 計畫繳 B 卡 9,000，各 12 個月", 324_000L, summary.totalCardPayments)
-        assertEquals(174_084L, summary.totalLoanPayments)
-        assertEquals("940,000 − 840,000 − 174,084 − 6,300（循環利息）", -80_384L, summary.structuralGap)
+        assertEquals("計畫裡的支出", 840_000L, summary.totalPlannedExpense)
+        // 支出是真正的費用：計畫支出 ＋ 貸款利息 ＋ 循環利息（R-PLS-04）
         assertEquals("只有 A 卡依帳單繳款：沒繳清的 (60,000 − 18,000) × 15% ÷ 12 = 525，× 12", 6_300L, summary.totalCardInterest)
-        assertEquals("刷卡 338,980 ＋ 利息 6,300 − 繳卡費 324,000", 21_280L, summary.cardDebtIncrease)
-        assertEquals("33,900 ＋ 525 − 27,000", 7_425L, summary.cardDebtChange(9))
-        assertEquals(listOf(33_900L, 21_900L, 21_900L, 21_900L), summary.cardSpending.subList(8, 12))
-        assertEquals(listOf(19_500L, 24_700L, 23_900L, 48_700L), summary.nonCardSpending.subList(8, 12))
+        assertEquals(40_469L, summary.totalLoanInterest)
+        assertEquals(840_000L + 40_469L + 6_300L, summary.totalExpense)
+        // 付款假設是預設的「全部當現金付」（R-MIX-02）
+        assertEquals(0L, summary.totalCardSpending)
+        assertEquals(840_000L, summary.totalNonCardSpending)
+        assertEquals("A 卡自由繳預估 18,000 ＋ 計畫繳 B 卡 9,000，各 12 個月", 324_000L, summary.totalCardPayments)
+        assertEquals("本金 133,615 ＋ 利息 40,469 = 每月 14,507 × 12", 174_084L, summary.totalLoanPayments)
+        assertEquals(133_615L, summary.totalLoanPrincipal)
+        assertEquals("940,000 − 886,769（含利息） − 133,615（貸款本金）", -80_384L, summary.structuralGap)
+        assertEquals("不再新增刷卡：利息 6,300 − 繳卡費 324,000", -317_700L, summary.cardDebtIncrease)
+        assertEquals("9 月：0 ＋ 525 − 27,000", -26_475L, summary.cardDebtChange(9))
+        assertEquals(listOf(0L, 0L, 0L, 0L), summary.cardSpending.subList(8, 12))
+        assertEquals("整筆都當月從帳戶扣", listOf(53_400L, 46_600L, 45_800L, 70_600L), summary.nonCardSpending.subList(8, 12))
         assertEquals(listOf(41_507L, 41_507L, 41_507L, 41_507L), summary.debtPayments.subList(8, 12))
-        assertEquals(listOf(8_993L, -1_207L, -407L, -25_207L), summary.monthlyCashFlow.subList(8, 12))
+        assertEquals(listOf(-24_907L, -23_107L, -22_307L, -47_107L), summary.monthlyCashFlow.subList(8, 12))
         val groups = summary.groups.associate { it.group.name to it.total }
         assertEquals(146_920L, groups["稅費與保險"])
         assertEquals(11_100L, groups["生活繳費"])
@@ -135,17 +141,38 @@ class BudgetPlanAccountTest {
         assertEquals(131_180L, groups["年度"])
     }
 
-    @Test fun `計畫檢查：示意資料只有卡債提醒與建議`() {
+    @Test fun `只編了幾個月時，自動產生的貸款與卡費也只算那幾個月（R-PLS-05）`() {
+        // 只留 10–12 月的計畫金額
+        val partial = snapshot.copy(
+            amountsByYear = snapshot.amountsByYear.mapValues { (_, amounts) ->
+                amounts.mapValues { (_, months) -> months.mapIndexed { m, v -> if (m >= 9) v else 0L } }
+            },
+        )
+        val summary = PlanSummaryCalculator.summarize(partial, 2026)
+        assertEquals(listOf(10, 11, 12), summary.plannedMonths)
+        assertEquals("循環利息 525 × 3", 1_575L, summary.totalCardInterest)
+        assertEquals("A 卡 18,000 ＋ 計畫繳 B 卡 9,000，各 3 個月", 81_000L, summary.totalCardPayments)
+        assertEquals("攤還表前 3 期：每月 14,507 × 3", 43_521L, summary.totalLoanPayments)
+    }
+
+    @Test fun `計畫檢查：全部當現金付時不會有卡債提醒`() {
         val issues = PlanValidator.validate(snapshot, 2026)
         assertTrue(issues.none { it.severity == Severity.ERROR })
-        assertTrue(issues.any { it.message == "全年刷卡加利息比繳卡費多 $21,280，差額會累積成卡債" })
-        // 刷卡都算在預設卡片 A：每月 338,980 ÷ 12 ≈ 28,248；28,248 ＋ 525 − 18,000 = 10,773
-        assertTrue(
-            issues.any { it.message == "「信用卡 A」每月刷 $28,248、利息 $525，繳 $18,000 不夠；每月至少要多繳 $10,773 卡債才不會再增加" },
-        )
-        assertTrue("B 卡沒有循環條件，不做卡債走向提醒", issues.none { it.message.startsWith("「信用卡 B」") })
+        // 付款假設是全部當現金付，計畫不會再新增刷卡，所以沒有卡債走向的提醒（R-MIX-02）
+        assertTrue(issues.none { it.message.contains("卡債") })
         assertTrue("示意資料沒有重複繳款", issues.none { it.message.contains("不計入") })
         assertTrue(issues.any { it.message == "「才藝課」是可調項目，建議改成依記帳，才能控管進度" })
+    }
+
+    @Test fun `計畫檢查：假設會刷卡時才提醒卡債走向`() {
+        val swiping = snapshot.copy(settings = snapshot.settings.copy(forecastCardPercent = 40))
+        val issues = PlanValidator.validate(swiping, 2026)
+        assertTrue(issues.any { it.message == "全年刷卡加利息比繳卡費多 $18,300，差額會累積成卡債" })
+        // 刷卡都算在預設卡片 A：每月 336,000 ÷ 12 = 28,000；28,000 ＋ 525 − 18,000 = 10,525
+        assertTrue(
+            issues.any { it.message == "「信用卡 A」每月刷 $28,000、利息 $525，繳 $18,000 不夠；每月至少要多繳 $10,525 卡債才不會再增加" },
+        )
+        assertTrue("B 卡沒有循環條件，不做卡債走向提醒", issues.none { it.message.startsWith("「信用卡 B」") })
     }
 
     @Test fun `計畫檢查：各種錯誤`() {
@@ -156,7 +183,7 @@ class BudgetPlanAccountTest {
                 PlanItem(951, "自己轉自己", 8, FlowType.TRANSFER, accountId = BANK, toAccountId = BANK),
                 PlanItem(952, "沒有轉入", 8, FlowType.TRANSFER, accountId = BANK),
                 PlanItem(953, "重複繳信貸", 8, FlowType.TRANSFER, accountId = BANK, toAccountId = SampleHousehold.LOAN),
-                PlanItem(954, "空項目", 5, FlowType.EXPENSE, method = PaymentMethod.CASH),
+                PlanItem(954, "空項目", 5, FlowType.EXPENSE),
             ),
             settings = AppSettings(cashAccountId = null, transferAccountId = BANK),
             amountsByYear = snapshot.amountsByYear.mapValues { (_, a) -> a + (PlanLine(953) to List(12) { 5_000L }) },
@@ -167,13 +194,12 @@ class BudgetPlanAccountTest {
         assertTrue(messages.contains("「沒有轉入」沒有設定轉入帳戶"))
         assertTrue(messages.contains("「重複繳信貸」不計入：「信貸」已依合約自動繳款。若這是額外還款，請在項目勾選「額外還款」"))
         assertTrue(messages.contains("「空項目」今年沒有任何計畫金額"))
-        // 沒有現金帳戶時，現金支出退回第一個流動帳戶（銀行），所以不算錯誤
-        assertTrue(messages.none { it.startsWith("支付方式「現金」") })
+        // 沒有現金帳戶時退回第一個流動帳戶（銀行），所以不算錯誤
+        assertTrue(messages.none { it.startsWith("計畫有支出，但沒有") })
 
         val noLiquid = broken.copy(accounts = broken.accounts.filter { !it.kind.isLiquid })
         val noLiquidMessages = PlanValidator.validate(noLiquid, 2026).map { it.message }
-        assertTrue(noLiquidMessages.contains("支付方式「現金」沒有對應的帳戶，請先新增現金帳戶或在設定指定"))
-        assertTrue(noLiquidMessages.contains("支付方式「轉帳」沒有對應的帳戶，請先新增銀行帳戶或在設定指定"))
+        assertTrue(noLiquidMessages.contains("計畫有支出，但沒有可以扣款的帳戶，請先新增現金或銀行帳戶"))
 
         val noIncome = snapshot.copy(amountsByYear = snapshot.amountsByYear.mapValues { (_, a) -> a.filterKeys { it.itemId !in setOf(101L, 102L, 103L) } })
         assertTrue(PlanValidator.validate(noIncome, 2026).any { it.message == "計畫中沒有任何收入" })

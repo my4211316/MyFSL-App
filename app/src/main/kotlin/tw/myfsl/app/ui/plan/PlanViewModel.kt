@@ -7,8 +7,6 @@ import tw.myfsl.app.core.data.FinanceRepository
 import tw.myfsl.app.core.domain.TextDecoding
 import tw.myfsl.app.core.domain.ImportMode
 import tw.myfsl.app.core.domain.ImportPreview
-import tw.myfsl.app.core.domain.MethodMix
-import tw.myfsl.app.core.domain.MethodMixRules
 import tw.myfsl.app.core.domain.PlanEditRules
 import tw.myfsl.app.core.domain.displayPercent
 import tw.myfsl.app.core.domain.PlanImport
@@ -47,24 +45,8 @@ data class PlanRow(
     val itemId: Long,
     val groupName: String,
     val itemName: String,
-    val method: PaymentMethod?,
     val detail: String,
     val total: Money,
-)
-
-/** 清單的分組方式（R-MIX-06）。 */
-enum class PlanGrouping(val label: String) {
-    GROUP("依群組"),
-    METHOD("依支付方式"),
-}
-
-/** 依支付方式分組時的一組：小計與佔全年支出的百分比。 */
-@Immutable
-data class MethodGroup(
-    val method: PaymentMethod,
-    val total: Money,
-    val percent: Int,
-    val rows: List<PlanRow>,
 )
 
 @Immutable
@@ -84,8 +66,6 @@ data class ItemEditor(
     val draft: PlanItemDraft,
     val errors: Map<String, String> = emptyMap(),
     val warnings: List<String> = emptyList(),
-    /** 試算實際比例的說明（R-MIX-03）；資料不夠時為 null。 */
-    val mixText: String? = null,
     /** 已經有記帳，類型不能改（R-EDT-11）。 */
     val typeLocked: Boolean = false,
     /** 打開編輯時的資料世代（F11）。 */
@@ -108,9 +88,6 @@ data class PlanUiState(
     val message: String? = null,
     val showTable: Boolean = false,
     val table: PlanTable? = null,
-    val grouping: PlanGrouping = PlanGrouping.GROUP,
-    /** 依支付方式分組的結果（R-MIX-06）。 */
-    val methodGroups: List<MethodGroup> = emptyList(),
 )
 
 @HiltViewModel
@@ -124,7 +101,6 @@ class PlanViewModel @Inject constructor(
         val editor: ItemEditor? = null,
         val message: String? = null,
         val showTable: Boolean = false,
-        val grouping: PlanGrouping = PlanGrouping.GROUP,
     )
 
     private val local = MutableStateFlow(Local())
@@ -144,18 +120,10 @@ class PlanViewModel @Inject constructor(
                     itemId = item.id,
                     groupName = groups[item.groupId]?.name.orEmpty(),
                     itemName = item.name,
-                    method = if (item.type == FlowType.EXPENSE) MethodMixRules.methodOf(item) else null,
-                    detail = detailOf(snapshot, item),
+                    detail = detailOf(item),
                     total = months?.sum() ?: 0L,
                 )
             }
-        val expenseTotal = rows.filter { it.method != null }.sumOf { it.total }
-        val methodGroups = PaymentMethod.entries.mapNotNull { method ->
-            val inMethod = rows.filter { it.method == method }
-            if (inMethod.isEmpty()) return@mapNotNull null
-            val total = inMethod.sumOf { it.total }
-            MethodGroup(method, total, if (expenseTotal > 0) displayPercent(total.toDouble() / expenseTotal) else 0, inMethod)
-        }
         return PlanUiState(
             loading = false,
             year = year,
@@ -169,28 +137,14 @@ class PlanViewModel @Inject constructor(
             message = local.message,
             showTable = local.showTable,
             table = if (local.showTable && snapshot.activeItems.isNotEmpty()) PlanTableBuilder.build(snapshot, year) else null,
-            grouping = local.grouping,
-            methodGroups = methodGroups,
         )
     }
 
     fun setShowTable(show: Boolean) = local.update { it.copy(showTable = show) }
 
-    fun setGrouping(grouping: PlanGrouping) = local.update { it.copy(grouping = grouping) }
-
-    /**
-     * 列的說明文字。支出用「刷卡 72%（依實際）」取代原本的支付方式，
-     * 讓使用者在清單上就看得出試算是照哪個比例推（R-MIX-03）。
-     */
-    private fun detailOf(snapshot: FinanceSnapshot, item: PlanItem): String {
-        val head = if (item.type == FlowType.EXPENSE) {
-            val mix = MethodMixRules.of(snapshot, item)
-            if (mix.fromActual) "刷卡 ${mix.cardPercent}%（依實際）" else MethodMixRules.methodOf(item).label
-        } else {
-            item.type.label
-        }
-        return listOf(head, item.timing.label, item.flexibility.label, item.tracking.label).joinToString(" · ")
-    }
+    /** 列的說明文字。計畫不帶支付方式（R-MIX-01）。 */
+    private fun detailOf(item: PlanItem): String =
+        listOf(item.type.label, item.timing.label, item.flexibility.label, item.tracking.label).joinToString(" · ")
 
     fun previousYear() = local.update { it.copy(year = (it.year ?: state.value.year) - 1) }
 
@@ -211,12 +165,10 @@ class PlanViewModel @Inject constructor(
             val snapshot = repository.snapshot.first()
             val item = snapshot.item(itemId) ?: return@launch
             val draft = PlanItemForm.fromItem(item, snapshot, state.value.year)
-            val mix = MethodMixRules.of(snapshot, item)
             local.update {
                 it.copy(
                     editor = ItemEditor(
                         draft,
-                        mixText = mixText(mix),
                         typeLocked = PlanItemForm.typeLocked(draft, snapshot),
                         generation = snapshot.generation,
                     ),
@@ -231,17 +183,6 @@ class PlanViewModel @Inject constructor(
     }
 
     fun setType(type: FlowType) = change { PlanItemForm.changeType(it, type) }
-
-    /** 「最近 3 個月實際：刷卡 …、現金 …，共 N 筆」；資料不夠時為 null。 */
-    private fun mixText(mix: MethodMix): String? {
-        if (!mix.fromActual) return null
-        val card = MoneyFormat.currency(mix.sampleCard)
-        val rest = MoneyFormat.currency(mix.sampleTotal - mix.sampleCard)
-        return "最近 ${MethodMixRules.SAMPLE_MONTHS} 個月實際：刷卡 $card（${mix.cardPercent}%）、" +
-            "其他 $rest，共 ${mix.sampleCount} 筆。試算照刷卡 ${mix.cardPercent}% 推。"
-    }
-
-    fun setMethod(method: PaymentMethod) = change { PlanItemForm.setMethod(it, method) }
 
     fun setMonth(month: Int, value: String) = change { PlanItemForm.setMonth(it, month, value) }
 

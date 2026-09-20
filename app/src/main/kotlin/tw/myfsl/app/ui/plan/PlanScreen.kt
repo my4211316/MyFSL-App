@@ -84,7 +84,6 @@ fun PlanScreen(
     onAddItem: () -> Unit,
     onEditItem: (Long) -> Unit,
     onShowTable: (Boolean) -> Unit,
-    onGrouping: (PlanGrouping) -> Unit,
     editorContent: @Composable (ItemEditor) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -152,8 +151,19 @@ fun PlanScreen(
                                     valueColor = if (summary.cardDebtIncrease > 0) MaterialTheme.colorScheme.error else Color.Unspecified,
                                 )
                             }
-                            if (summary.totalCardInterest > 0) {
-                                HintText("其中預估循環利息 ${MoneyFormat.currency(summary.totalCardInterest)}", color = MaterialTheme.warningColors.warning)
+                            // 支出是真正的費用（含利息）；貸款本金不是費用，另外列（R-PLS-04）。
+                            HintText(
+                                "支出含貸款利息 ${MoneyFormat.currency(summary.totalLoanInterest)}" +
+                                    "、循環利息 ${MoneyFormat.currency(summary.totalCardInterest)}；" +
+                                    "另還貸款本金 ${MoneyFormat.currency(summary.totalLoanPrincipal)}",
+                            )
+                            // 只編了幾個月時，自動產生的貸款與卡費也只算那幾個月（R-PLS-05）。
+                            if (summary.monthCount in 1..11) {
+                                HintText(
+                                    "這一年只編了 ${summary.plannedMonths.first()}–${summary.plannedMonths.last()} 月，" +
+                                        "貸款與卡費也只算這 ${summary.monthCount} 個月",
+                                    color = MaterialTheme.warningColors.warning,
+                                )
                             }
                         }
                     }
@@ -168,33 +178,12 @@ fun PlanScreen(
                         SegmentedChoice(listOf(false, true), state.showTable, { if (it) "月份表格" else "清單" }, onShowTable)
                     }
                 }
-                if (state.rows.isNotEmpty() && !state.showTable) {
-                    item(key = "grouping") {
-                        SegmentedChoice(PlanGrouping.entries, state.grouping, { it.label }, onGrouping)
-                    }
-                }
                 val table = state.table
                 if (state.showTable && table != null) {
                     item(key = "table") { PlanMonthTable(table, onEditItem) }
                 } else if (state.rows.isNotEmpty()) {
-                    when (state.grouping) {
-                        PlanGrouping.GROUP -> state.rows.groupBy { it.groupName }.forEach { (group, rows) ->
-                            item(key = "group-$group") {
-                                PlanRowGroup(group, null, rows, onEditItem)
-                            }
-                        }
-
-                        // 依支付方式：每組標出小計與佔全年支出多少，一眼看完支付結構（R-MIX-06）。
-                        PlanGrouping.METHOD -> state.methodGroups.forEach { group ->
-                            item(key = "method-${group.method.name}") {
-                                PlanRowGroup(
-                                    group.method.label,
-                                    "${MoneyFormat.currency(group.total)} · ${group.percent}%",
-                                    group.rows,
-                                    onEditItem,
-                                )
-                            }
-                        }
+                    state.rows.groupBy { it.groupName }.forEach { (group, rows) ->
+                        item(key = "group-$group") { PlanRowGroup(group, rows, onEditItem) }
                     }
                 }
                 item(key = "end") { Spacer(Modifier.height(88.dp)) }
@@ -209,18 +198,11 @@ fun PlanScreen(
     }
 }
 
-/** 一組計畫列：標題（群組名或支付方式）可以帶小計。 */
+/** 一個群組的計畫列。 */
 @Composable
-private fun PlanRowGroup(title: String, trailing: String?, rows: List<PlanRow>, onEditItem: (Long) -> Unit) {
+private fun PlanRowGroup(title: String, rows: List<PlanRow>, onEditItem: (Long) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-        if (trailing == null) {
-            GroupLabel(title)
-        } else {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                GroupLabel(title, Modifier.weight(1f))
-                Text(trailing, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
+        GroupLabel(title)
         ListCard {
             rows.forEachIndexed { index, row ->
                 if (index > 0) ListDivider()
@@ -228,7 +210,6 @@ private fun PlanRowGroup(title: String, trailing: String?, rows: List<PlanRow>, 
                     ListRow(
                         title = row.itemName,
                         detail = row.detail,
-                        lead = row.method?.let { method -> { MethodIcon(method) } },
                         trailing = MoneyFormat.currency(row.total),
                     )
                 }
@@ -296,7 +277,7 @@ private fun ImportPreviewPanel(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 SummaryTile("全年支出", MoneyFormat.currency(preview.expense), Modifier.weight(1f))
-                SummaryTile("其中刷卡", MoneyFormat.currency(preview.cardSpending), Modifier.weight(1f))
+                SummaryTile("項目列", "${preview.lineCount} 列", Modifier.weight(1f))
             }
             HintText("共 ${preview.lineCount} 列 · 檔案編碼 ${import.encoding}")
             if (preview.newGroups.isNotEmpty()) HintText("會新增群組：${preview.newGroups.joinToString("、")}")

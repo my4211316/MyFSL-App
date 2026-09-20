@@ -16,7 +16,7 @@ class PlanTableTest {
 
     @Test fun `明細依群組排列，一個項目一列，全為 0 的列不顯示`() {
         val living = table.rows.filter { it.itemId == LIVING }
-        assertEquals("一個項目只有一列（R-MIX-01）", listOf(PaymentMethod.CREDIT_CARD), living.map { it.method })
+        assertEquals("一個項目只有一列（R-MIX-01）", 1, living.size)
         assertEquals(16_000L * 12, living[0].total)
         assertTrue(living.all { it.flexible })
         val groupIndex = table.rows.indexOfFirst { it.kind == TableRowKind.GROUP && it.label == "生活" }
@@ -36,7 +36,7 @@ class PlanTableTest {
 
     @Test fun `自動估算列＝繳卡費＋貸款扣掉自己填的轉帳`() {
         val auto = table.rows.firstOrNull { it.auto && it.kind == TableRowKind.ITEM }
-        val planned = table.rows.filter { it.kind == TableRowKind.ITEM && !it.auto && it.method == null && it.label.startsWith("繳") }
+        val planned = table.rows.filter { it.kind == TableRowKind.ITEM && !it.auto && it.label.startsWith("繳") }
         val plannedMonthly = List(12) { m -> planned.sumOf { it.monthly[m] } }
         val expected = List(12) { m -> (summary.debtPayments[m] - plannedMonthly[m]).coerceAtLeast(0) }
         if (expected.all { it == 0L }) assertNull(auto) else assertEquals(expected, auto!!.monthly)

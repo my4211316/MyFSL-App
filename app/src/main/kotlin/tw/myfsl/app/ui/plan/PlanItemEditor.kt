@@ -52,7 +52,6 @@ fun PlanItemEditorForm(
     accounts: List<Account>,
     onChange: ((PlanItemDraft) -> PlanItemDraft) -> Unit,
     onType: (FlowType) -> Unit,
-    onMethod: (PaymentMethod) -> Unit,
     onMonth: (Int, String) -> Unit,
     onQuickFill: (QuickFill, String) -> Unit,
     onSave: () -> Unit,
@@ -141,23 +140,6 @@ fun PlanItemEditorForm(
             FieldLabel("追蹤方式")
             ChoiceChips(TrackingMode.entries, { draft.tracking == it }, { it.label }, { m -> onChange { it.copy(tracking = m) } })
             HintText(draft.tracking.hint)
-        }
-
-        if (draft.type == FlowType.EXPENSE) {
-            Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                FieldLabel("支付方式")
-                SegmentedChoice(PaymentMethod.entries, draft.method, { it.label }, onMethod, icon = ::methodIcon)
-                errors[Field.METHOD]?.let { ErrorText(it) }
-                HintText("試算用這個方式推算現金流。記帳當下還是可以選別的方式付。")
-            }
-            SectionCard {
-                SwitchRow(
-                    "試算依實際比例",
-                    draft.useActualMix,
-                    { on -> onChange { it.copy(useActualMix = on) } },
-                    detail = editor.mixText ?: "這個項目的實際紀錄還不夠多，先照上面選的方式推。",
-                )
-            }
         }
 
         SectionHeader("每月金額")

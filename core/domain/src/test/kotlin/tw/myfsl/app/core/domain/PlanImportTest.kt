@@ -49,7 +49,7 @@ class PlanImportTest {
         assertEquals(108_000L, preview.expense)
     }
 
-    @Test fun `同一個項目的兩種支付方式合併成一個項目`() {
+    @Test fun `同一個項目的多列合併成一列，金額相加（R-MIX-01）`() {
         val preview = parse(
             csv(
                 "生活,生活費,支出,現金,上下各半,,是,依記帳,,,,108000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000",
@@ -59,19 +59,17 @@ class PlanImportTest {
         assertTrue(preview.errors.isEmpty())
         assertEquals(1, preview.itemCount)
         val item = preview.items.single()
-        // 兩列合併成一列：金額相加，支付方式取金額大的（R-MIX-05）
-        assertEquals(PaymentMethod.CREDIT_CARD, item.item.method)
+        // 預算不分支付方式：兩列直接相加成一列（R-MIX-01）
         assertEquals(List(12) { 25_000L }, item.amounts)
         assertEquals(300_000L, item.total)
-        assertEquals("整個項目都算在刷卡上", 300_000L, preview.cardSpending)
         assertEquals(listOf(2, 3), item.lines)
-        assertTrue(preview.issues.any { it.message.contains("合併成一列") })
+        assertTrue(preview.issues.any { it.message.contains("相加成一列") })
         assertEquals(Timing.SPLIT, item.item.timing)
         assertEquals(Flexibility.FLEXIBLE, item.item.flexibility)
         assertEquals(TrackingMode.LEDGER, item.item.tracking)
     }
 
-    @Test fun `收入與轉帳：帶入帳戶，支付方式忽略`() {
+    @Test fun `收入與轉帳：帶入帳戶；支付方式欄一律忽略（R-MIX-01）`() {
         val preview = parse(
             csv(
                 "收入,薪資,收入,,上半月,,否,自動計入,薪轉帳戶,,,780000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000",
@@ -82,11 +80,11 @@ class PlanImportTest {
         val salary = preview.items.first { it.item.name == "薪資" }
         assertEquals(FlowType.INCOME, salary.item.type)
         assertEquals(SampleHousehold.BANK, salary.item.accountId)
-        assertNull(salary.item.method)
+        assertEquals(FlowType.INCOME, salary.item.type)
         val pay = preview.items.first { it.item.name == "繳信用卡 A" }
         assertEquals(SampleHousehold.BANK, pay.item.accountId)
         assertEquals(SampleHousehold.CARD_A, pay.item.toAccountId)
-        assertTrue(preview.issues.any { it.message.contains("支付方式會被忽略") })
+        assertTrue(preview.issues.any { it.message.contains("支付方式欄會被忽略") })
     }
 
     @Test fun `表頭可以用別的說法，月份可以用中文`() {
@@ -133,7 +131,7 @@ class PlanImportTest {
 
     // ---------- 檢查 ----------
 
-    @Test fun `錯誤：類型看不懂、支出沒支付方式、找不到帳戶、轉出等於轉入、重複列`() {
+    @Test fun `錯誤：類型看不懂、找不到帳戶、轉出等於轉入`() {
         val preview = parse(
             csv(
                 "生活,亂寫,飲料,現金,上下各半,,否,自動計入,,,,0,0,0,0,0,0,0,0,0,0,0,0,0",
@@ -146,10 +144,10 @@ class PlanImportTest {
         )
         val messages = preview.errors.map { it.message }
         assertTrue(messages.any { it.startsWith("第 2 列的類型「飲料」") })
-        assertTrue(messages.any { it == "第 3 列「沒付款」是支出，要填支付方式（現金、信用卡或轉帳）" })
+        assertFalse("支出沒填支付方式不再是錯誤（R-MIX-01）", messages.any { it.contains("要填支付方式") })
         assertTrue(messages.any { it == "第 4 列找不到帳戶「不存在的帳戶」" })
         assertTrue(messages.any { it == "第 5 列「自己轉自己」轉出與轉入是同一個帳戶" })
-        assertTrue(messages.any { it == "「家用」的現金出現兩次（第 6 列與第 7 列）" })
+        assertFalse("同一個項目的兩列直接相加，不再是錯誤", messages.any { it.contains("出現兩次") })
         assertFalse(preview.canImport)
     }
 
@@ -227,7 +225,7 @@ class PlanImportTest {
 
         val plan = PlanSummaryCalculator.summarize(snapshot, 2026)
         assertEquals(plan.totalIncome, preview.income)
-        assertEquals(plan.totalExpense, preview.expense)
+        assertEquals("匯出的是計畫裡的支出，不含貸款與循環利息", plan.totalPlannedExpense, preview.expense)
         // 轉帳項目逐一原樣匯回（依合約自動繳的卡費不是計畫項目，不在檔案裡）
         val transfers = snapshot.activeItems.filter { it.type == FlowType.TRANSFER }
         assertEquals(
@@ -239,7 +237,6 @@ class PlanImportTest {
             snapshot.activeItems.associate { it.name to it.dueDay },
             preview.items.associate { it.item.name to it.item.dueDay },
         )
-        assertEquals(plan.totalCardSpending, preview.cardSpending)
 
         // 逐列比對金額
         val living = preview.items.first { it.item.name == "生活費" }

@@ -59,17 +59,18 @@ class BaselineBuilderTest {
         assertEquals(2_300L, byKey[Triple(FOOD_CASH, PaymentMethod.CASH, sep1)])
         assertEquals(2_300L, byKey[Triple(FOOD_CASH, PaymentMethod.CASH, sep2)])
         // 生活費 16,000 − 9,800 = 6,200，上下各半
-        assertEquals(3_100L, byKey[Triple(LIVING, PaymentMethod.CREDIT_CARD, sep1)])
-        assertEquals(3_100L, byKey[Triple(LIVING, PaymentMethod.CREDIT_CARD, sep2)])
+        assertEquals(3_100L, byKey[Triple(LIVING, PaymentMethod.CASH, sep1)])
+        assertEquals(3_100L, byKey[Triple(LIVING, PaymentMethod.CASH, sep2)])
         assertEquals("10 月沒有記帳，整月照計畫：現金伙食 9,000 上下各半", 4_500L, byKey[Triple(FOOD_CASH, PaymentMethod.CASH, oct1)])
-        assertEquals("生活費 16,000 上下各半", 8_000L, byKey[Triple(LIVING, PaymentMethod.CREDIT_CARD, oct1)])
+        assertEquals("生活費 16,000 上下各半", 8_000L, byKey[Triple(LIVING, PaymentMethod.CASH, oct1)])
     }
 
     @Test fun `每月固定：起算日（今天）以前的視為已在餘額裡，只預測今天以後的發生日（手算：9／14）`() {
         val events = BaselineBuilder.build(snapshot).events
         // 手機網路：上半月、沒填日期 → 每月 1 號。9/1 已過（已入帳或包含在校正餘額），不再預測。
         assertTrue(events.none { it.itemId == PHONE && it.period.yearMonth == sep1.yearMonth })
-        assertEquals(CARD_A, events.first { it.itemId == PHONE && it.period == oct1 }.fromAccountId)
+        // 付款假設是「全部當現金付」，所以從現金帳戶扣（R-MIX-02）。
+        assertEquals(CASH, events.first { it.itemId == PHONE && it.period == oct1 }.fromAccountId)
         // 薪資：15 號 → 9/15 還沒到，放在上半月。
         val salary = events.single { it.itemId == SALARY && it.period.yearMonth == sep1.yearMonth }
         assertEquals(sep1, salary.period)
@@ -197,8 +198,8 @@ class BaselineBuilderTest {
         assertTrue(archived.isItemActiveIn(archived.item(PHONE)!!, 2026, 9))
         assertFalse(archived.isItemActiveIn(archived.item(PHONE)!!, 2026, 10))
         assertTrue(BaselineBuilder.build(archived).events.none { it.itemId == PHONE })
-        val before = PlanSummaryCalculator.summarize(snapshot, 2026).cardSpending.sum()
-        val after = PlanSummaryCalculator.summarize(archived, 2026).cardSpending.sum()
+        val before = PlanSummaryCalculator.summarize(snapshot, 2026).plannedExpense.sum()
+        val after = PlanSummaryCalculator.summarize(archived, 2026).plannedExpense.sum()
         assertEquals("10–12 月的 3 個月不算", 2_400L * 3, before - after)
     }
 }

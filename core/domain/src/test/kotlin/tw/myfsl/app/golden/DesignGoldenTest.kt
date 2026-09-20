@@ -40,17 +40,18 @@ class DesignGoldenTest {
     private fun thousandsSeries(result: ForecastResult) = ForecastSummary.monthlyLows(result).map(ForecastSummary::thousands)
 
     @Test fun `現況：最低水位、首次低於安全線、結構缺口、期末負債、曲線`() {
+        // 付款假設是預設的「全部當現金付」（R-MIX-02）：不靠刷卡遞延，看得出養不養得起。
         val result = ScenarioApplier.run(base, emptyList())
-        assertEquals(18_465L, result.lowestLiquid)
-        assertEquals(Period(2027, 2, Half.FIRST), result.lowest?.period)
-        assertEquals(Period(2027, 2, Half.FIRST), result.firstBelowSafety?.period)
-        assertEquals(5, ForecastSummary.monthsUntil(base.start, result.firstBelowSafety!!.period))
-        assertEquals(-79_936L, result.structuralGapPerYear)
-        assertEquals("A 卡每月刷約 28,000、自由只繳 18,000，卡債一路增加；B 卡 2027/1 繳清後不再扣款", 330_365L, result.endCardDebt)
-        assertEquals(1_452_761L, result.endTotalDebt)
-        assertEquals("兩年循環利息（只有 A 卡計息，每期只算上一期帳單沒繳清的部分）", 38_905L, result.totalCardInterest)
+        assertEquals(-127_561L, result.lowestLiquid)
+        assertEquals(Period(2028, 2, Half.FIRST), result.lowest?.period)
+        assertEquals(Period(2027, 1, Half.FIRST), result.firstBelowSafety?.period)
+        assertEquals(4, ForecastSummary.monthsUntil(base.start, result.firstBelowSafety!!.period))
+        assertEquals(-60_880L, result.structuralGapPerYear)
+        assertEquals("不再新增刷卡，A 卡每月繳 18,000、B 卡每月 9,000，兩張都清光", 0L, result.endCardDebt)
+        assertEquals("只剩信貸與保單借款", 1_122_396L, result.endTotalDebt)
+        assertEquals("卡債很快清掉，只有前兩期有沒繳清的帳單", 792L, result.totalCardInterest)
         assertEquals(
-            listOf(114L, 126, 124, 124, 54, 18, 177, 196, 196, 165, 99, 107, 121, 139, 146, 155, 94, 67, 226, 245, 245, 214, 148, 156),
+            listOf(111L, 94, 71, 56, -14, -53, 101, 104, 90, 65, -5, -18, -43, -41, -37, -32, -97, -128, 27, 30, 16, -9, -79, -92),
             thousandsSeries(result),
         )
         assertEquals("−1.4萬", ForecastSummary.wanLabel(-14))
@@ -74,7 +75,7 @@ class DesignGoldenTest {
         assertEquals("只有 10/1 結帳一次：(50,200 − 18,000) × 1.25% = 402.5 → 403", 403L, result.totalCardInterest)
         assertEquals(1_256_468L, result.endTotalDebt)
         assertEquals(
-            listOf(114L, 234, 238, 238, 169, 135, 286, 285, 263, 234, 164, 144, 118, 117, 117, 117, 48, 14, 165, 164, 142, 113, 43, 23),
+            listOf(111L, 234, 238, 238, 169, 135, 286, 285, 263, 234, 164, 144, 118, 117, 117, 117, 48, 14, 165, 164, 142, 113, 43, 23),
             thousandsSeries(result),
         )
     }
@@ -82,15 +83,15 @@ class DesignGoldenTest {
     @Test fun `情境：可調支出減少 20%`() {
         val flexible = listOf(LIVING, SampleHousehold.FOOD_CASH, HOUSEHOLD, FUEL, LESSONS, CONTEST, RED_ENVELOPE, BIRTHDAY, TRIP)
         val result = ScenarioApplier.run(base, listOf(ScenarioChange.AdjustItems(flexible, -20.0, base.start.index)))
-        assertEquals(44_725L, result.lowestLiquid)
+        assertEquals(-8_187L, result.lowestLiquid)
         assertEquals(Period(2027, 2, Half.FIRST), result.lowest?.period)
-        assertNull(result.firstBelowSafety)
-        assertEquals(33_945L, result.structuralGapPerYear)
-        assertEquals(204_063L, result.endCardDebt)
-        assertEquals(1_326_459L, result.endTotalDebt)
-        assertEquals(24_655L, result.totalCardInterest)
+        assertEquals(Period(2027, 1, Half.FIRST), result.firstBelowSafety?.period)
+        assertEquals("減 20% 之後結構由負轉正，但已經欠的還是要還", 45_876L, result.structuralGapPerYear)
+        assertEquals(0L, result.endCardDebt)
+        assertEquals(1_122_396L, result.endTotalDebt)
+        assertEquals(792L, result.totalCardInterest)
         assertEquals(
-            listOf(115L, 129, 132, 136, 69, 45, 208, 230, 235, 206, 144, 155, 172, 194, 206, 219, 161, 145, 308, 330, 335, 307, 245, 256),
+            listOf(112L, 101, 86, 82, 16, -8, 155, 165, 162, 141, 79, 87, 66, 75, 87, 100, 42, 27, 190, 200, 197, 176, 114, 122),
             thousandsSeries(result),
         )
     }

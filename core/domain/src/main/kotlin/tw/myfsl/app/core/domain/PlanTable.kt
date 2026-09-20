@@ -15,7 +15,6 @@ data class TableRow(
     val label: String,
     val monthly: List<Money> = List(12) { 0L },
     val itemId: Long? = null,
-    val method: PaymentMethod? = null,
     val flexible: Boolean = false,
     /** 依攤還或循環條件自動估算，不是自己填的。 */
     val auto: Boolean = false,
@@ -43,7 +42,6 @@ object PlanTableBuilder {
                     label = item.name,
                     monthly = months,
                     itemId = item.id,
-                    method = if (item.type == FlowType.EXPENSE) MethodMixRules.methodOf(item) else null,
                     flexible = item.flexibility == Flexibility.FLEXIBLE,
                 )
             }

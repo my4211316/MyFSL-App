@@ -54,7 +54,6 @@ fun PlanMonthTable(table: PlanTable, onEditItem: (Long) -> Unit, modifier: Modif
                         .padding(horizontal = Spacing.xs),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (row.kind == TableRowKind.ITEM) MethodIcon(row.method, Modifier.padding(end = Spacing.sm).size(16.dp))
                     Text(
                         row.label + if (row.flexible) "・可調" else "",
                         style = if (row.kind == TableRowKind.ITEM) MaterialTheme.typography.bodySmall else MaterialTheme.typography.labelMedium,

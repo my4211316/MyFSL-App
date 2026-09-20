@@ -64,13 +64,13 @@ class InstallmentTest {
         groups = listOf(PlanGroup(1, "收入", 1), PlanGroup(5, "生活", 5)),
         items = listOf(
             PlanItem(SALARY, "薪資", 1, FlowType.INCOME, accountId = BANK, timing = Timing.FIRST_HALF),
-            PlanItem(PHONE, "手機", 5, FlowType.EXPENSE, method = PaymentMethod.CREDIT_CARD, timing = Timing.FIRST_HALF),
+            PlanItem(PHONE, "手機", 5, FlowType.EXPENSE, timing = Timing.FIRST_HALF),
         ),
         amountsByYear = mapOf(2026 to mapOf(PlanLine(SALARY) to List(12) { 80_000L })),
         actuals = emptyList(),
         ledger = emptyList(),
         installments = installments.toList(),
-        settings = AppSettings(safetyLevel = 0, horizonMonths = 24),
+        settings = AppSettings(safetyLevel = 0, horizonMonths = 24, forecastCardPercent = 100),
     )
 
     // ---------- 規則 ----------

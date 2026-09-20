@@ -59,8 +59,27 @@ object Migrations {
         return "UPDATE `$table` SET `$column` = 'plan:' || $id || ':' || $afterMethod WHERE `$column` LIKE 'plan:%'"
     }
 
+    /**
+     * 第 3 版：計畫不再帶支付方式（R-MIX-01）。試算的付款假設改成設定裡的一個數字（R-MIX-02），
+     * 在 SettingsRepository 讀不到時用預設值「全部當現金付」，所以這裡只要把欄位拿掉。
+     */
+    private val toVersion3 = listOf(
+        "CREATE TABLE IF NOT EXISTS `plan_items_new` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+            "`name` TEXT NOT NULL, `groupId` INTEGER NOT NULL, `type` TEXT NOT NULL, `accountId` INTEGER, " +
+            "`toAccountId` INTEGER, `timing` TEXT NOT NULL, `flexibility` TEXT NOT NULL, `tracking` TEXT NOT NULL, " +
+            "`note` TEXT NOT NULL, `archived` INTEGER NOT NULL, `sortOrder` INTEGER NOT NULL, `dueDay` INTEGER, " +
+            "`extraRepayment` INTEGER NOT NULL, `archivedFrom` INTEGER)",
+        "INSERT INTO `plan_items_new` (`id`, `name`, `groupId`, `type`, `accountId`, `toAccountId`, `timing`, " +
+            "`flexibility`, `tracking`, `note`, `archived`, `sortOrder`, `dueDay`, `extraRepayment`, `archivedFrom`) " +
+            "SELECT `id`, `name`, `groupId`, `type`, `accountId`, `toAccountId`, `timing`, `flexibility`, `tracking`, " +
+            "`note`, `archived`, `sortOrder`, `dueDay`, `extraRepayment`, `archivedFrom` FROM `plan_items`",
+        "DROP TABLE `plan_items`",
+        "ALTER TABLE `plan_items_new` RENAME TO `plan_items`",
+        "CREATE INDEX IF NOT EXISTS `index_plan_items_groupId` ON `plan_items` (`groupId`)",
+    )
+
     /** 版本 → 從上一版升到這一版要執行的 SQL。 */
-    val statements: Map<Int, List<String>> = mapOf(2 to toVersion2)
+    val statements: Map<Int, List<String>> = mapOf(2 to toVersion2, 3 to toVersion3)
 
     val all: Array<Migration> = statements.map { (to, sql) ->
         object : Migration(to - 1, to) {

@@ -85,7 +85,7 @@ class CardInterestTest {
             items = listOfNotNull(
                 PlanItem(SALARY, "薪資", 1, FlowType.INCOME, accountId = BANK, timing = Timing.FIRST_HALF, dueDay = 5),
                 PlanItem(
-                    LIVING, "生活費", 5, FlowType.EXPENSE, method = PaymentMethod.CREDIT_CARD,
+                    LIVING, "生活費", 5, FlowType.EXPENSE,
                     timing = Timing.SPLIT, flexibility = Flexibility.FLEXIBLE, tracking = TrackingMode.LEDGER,
                 )
                     .takeIf { living > 0 },
@@ -95,7 +95,11 @@ class CardInterestTest {
             amountsByYear = mapOf(2026 to amounts, 2027 to amounts, 2028 to amounts),
             actuals = emptyList(),
             ledger = listOfNotNull(paying?.let { paidBefore(CARD, it) }),
-            settings = AppSettings(safetyLevel = 0, horizonMonths = 24, autoPostFrom = today.toEpochDay(), transferAccountId = BANK),
+            // 這一組測的是刷卡之後的計息與繳款，所以假設計畫的支出全部刷卡（R-MIX-02）。
+            settings = AppSettings(
+                safetyLevel = 0, horizonMonths = 24, autoPostFrom = today.toEpochDay(),
+                transferAccountId = BANK, forecastCardPercent = 100,
+            ),
         )
     }
 

@@ -65,8 +65,8 @@ data class ConfirmLine(
 ) {
     val line: PlanLine get() = PlanLine(item.id)
 
-    /** 在一次檢查裡辨識這一列。 */
-    val key: String get() = deferral?.key ?: "line:${item.id}:${method?.name ?: "-"}"
+    /** 在一次檢查裡辨識這一列；計畫不分支付方式（R-MIX-01），所以只看項目。 */
+    val key: String get() = deferral?.key ?: "line:${item.id}"
 }
 
 /** 對帳結果的四種情況。 */
@@ -193,7 +193,7 @@ object CheckInRules {
     fun reportLines(snapshot: FinanceSnapshot, date: LocalDate = snapshot.today): List<ReportLine> =
         rows(snapshot, date, TrackingMode.REPORT).mapNotNull { row ->
             if (row.item.type == FlowType.EXPENSE && (row.planned > 0 || row.recorded > 0)) {
-                ReportLine(row.item, row.item.method, row.planned, row.recorded)
+                ReportLine(row.item, EntryRules.defaultMethod(snapshot, row.item, date), row.planned, row.recorded)
             } else {
                 null
             }
@@ -208,7 +208,7 @@ object CheckInRules {
             val status = ActualCalculator
                 .actualFor(row.item.id, date.year, date.monthValue, snapshot.actuals, snapshot.ledger).status
             if (row.planned > 0 && status != ActualStatus.DONE && status != ActualStatus.POSTPONED) {
-                ConfirmLine(row.item, row.item.method, row.planned, row.recorded)
+                ConfirmLine(row.item, EntryRules.defaultMethod(snapshot, row.item, date), row.planned, row.recorded)
             } else {
                 null
             }
@@ -327,19 +327,23 @@ object CheckInRules {
     }
 
     /**
-     * 差額預設歸到的項目：先找支付方式相同、本月計畫金額最大的可調項目；
-     * 沒有就放寬到任何支付方式，再沒有就放寬到不可調的項目。
+     * 差額預設歸到的項目：先找這個支付方式最近實際用過、本月計畫金額最大的可調項目；
+     * 沒有就放寬到任何項目。計畫不帶支付方式（R-MIX-01），所以看的是實際記帳。
      */
     fun defaultItemFor(snapshot: FinanceSnapshot, method: PaymentMethod, date: LocalDate = snapshot.today): PlanItem? {
         val expenses = snapshot.activeItems.filter { it.type == FlowType.EXPENSE }
         fun plan(item: PlanItem) = snapshot.plannedAmount(item.id, date.year, date.monthValue)
         fun pick(candidates: List<PlanItem>) = candidates.filter { plan(it) > 0 }.maxByOrNull { plan(it) }
+        val usedWith = snapshot.ledger
+            .filter { it.method == method && it.itemId != null }
+            .map { it.itemId }
+            .toSet()
         val flexible = expenses.filter { it.flexibility == Flexibility.FLEXIBLE }
-        return pick(flexible.filter { it.method == method })
+        return pick(flexible.filter { it.id in usedWith })
             ?: pick(flexible)
-            ?: pick(expenses.filter { it.method == method })
+            ?: pick(expenses.filter { it.id in usedWith })
             ?: pick(expenses)
-            ?: expenses.firstOrNull { it.method == method }
+            ?: expenses.firstOrNull()
     }
 
     /** 把整份輸入換算成要寫入的記帳、狀態與校正餘額。純函式。 */

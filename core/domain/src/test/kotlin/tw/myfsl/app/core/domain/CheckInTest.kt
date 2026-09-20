@@ -23,6 +23,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
 
 class CheckInTest {
 
@@ -30,8 +31,8 @@ class CheckInTest {
     private val pool = CheckInRules.CARD_ROW_ID
     private val postingDays = snapshot.settings.cardPostingDays
 
-    private fun cardLine() = "line:$CAR_SERVICE:CREDIT_CARD"
-    private fun subsidyLine() = "line:$SUBSIDY:-"
+    private fun cardLine() = "line:$CAR_SERVICE"
+    private fun subsidyLine() = "line:$SUBSIDY"
 
     // ---------- 要檢查什麼 ----------
 
@@ -39,11 +40,23 @@ class CheckInTest {
         assertTrue(CheckInRules.reportLines(snapshot).isEmpty())
         val confirms = CheckInRules.confirmLines(snapshot)
         assertEquals(listOf(SUBSIDY, CAR_SERVICE), confirms.map { it.item.id })
+        // 計畫不帶支付方式（R-MIX-01）：補記用「這個項目上次怎麼付」，沒記過就看整體最常用的（現金）。
         confirms.single { it.item.id == CAR_SERVICE }.run {
             assertEquals(12_000L, planned)
             assertEquals(0L, recorded)
-            assertEquals(PaymentMethod.CREDIT_CARD, method)
+            assertEquals(PaymentMethod.CASH, method)
         }
+        // 這個項目上次刷卡的話就帶刷卡
+        val swiped = snapshot.copy(
+            ledger = snapshot.ledger + LedgerEntry(
+                id = 500, date = LocalDate.of(2026, 3, 20), type = FlowType.EXPENSE, amount = 12_000,
+                itemId = CAR_SERVICE, method = PaymentMethod.CREDIT_CARD, accountId = CARD_A,
+            ),
+        )
+        assertEquals(
+            PaymentMethod.CREDIT_CARD,
+            CheckInRules.confirmLines(swiped).single { it.item.id == CAR_SERVICE }.method,
+        )
         confirms.single { it.item.id == SUBSIDY }.run {
             assertEquals(5_000L, planned)
             assertNull(method)
@@ -58,7 +71,7 @@ class CheckInTest {
         rows[0].run {
             assertEquals(120_000L, computed)
             assertEquals(PaymentMethod.TRANSFER, method)
-            assertEquals(LESSONS, defaultItem?.id)
+            assertEquals(LIVING, defaultItem?.id)
         }
         rows[1].run {
             assertEquals(15_000L, computed)
@@ -104,10 +117,12 @@ class CheckInTest {
         check(92_899, DiffKind.OVER_RECORDED, "銀行少 $12,101，可能是記重複或有退款", Resolution.BALANCE_ONLY)
     }
 
-    @Test fun `差額預設歸到的項目：本月該支付方式計畫最大的可調項目`() {
+    @Test fun `差額預設歸到的項目：這個支付方式實際用過、計畫最大的可調項目`() {
+        // 9 月現金花在現金伙食（4,400）與家用（300）；刷卡花在生活費（9,800）與交通油資（2,300）
         assertEquals(FOOD_CASH, CheckInRules.defaultItemFor(snapshot, PaymentMethod.CASH)?.id)
         assertEquals(LIVING, CheckInRules.defaultItemFor(snapshot, PaymentMethod.CREDIT_CARD)?.id)
-        assertEquals(LESSONS, CheckInRules.defaultItemFor(snapshot, PaymentMethod.TRANSFER)?.id)
+        // 沒有任何轉帳記錄時，放寬到計畫最大的可調項目
+        assertEquals(LIVING, CheckInRules.defaultItemFor(snapshot, PaymentMethod.TRANSFER)?.id)
     }
 
     // ---------- 寫入 ----------
@@ -179,18 +194,18 @@ class CheckInTest {
         assertEquals(12_000L, entry.amount)
         assertEquals(CAR_SERVICE, entry.itemId)
         assertEquals(EntrySource.CONFIRMED, entry.source)
-        assertNull(entry.accountId)
+        assertEquals("沒記過這個項目，補記用現金", CASH, entry.accountId)
         assertEquals(ActualStatus.DONE, result.actuals.single().status)
         assertTrue("到期確認不算漏記", result.missedEntries.isEmpty())
 
-        // 對帳時卡片推算已包含補記的 12,000
-        assertEquals(117_000L, CheckInRules.reconciles(snapshot, result.entries).last().computed)
+        // 現金的補記不影響卡片推算
+        assertEquals(105_000L, CheckInRules.reconciles(snapshot, result.entries).last().computed)
         val both = CheckInRules.build(
             snapshot,
-            input.copy(reconciles = mapOf(pool to ReconcileDecision(balances = mapOf(CARD_A to 72_000L, CARD_B to 45_000L)))),
+            input.copy(reconciles = mapOf(pool to ReconcileDecision(balances = mapOf(CARD_A to 60_000L, CARD_B to 45_000L)))),
         )
-        assertEquals(1, both.entries.size)
-        assertEquals(mapOf(CARD_A to 72_000L, CARD_B to 45_000L), both.balances)
+        assertEquals("卡片和推算一樣，只有到期確認那一筆", 1, both.entries.size)
+        assertEquals(mapOf(CARD_A to 60_000L, CARD_B to 45_000L), both.balances)
     }
 
     @Test fun `到期確認：已經記過帳只補差額`() {

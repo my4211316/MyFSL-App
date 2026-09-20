@@ -28,9 +28,8 @@ class MappersTest {
         }
     }
 
-    @Test fun `項目、實際數字、記帳來回轉換；沒有支付方式時存成空字串`() {
+    @Test fun `項目、實際數字、記帳來回轉換`() {
         SampleHousehold.items.forEach { assertEquals(it, it.toEntity().toModel()) }
-        assertEquals("收入沒有支付方式", null, SampleHousehold.items.first { it.type == FlowType.INCOME }.toEntity().method)
         val actual = ItemActual(1, 2026, 9, ActualStatus.POSTPONED, LocalDate.of(2026, 9, 14))
         assertEquals(actual, actual.toEntity().toModel())
         val entry = LedgerEntry(

@@ -16,13 +16,11 @@ class PlanItemFormTest {
     private val snapshot = SampleHousehold.snapshot()
     private val year = 2026
 
-    @Test fun `讀出既有項目：一個項目只有一組金額，支付方式在項目上`() {
+    @Test fun `讀出既有項目：一個項目只有一組金額，計畫不帶支付方式`() {
         val living = snapshot.item(SampleHousehold.LIVING)!!
         val draft = PlanItemForm.fromItem(living, snapshot, year)
-        assertEquals(PaymentMethod.CREDIT_CARD, draft.method)
         assertEquals("16000", draft.months[0])
         assertEquals(16_000L * 12, draft.total)
-        assertTrue("預設打開依實際比例", draft.useActualMix)
     }
 
     @Test fun `原樣存回：金額與支付方式不變`() {
@@ -34,34 +32,11 @@ class PlanItemFormTest {
         assertEquals(List(12) { 16_000L }, result.amounts)
     }
 
-    @Test fun `使用者改支付方式：金額不變，只有項目的支付方式變了`() {
+    @Test fun `項目編輯沒有支付方式這一欄（R-MIX-01）`() {
         val living = PlanItemForm.fromItem(snapshot.item(SampleHousehold.LIVING)!!, snapshot, year)
-        val toTransfer = PlanItemForm.setMethod(living, PaymentMethod.TRANSFER)
-        assertEquals(PaymentMethod.TRANSFER, toTransfer.method)
-        assertEquals("金額不受支付方式影響", "16000", toTransfer.months[0])
-        val result = PlanItemForm.validate(toTransfer, snapshot)
+        val result = PlanItemForm.validate(living, snapshot)
         assertTrue(result.ok)
-        assertEquals(PaymentMethod.TRANSFER, result.item!!.method)
-        assertEquals(List(12) { 16_000L }, result.amounts)
-    }
-
-    @Test fun `支出一定要有支付方式；收入與轉帳沒有`() {
-        val draft = PlanItemForm.newDraft(FlowType.EXPENSE, 5, snapshot).copy(name = "外食")
-        assertEquals(PaymentMethod.CASH, draft.method)
-        val missing = PlanItemForm.validate(draft.copy(method = null), snapshot)
-        assertFalse(missing.ok)
-        assertEquals("請選支付方式", missing.errors[PlanItemForm.Field.METHOD])
-
-        val income = PlanItemForm.newDraft(FlowType.INCOME, 1, snapshot)
-        assertNull(income.method)
-        assertEquals("收入不能設支付方式", income, PlanItemForm.setMethod(income, PaymentMethod.CASH))
-    }
-
-    @Test fun `試算依實際比例可以關掉`() {
-        val living = PlanItemForm.fromItem(snapshot.item(SampleHousehold.LIVING)!!, snapshot, year)
-        val locked = PlanItemForm.validate(living.copy(useActualMix = false), snapshot)
-        assertTrue(locked.ok)
-        assertFalse(locked.item!!.useActualMix)
+        assertEquals("存回去的項目和原本一樣", snapshot.item(SampleHousehold.LIVING), result.item)
     }
 
     @Test fun `只填某幾個月：其他月份是 0`() {
@@ -105,20 +80,18 @@ class PlanItemFormTest {
         assertEquals("收入要選入帳帳戶", PlanItemForm.validate(income, snapshot).errors[PlanItemForm.Field.ACCOUNT])
         val ok = PlanItemForm.validate(income.copy(accountId = SampleHousehold.BANK), snapshot)
         assertTrue(ok.ok)
-        assertNull(ok.item!!.method)
+        assertEquals(SampleHousehold.BANK, ok.item!!.accountId)
 
         val transfer = PlanItemForm.newDraft(FlowType.TRANSFER, 8, snapshot)
             .copy(name = "繳卡費", accountId = SampleHousehold.BANK, toAccountId = SampleHousehold.BANK)
         assertEquals("轉出與轉入不能是同一個帳戶", PlanItemForm.validate(transfer, snapshot).errors[PlanItemForm.Field.TO_ACCOUNT])
     }
 
-    @Test fun `切換類型：金額留著，支付方式跟著類型`() {
+    @Test fun `切換類型：金額留著`() {
         val living = PlanItemForm.fromItem(snapshot.item(SampleHousehold.LIVING)!!, snapshot, year)
         val income = PlanItemForm.changeType(living, FlowType.INCOME)
-        assertNull(income.method)
         assertEquals("16000", income.months[0])
         val back = PlanItemForm.changeType(income, FlowType.EXPENSE)
-        assertEquals(PaymentMethod.CASH, back.method)
         assertEquals("16000", back.months[0])
     }
 

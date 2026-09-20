@@ -101,12 +101,10 @@ object SampleHousehold {
         name: String,
         group: Long,
         timing: Timing,
-        method: PaymentMethod,
         flexible: Boolean = false,
         tracking: TrackingMode = TrackingMode.AUTO,
     ) = PlanItem(
         id, name, group, FlowType.EXPENSE,
-        method = method,
         timing = timing,
         flexibility = if (flexible) Flexibility.FLEXIBLE else Flexibility.FIXED,
         tracking = tracking,
@@ -116,24 +114,24 @@ object SampleHousehold {
         income(SALARY, "薪資", Timing.FIRST_HALF, TrackingMode.AUTO).copy(dueDay = 15),
         income(BONUS, "年終獎金", Timing.FIRST_HALF, TrackingMode.CONFIRM),
         income(SUBSIDY, "教育補助", Timing.FIRST_HALF, TrackingMode.CONFIRM),
-        expense(INCOME_TAX, "所得稅", 2, Timing.SECOND_HALF, PaymentMethod.TRANSFER),
-        expense(VEHICLE_TAX, "牌照燃料稅", 2, Timing.SECOND_HALF, PaymentMethod.TRANSFER),
-        expense(INSURANCE, "保險費", 2, Timing.FIRST_HALF, PaymentMethod.TRANSFER),
-        expense(ELECTRICITY, "電費", 3, Timing.SECOND_HALF, PaymentMethod.TRANSFER),
-        expense(GAS, "瓦斯", 3, Timing.SECOND_HALF, PaymentMethod.TRANSFER),
-        expense(PARKING, "停車費", 4, Timing.FIRST_HALF, PaymentMethod.TRANSFER),
-        expense(POLICY_INTEREST, "保單借款利息", 4, Timing.SECOND_HALF, PaymentMethod.TRANSFER),
-        expense(LIVING, "生活費", 5, Timing.SPLIT, PaymentMethod.CREDIT_CARD, flexible = true, tracking = TrackingMode.LEDGER),
-        expense(FOOD_CASH, "現金伙食", 5, Timing.SPLIT, PaymentMethod.CASH, flexible = true, tracking = TrackingMode.LEDGER),
-        expense(HOUSEHOLD, "家用", 5, Timing.SPLIT, PaymentMethod.CASH, flexible = true, tracking = TrackingMode.LEDGER),
-        expense(FUEL, "交通油資", 5, Timing.SPLIT, PaymentMethod.CREDIT_CARD, flexible = true, tracking = TrackingMode.LEDGER),
-        expense(PHONE, "手機網路", 5, Timing.FIRST_HALF, PaymentMethod.CREDIT_CARD),
-        expense(LESSONS, "才藝課", 6, Timing.FIRST_HALF, PaymentMethod.TRANSFER, flexible = true),
-        expense(CONTEST, "比賽報名", 6, Timing.SECOND_HALF, PaymentMethod.CASH, flexible = true, tracking = TrackingMode.CONFIRM),
-        expense(RED_ENVELOPE, "紅包", 7, Timing.FIRST_HALF, PaymentMethod.CASH, flexible = true, tracking = TrackingMode.CONFIRM),
-        expense(BIRTHDAY, "生日", 7, Timing.SECOND_HALF, PaymentMethod.CASH, flexible = true, tracking = TrackingMode.CONFIRM),
-        expense(CAR_SERVICE, "汽車保養", 7, Timing.SECOND_HALF, PaymentMethod.CREDIT_CARD, tracking = TrackingMode.CONFIRM),
-        expense(TRIP, "家族旅遊", 7, Timing.SECOND_HALF, PaymentMethod.CREDIT_CARD, flexible = true, tracking = TrackingMode.CONFIRM),
+        expense(INCOME_TAX, "所得稅", 2, Timing.SECOND_HALF),
+        expense(VEHICLE_TAX, "牌照燃料稅", 2, Timing.SECOND_HALF),
+        expense(INSURANCE, "保險費", 2, Timing.FIRST_HALF),
+        expense(ELECTRICITY, "電費", 3, Timing.SECOND_HALF),
+        expense(GAS, "瓦斯", 3, Timing.SECOND_HALF),
+        expense(PARKING, "停車費", 4, Timing.FIRST_HALF),
+        expense(POLICY_INTEREST, "保單借款利息", 4, Timing.SECOND_HALF),
+        expense(LIVING, "生活費", 5, Timing.SPLIT, flexible = true, tracking = TrackingMode.LEDGER),
+        expense(FOOD_CASH, "現金伙食", 5, Timing.SPLIT, flexible = true, tracking = TrackingMode.LEDGER),
+        expense(HOUSEHOLD, "家用", 5, Timing.SPLIT, flexible = true, tracking = TrackingMode.LEDGER),
+        expense(FUEL, "交通油資", 5, Timing.SPLIT, flexible = true, tracking = TrackingMode.LEDGER),
+        expense(PHONE, "手機網路", 5, Timing.FIRST_HALF),
+        expense(LESSONS, "才藝課", 6, Timing.FIRST_HALF, flexible = true),
+        expense(CONTEST, "比賽報名", 6, Timing.SECOND_HALF, flexible = true, tracking = TrackingMode.CONFIRM),
+        expense(RED_ENVELOPE, "紅包", 7, Timing.FIRST_HALF, flexible = true, tracking = TrackingMode.CONFIRM),
+        expense(BIRTHDAY, "生日", 7, Timing.SECOND_HALF, flexible = true, tracking = TrackingMode.CONFIRM),
+        expense(CAR_SERVICE, "汽車保養", 7, Timing.SECOND_HALF, tracking = TrackingMode.CONFIRM),
+        expense(TRIP, "家族旅遊", 7, Timing.SECOND_HALF, flexible = true, tracking = TrackingMode.CONFIRM),
         PlanItem(PAY_CARD_B, "繳信用卡 B", 8, FlowType.TRANSFER, accountId = BANK, toAccountId = CARD_B, timing = Timing.SECOND_HALF),
     )
 
@@ -204,6 +202,8 @@ object SampleHousehold {
         note = "繳 信用卡 A", source = EntrySource.DUE, postingKey = "cardpay:$CARD_A:2026-08",
     )
 
+    // 付款假設用預設的「全部當現金付」（R-MIX-02）：基準線要看得出養不養得起，
+    // 刷卡遞延是調度手段，放在情境比較裡回答。
     val settings = AppSettings(safetyLevel = 30_000, horizonMonths = 24, pickCard = true, cashAccountId = CASH, transferAccountId = BANK)
 
     fun snapshot(): FinanceSnapshot = FinanceSnapshot(

@@ -314,7 +314,7 @@ object DueItems {
                         (it.status == ActualStatus.DONE || it.status == ActualStatus.POSTPONED)
                 }
                 if (done) continue
-                val method = if (item.type == FlowType.EXPENSE) MethodMixRules.methodOf(item) else null
+                val method = if (item.type == FlowType.EXPENSE) EntryRules.defaultMethod(snapshot, item) else null
                 item.occurrences(ym.year, ym.monthValue, monthAmount).forEach { (date, amount) ->
                     if (!inWindow(date)) return@forEach
                     val key = planKey(item, date)

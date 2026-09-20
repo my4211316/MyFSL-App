@@ -46,9 +46,6 @@ data class ImportPreview(
     val lineCount: Int get() = items.size
     val income: Money get() = items.filter { it.item.type == FlowType.INCOME }.sumOf { it.total }
     val expense: Money get() = items.filter { it.item.type == FlowType.EXPENSE }.sumOf { it.total }
-    val cardSpending: Money
-        get() = items.filter { it.item.type == FlowType.EXPENSE && it.item.method == PaymentMethod.CREDIT_CARD }
-            .sumOf { it.total }
     val errors: List<PlanIssue> get() = issues.filter { it.severity == Severity.ERROR }
     val canImport: Boolean get() = errors.isEmpty() && items.isNotEmpty()
 }
@@ -92,7 +89,7 @@ object PlanImport {
                         groupName[item.groupId].orEmpty(),
                         item.name,
                         item.type.label,
-                        if (item.type == FlowType.EXPENSE) MethodMixRules.methodOf(item).label else "",
+                        "",
                         item.timing.label,
                         item.dueDay?.toString().orEmpty(),
                         if (item.flexibility == Flexibility.FLEXIBLE) "是" else "否",
@@ -173,13 +170,9 @@ object PlanImport {
                     if (it == null) issues += PlanIssue(Severity.ERROR, "第 $lineNumber 列的日期「$raw」要是 1 到 31")
                 }
             }
-            val method = paymentMethod(cell("支付方式"))
-            if (type == FlowType.EXPENSE && method == null) {
-                issues += PlanIssue(Severity.ERROR, "第 $lineNumber 列「$name」是支出，要填支付方式（現金、信用卡或轉帳）")
-                return@forEach
-            }
-            if (type != FlowType.EXPENSE && cell("支付方式").isNotEmpty()) {
-                issues += PlanIssue(Severity.WARNING, "第 $lineNumber 列「$name」是${type.label}，支付方式會被忽略")
+            // 預算不分支付方式（R-MIX-01）：這一欄讀進來只是為了相容舊檔，不影響計畫。
+            if (cell("支付方式").isNotEmpty()) {
+                issues += PlanIssue(Severity.INFO, "第 $lineNumber 列的支付方式欄會被忽略；預算不分現金或刷卡")
             }
 
             fun resolveAccount(column: String, label: String): Long? {
@@ -240,7 +233,6 @@ object PlanImport {
                         name = name,
                         groupId = 0,
                         type = type,
-                        method = if (type == FlowType.EXPENSE) method ?: PaymentMethod.CASH else null,
                         accountId = accountId,
                         toAccountId = toAccountId,
                         timing = timing(cell("時點")),
@@ -269,22 +261,12 @@ object PlanImport {
                 conflict("追蹤", tracking(cell("追蹤")) == first.tracking)
                 conflict("帳戶", accountId == first.accountId)
                 conflict("轉入帳戶", toAccountId == first.toAccountId)
-                // 同一個項目分成好幾個支付方式的列：合併成一列，支付方式取金額大的那個（R-MIX-05）。
-                // 支付方式相同的兩列則是重複，照舊報錯。
-                if (type == FlowType.EXPENSE && method != null && method != existing.item.method) {
-                    val was = existing.amounts.sum()
-                    issues += PlanIssue(
-                        Severity.INFO,
-                        "「$name」有兩種支付方式（第 ${existing.lines.joinToString("、")} 列與第 $lineNumber 列），金額會合併成一列",
-                    )
-                    if (months.sum() > was) existing.item = existing.item.copy(method = method)
-                    for (m in 0 until 12) existing.amounts[m] = existing.amounts[m] + months[m]
-                } else {
-                    issues += PlanIssue(
-                        Severity.ERROR,
-                        "「$name」的${method?.label ?: type.label}出現兩次（第 ${existing.lines.joinToString("、")} 列與第 $lineNumber 列）",
-                    )
-                }
+                // 預算不分支付方式（R-MIX-01）：同一個項目的多列直接相加成一列。
+                issues += PlanIssue(
+                    Severity.INFO,
+                    "「$name」有多列（第 ${existing.lines.joinToString("、")} 列與第 $lineNumber 列），金額會相加成一列",
+                )
+                for (m in 0 until 12) existing.amounts[m] = existing.amounts[m] + months[m]
                 existing.lines += lineNumber
             }
         }

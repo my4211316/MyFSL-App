@@ -42,6 +42,12 @@ data class AppSettings(
     val reminderDays: List<Int> = listOf(7, 3),
     /** 深色／淺色（R-SET-08）。 */
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    /**
+     * 試算的付款假設（R-MIX-02）：未來的計畫支出有多少比例是刷卡，0–100。
+     * 預設 0 ＝「全部當現金付」：消費當月就從帳戶扣，不靠刷卡遞延。
+     * 已經欠的卡債、分期與每期卡費不受影響（那是已經發生的事實）。
+     */
+    val forecastCardPercent: Int = 0,
 )
 
 /** 某個時間點的完整財務資料，供純計算函式使用。 */

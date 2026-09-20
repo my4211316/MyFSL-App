@@ -62,6 +62,12 @@ class DueItemsTest {
         source = EntrySource.DUE, postingKey = "cardpay:3:2026-05",
     )
 
+    /** 房租以前就是用轉帳付的；到期時的預設支付方式看這筆（R-ENT-02）。 */
+    private val rentHistory = LedgerEntry(
+        id = 901, date = LocalDate.of(2026, 8, 10), type = FlowType.EXPENSE, amount = 20_000,
+        itemId = RENT, method = PaymentMethod.TRANSFER, accountId = BANK,
+    )
+
     private val installment = CardInstallment(
         id = 7, cardAccountId = CARD_B, purchaseDate = LocalDate.of(2026, 8, 20), amount = 12_000, months = 6,
         fee = InstallmentFee.PER_PERIOD, feeValue = 100.0, firstPeriodIndex = Period(2026, 9, Half.FIRST).index,
@@ -99,14 +105,14 @@ class DueItemsTest {
             groups = listOf(PlanGroup(1, "全部", 1)),
             items = listOf(
                 PlanItem(SALARY, "薪資", 1, FlowType.INCOME, accountId = BANK, dueDay = 5),
-                PlanItem(RENT, "房租", 1, FlowType.EXPENSE, method = PaymentMethod.TRANSFER, dueDay = 10),
-                PlanItem(LATER, "月底才扣", 1, FlowType.EXPENSE, method = PaymentMethod.CASH, dueDay = 20),
+                PlanItem(RENT, "房租", 1, FlowType.EXPENSE, dueDay = 10),
+                PlanItem(LATER, "月底才扣", 1, FlowType.EXPENSE, dueDay = 20),
                 PlanItem(PAY_B, "繳 B 卡", 1, FlowType.TRANSFER, accountId = BANK, toAccountId = CARD_B, dueDay = 12),
                 PlanItem(PAY_CARD, "多繳有條件的卡", 1, FlowType.TRANSFER, accountId = BANK, toAccountId = CARD, dueDay = 12, extraRepayment = extraRepayment),
             ),
             amountsByYear = mapOf(2026 to amounts),
             actuals = actuals,
-            ledger = listOf(history) + ledger,
+            ledger = listOf(history, rentHistory) + ledger,
             installments = listOf(installment),
             settings = AppSettings(transferAccountId = BANK, autoPostFrom = from?.toEpochDay()),
             postedKeys = postedKeys,
@@ -128,7 +134,7 @@ class DueItemsTest {
 
     @Test fun `8／31 起算，到 9／14 已到期的項目與建議金額：每筆都可以手算`() {
         val dues = reached(snapshot())
-        assertEquals("不會自動寫入任何記帳", listOf(history), snapshot().ledger)
+        assertEquals("不會自動寫入任何記帳", listOf(history, rentHistory), snapshot().ledger)
 
         // 9/1 分期第 1 期：本金 12,000 ÷ 6 = 2,000 入 B 卡（不重算預算）、手續費 100（算支出），同一個項目
         dues.item("inst:7:1").run {
@@ -163,7 +169,7 @@ class DueItemsTest {
         val order = dues.map { it.key }
         assertTrue("先繳上一期、再結帳計息", order.indexOf("cardpay:3:2026-08") < order.indexOf("cardint:3:2026-09"))
 
-        // 9/10 房租：支出，可以選支付方式，預設計畫的「轉帳」
+        // 9/10 房租：支出，可以選支付方式，預設上次用的「轉帳」
         dues.item("plan:201:2026-09:10").run {
             assertEquals(20_000L, amount); assertTrue(choosesMethod); assertEquals(PaymentMethod.TRANSFER, method)
         }

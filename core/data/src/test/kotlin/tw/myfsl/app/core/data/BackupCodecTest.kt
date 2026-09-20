@@ -105,14 +105,16 @@ class BackupCodecTest {
                         {"itemId":501,"method":"CREDIT_CARD","year":2026,"month":1,"amount":16000}],
              "actuals":[{"itemId":501,"method":"CASH","year":2026,"month":1,"status":"POSTPONED","updatedEpochDay":20700},
                         {"itemId":501,"method":"CREDIT_CARD","year":2026,"month":1,"status":"DONE","updatedEpochDay":20701}],
-             "postedKeys":[{"key":"plan:501:CASH:2026-01:15","epochDay":20700}]}
+             "postedKeys":[{"key":"plan:501:CASH:2026-01:15","epochDay":20700}],
+             "settings":{"safetyLevel":30000,"horizonMonths":24,"checkInDay":7,"pickCard":true,"cardPostingDays":5}}
         """.trimIndent()
         val result = BackupCodec.decode(v1) as BackupReadResult.Ok
         assertEquals(BackupFile.FORMAT_VERSION, result.file.formatVersion)
         assertEquals("兩列相加", listOf(25_000L), result.file.amounts.map { it.amount })
-        assertEquals("支付方式取金額大的", "CREDIT_CARD", result.file.items.single().method)
         assertEquals("同一個月只留一筆，已完成優先", listOf("DONE"), result.file.actuals.map { it.status })
         assertEquals(listOf("plan:501:2026-01:15"), result.file.postedKeys.map { it.key })
+        // 舊檔的刷卡比例變成試算的付款假設：16,000 ÷ 25,000 = 64%（R-MIX-02）
+        assertEquals(64, result.file.settings?.forecastCardPercent)
     }
 
     @Test fun `識別碼升版只動 plan，其他原樣`() {

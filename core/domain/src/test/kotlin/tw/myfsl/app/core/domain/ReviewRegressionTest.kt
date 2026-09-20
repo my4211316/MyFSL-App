@@ -51,7 +51,7 @@ class ReviewRegressionTest {
     }
 
     @Test fun paymentWithAnotherMethodCountsTowardTheSameItem() {
-        val item = PlanItem(10, "Utilities", 1, FlowType.EXPENSE, method = PaymentMethod.CASH, dueDay = 15)
+        val item = PlanItem(10, "Utilities", 1, FlowType.EXPENSE, dueDay = 15)
         val s = base().copy(items = listOf(item), amountsByYear = mapOf(2026 to mapOf(
             PlanLine(10) to List(12) { 2000L }
         )), ledger = listOf(LedgerEntry(date = today.minusDays(4), type = FlowType.EXPENSE,
