@@ -173,33 +173,33 @@ class WriteGateTest {
     // ---------- P1-2：同 id、不同內容的兩份備份 ----------
 
     @Test fun `還原後舊世代的刪除、修改、新增（含關聯 id）都被拒絕，新世代照常`() = runBlocking {
-        val backupA = backup(1L to "A 的玉山", 2L to "A 的台新")
-        val backupB = backup(1L to "B 的國泰", 2L to "B 的中信")
+        val backupA = backup(1L to "A 的銀行", 2L to "A 的卡")
+        val backupB = backup(1L to "B 的銀行", 2L to "B 的卡")
         val s = setup(backupA)
         s.coordinator.recover()
         s.coordinator.restore(backupA)
         val oldGeneration = s.store.current()
-        assertEquals(mapOf(1L to "A 的玉山", 2L to "A 的台新"), s.store.rows)
+        assertEquals(mapOf(1L to "A 的銀行", 2L to "A 的卡"), s.store.rows)
 
         // 使用者在畫面 A 上開著編輯器，這時還原成 B（id 相同、內容不同）
         s.coordinator.restore(backupB)
         val newGeneration = s.store.current()
         assertTrue(newGeneration != oldGeneration)
         val afterRestore = s.store.rows.toMap()
-        assertEquals(mapOf(1L to "B 的國泰", 2L to "B 的中信"), afterRestore)
+        assertEquals(mapOf(1L to "B 的銀行", 2L to "B 的卡"), afterRestore)
 
         assertRejected("舊世代刪除") { s.gate.run(oldGeneration) { s.store.rows.remove(1L) } }
-        assertRejected("舊世代修改") { s.gate.run(oldGeneration) { s.store.rows[2L] = "A 的台新（改名）" } }
+        assertRejected("舊世代修改") { s.gate.run(oldGeneration) { s.store.rows[2L] = "A 的卡（改名）" } }
         assertRejected("舊世代新增（關聯 id 1）") { s.gate.run(oldGeneration) { s.store.rows[3L] = "掛在 ${s.store.rows[1L]} 底下" } }
         assertRejected("還沒拿到世代的畫面") { s.gate.run(FinanceSnapshot.NO_GENERATION) { s.store.rows.clear() } }
         assertEquals("B 的資料完全沒被動到", afterRestore, s.store.rows)
         assertEquals(List(4) { WriteGate.STALE }, s.notices.toList())
 
         // 重新讀到新資料的畫面：同樣的操作都成功
-        s.gate.run(newGeneration) { s.store.rows[2L] = "B 的中信（改名）" }
+        s.gate.run(newGeneration) { s.store.rows[2L] = "B 的卡（改名）" }
         s.gate.run(newGeneration) { s.store.rows[3L] = "掛在 ${s.store.rows[1L]} 底下" }
         s.gate.run(newGeneration) { s.store.rows.remove(1L) }
-        assertEquals(mapOf(2L to "B 的中信（改名）", 3L to "掛在 B 的國泰 底下"), s.store.rows)
+        assertEquals(mapOf(2L to "B 的卡（改名）", 3L to "掛在 B 的銀行 底下"), s.store.rows)
     }
 
     @Test fun `資料庫與設定的世代不一致時，帶世代和不帶世代的一般寫入都拒絕`() = runBlocking {

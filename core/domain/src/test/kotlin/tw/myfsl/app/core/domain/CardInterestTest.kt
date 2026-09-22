@@ -117,7 +117,7 @@ class CardInterestTest {
             CardRules.Cycle(LocalDate.of(2026, 9, 22), LocalDate.of(2026, 10, 7)),
             CardRules.cycle(YearMonth.of(2026, 9), 22, 7),
         )
-        assertEquals("樂天：5 日結帳、同月 26 日截止", LocalDate.of(2026, 9, 26), CardRules.cycle(YearMonth.of(2026, 9), 5, 26).due)
+        assertEquals("5 日結帳、同月 26 日截止（截止日在結帳日之後，所以是同一個月）", LocalDate.of(2026, 9, 26), CardRules.cycle(YearMonth.of(2026, 9), 5, 26).due)
         assertEquals(LocalDate.of(2027, 2, 28), CardRules.cycle(YearMonth.of(2027, 2), 31, 15).statement)
         val card = snapshot().account(CARD)!!
         assertEquals("9/1 最近一次結帳是 8/20", LocalDate.of(2026, 8, 20), CardRules.latestCycle(card, today)!!.statement)
@@ -213,18 +213,18 @@ class CardInterestTest {
         val s = base.copy(
             accounts = listOf(
                 base.accounts.first(),
-                Account(3, "台新", AccountKind.CREDIT_CARD, balance = 50_000, statementDay = 20, paymentDueDay = 5, card = terms(null)),
-                Account(4, "樂天", AccountKind.CREDIT_CARD, balance = 100_000, statementDay = 10, paymentDueDay = 28, card = terms(12.0)),
+                Account(3, "信用卡 A", AccountKind.CREDIT_CARD, balance = 50_000, statementDay = 20, paymentDueDay = 5, card = terms(null)),
+                Account(4, "信用卡 B", AccountKind.CREDIT_CARD, balance = 100_000, statementDay = 10, paymentDueDay = 28, card = terms(12.0)),
             ),
             ledger = listOf(paidBefore(4, 5_000, statementMonth = 6, dueDay = 28, dueMonth = 6)),
         )
         val dues = DueItems.list(s)
-        assertEquals("台新 9/5 全額繳 8/20 帳單", 50_000L, dues.single { it.key == "cardpay:3:2026-08" }.amount)
+        assertEquals("信用卡 A 9/5 全額繳 8/20 帳單", 50_000L, dues.single { it.key == "cardpay:3:2026-08" }.amount)
         dues.single { it.key == "cardpay:4:2026-09" }.run {
-            assertEquals("樂天 9/28 照上一期繳 5,000", 5_000L, amount)
+            assertEquals("信用卡 B 9/28 照上一期繳 5,000", 5_000L, amount)
             assertEquals("全額是 9/10 帳單 100,000", 100_000L, payOptions!!.full)
         }
-        assertTrue("台新 9/20：上一期繳清，不計息；樂天 9/10：上一期 8/28 就截止了，視為繳清", dues.none { it.kind == DueKind.CARD_INTEREST })
+        assertTrue("信用卡 A 9/20：上一期繳清，不計息；信用卡 B 9/10：上一期 8/28 就截止了，視為繳清", dues.none { it.kind == DueKind.CARD_INTEREST })
     }
 
     // ---------- 年度計畫表與帳戶頁 ----------
@@ -348,8 +348,8 @@ class CardInterestTest {
             today = LocalDate.of(2026, 9, 15),
             accounts = listOf(
                 base.accounts.first(),
-                Account(3, "台新", AccountKind.CREDIT_CARD, balance = 50_000, statementDay = 20, paymentDueDay = 5, card = terms(null)),
-                Account(4, "樂天", AccountKind.CREDIT_CARD, balance = 100_000, statementDay = 10, paymentDueDay = 28, card = terms(12.0)),
+                Account(3, "信用卡 A", AccountKind.CREDIT_CARD, balance = 50_000, statementDay = 20, paymentDueDay = 5, card = terms(null)),
+                Account(4, "信用卡 B", AccountKind.CREDIT_CARD, balance = 100_000, statementDay = 10, paymentDueDay = 28, card = terms(12.0)),
                 Account(5, "沒條件的卡", AccountKind.CREDIT_CARD, balance = 3_000),
             ),
             ledger = listOf(paidBefore(4, 5_000, statementMonth = 6, dueDay = 28, dueMonth = 6)),

@@ -31,8 +31,8 @@ class ReminderTest {
     private fun snapshot(today: LocalDate, days: List<Int> = listOf(7, 3)) = FinanceSnapshot.empty(today).copy(
         accounts = listOf(
             Account(BANK, "銀行", AccountKind.BANK, balance = 300_000),
-            Account(CARD, "台新", AccountKind.CREDIT_CARD, balance = 12_000, statementDay = 22, paymentDueDay = 7, card = CardTerms(payAccountId = BANK)),
-            Account(LOAN, "永豐", AccountKind.LOAN, balance = 2_000_000, loan = LoanTerms(8.7, 84, RepaymentMethod.EQUAL_PAYMENT, BANK, 18, 2_000_000)),
+            Account(CARD, "信用卡", AccountKind.CREDIT_CARD, balance = 12_000, statementDay = 22, paymentDueDay = 7, card = CardTerms(payAccountId = BANK)),
+            Account(LOAN, "信貸", AccountKind.LOAN, balance = 600_000, loan = LoanTerms(6.0, 60, RepaymentMethod.EQUAL_PAYMENT, BANK, 18, 600_000)),
         ),
         settings = AppSettings(autoPostFrom = LocalDate.of(2026, 9, 20).toEpochDay(), transferAccountId = BANK, reminderDays = days),
     )
@@ -40,7 +40,7 @@ class ReminderTest {
     @Test fun `截止日前 7 天與 3 天各提醒一次，其他天不提醒`() {
         Reminders.forDate(snapshot(LocalDate.of(2026, 9, 30))).single { it.id.startsWith("cardpay:") }.run {
             assertEquals("cardpay:2:2026-09:7", id)
-            assertEquals("繳 台新 還有 7 天截止", title)
+            assertEquals("繳 信用卡 還有 7 天截止", title)
             assertTrue(text, text.startsWith("10/7 截止，本期帳單 $12,000。"))
             assertNull(billCardId)
         }
@@ -49,9 +49,9 @@ class ReminderTest {
     }
 
     @Test fun `貸款月繳也提醒：金額是依攤還條件算的本期應繳`() {
-        val payment = LoanAmortization.firstPayment(2_000_000, 8.7, 84, RepaymentMethod.EQUAL_PAYMENT)
+        val payment = LoanAmortization.firstPayment(600_000, 6.0, 60, RepaymentMethod.EQUAL_PAYMENT)
         Reminders.forDate(snapshot(LocalDate.of(2026, 10, 11))).single { it.id.startsWith("loan:") }.run {
-            assertEquals("永豐 月繳 還有 7 天到期", title)
+            assertEquals("信貸 月繳 還有 7 天到期", title)
             assertTrue(text, text.startsWith("10/18 到期，本期要繳 ${MoneyFormat.currency(payment)}"))
         }
     }
@@ -69,7 +69,7 @@ class ReminderTest {
         val s = snapshot(LocalDate.of(2026, 9, 23))
         Reminders.forDate(s).single { it.id.startsWith("bill:") }.run {
             assertEquals("bill:2:2026-09", id)
-            assertEquals("台新 帳單已結帳", title)
+            assertEquals("信用卡 帳單已結帳", title)
             assertEquals(CARD, billCardId)
             assertTrue(text, text.startsWith("App 估計 $12,000，10/7 截止"))
         }

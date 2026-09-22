@@ -90,7 +90,7 @@ class AccountFormTest {
     @Test fun `信用卡：依帳單繳款不用選繳款方式，利率可以不填`() {
         val result = AccountForm.validate(
             AccountDraft(
-                name = "台新", kind = AccountKind.CREDIT_CARD, balance = "12000", statementDay = "22", payDay = "7",
+                name = "信用卡", kind = AccountKind.CREDIT_CARD, balance = "12000", statementDay = "22", payDay = "7",
                 scheduleEnabled = true,
             ),
             existing,
