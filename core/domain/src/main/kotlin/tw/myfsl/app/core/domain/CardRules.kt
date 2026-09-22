@@ -150,13 +150,24 @@ object CardRules {
      * 都必須用這個函式，不能重複用同一個 [PaymentAssumption]（V37-01、V37-02）。
      */
     fun assumptionFor(snapshot: FinanceSnapshot, card: Account, due: LocalDate): PaymentAssumption {
-        val base = assumption(snapshot, card)
+        val base = sourceOf(snapshot, card)
         if (base.source != PaymentAssumption.Source.PLANNED) return base
         val ym = YearMonth.from(due)
         return base.copy(amount = plannedPayment(snapshot, card.id, ym.year, ym.monthValue))
     }
 
-    fun assumption(snapshot: FinanceSnapshot, card: Account): PaymentAssumption {
+    /**
+     * 「**目前這一期**」的繳款推估：就是 [assumptionFor] 套在目前這一期的**截止日**上——
+     * 錢是那天出去的，所以「照計畫編的金額」要看截止日那個月編多少。
+     *
+     * 結帳月和截止月常常不同月（20 日結帳、次月 5 日截止）。以前這裡取結帳月，
+     * 於是「要留給卡費」「本月預計繳款」「試算的推估說明」都會用錯一個月（fdee72d 外部複審）。
+     */
+    fun assumption(snapshot: FinanceSnapshot, card: Account): PaymentAssumption =
+        assumptionFor(snapshot, card, latestCycle(card, snapshot.today)?.due ?: snapshot.today)
+
+    /** 推估的**來源**：和期別無關，只看使用者選的繳款計畫與既有紀錄；PLANNED 的金額由呼叫端按期別解析。 */
+    private fun sourceOf(snapshot: FinanceSnapshot, card: Account): PaymentAssumption {
         val (s, d) = cycleDays(card) ?: return PaymentAssumption(PaymentAssumption.Source.NO_RECORD)
         // 使用者自己決定怎麼繳時就照他的，不再從紀錄推估（R-CARD-27）。
         when (card.card?.paymentPlan) {
@@ -172,13 +183,8 @@ object CardRules {
                     PaymentAssumption(PaymentAssumption.Source.NO_RECORD, needsBill = true)
                 }
             }
-            CardPaymentPlan.PLANNED -> {
-                val ym = latestCycle(card, snapshot.today)?.yearMonth ?: YearMonth.from(snapshot.today)
-                return PaymentAssumption(
-                    PaymentAssumption.Source.PLANNED,
-                    plannedPayment(snapshot, card.id, ym.year, ym.monthValue),
-                )
-            }
+            // 金額由呼叫端按期別解析（[assumptionFor]）：這裡只決定來源。
+            CardPaymentPlan.PLANNED -> return PaymentAssumption(PaymentAssumption.Source.PLANNED)
             CardPaymentPlan.AUTO, null -> Unit
         }
         val prefix = "${tw.myfsl.app.core.model.PostingKeys.CARD_PAYMENT}${card.id}:"
