@@ -348,14 +348,10 @@ object BaselineBuilder {
                             amount = snapshot.statementOf(card.id, ym)?.minimumPayment ?: assumption.amount,
                             capToStatement = true,
                         )
-                        // 照計畫編的金額（R-CARD-27）：用**截止日那個月**編的金額，因為那才是現金出去的月份。
-                        CardRules.PaymentAssumption.Source.PLANNED -> {
-                            val at = Period.of(cycle.due)
-                            base.copy(
-                                amount = CardRules.plannedPayment(snapshot, card.id, at.year, at.month),
-                                capToStatement = true,
-                            )
-                        }
+                        // 照計畫編的金額（R-CARD-27）：逐期用截止日那個月編的金額，
+                        // 和本月到期共用 assumptionFor，不再各自算一次（V37-01）。
+                        CardRules.PaymentAssumption.Source.PLANNED ->
+                            base.copy(amount = CardRules.assumptionFor(snapshot, card, cycle.due).amount, capToStatement = true)
                     }
                 }
             }

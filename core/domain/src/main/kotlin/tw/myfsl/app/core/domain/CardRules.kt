@@ -142,6 +142,20 @@ object CardRules {
             .filter { it.type == FlowType.TRANSFER && it.toAccountId == cardId }
             .sumOf { item -> snapshot.plannedAmount(item.id, year, month) }
 
+    /**
+     * **某一期**的繳款推估（R-CARD-27）：選「照計畫編的金額」時，金額看**截止日那個月**編了多少
+     * ——錢是那個月從帳戶出去的。其他三種繳法和期別無關，直接回 [assumption]。
+     *
+     * [assumption] 只知道「目前這一期」，所以凡是要算某一期（本月到期的每一期、跨年逐月滾動）
+     * 都必須用這個函式，不能重複用同一個 [PaymentAssumption]（V37-01、V37-02）。
+     */
+    fun assumptionFor(snapshot: FinanceSnapshot, card: Account, due: LocalDate): PaymentAssumption {
+        val base = assumption(snapshot, card)
+        if (base.source != PaymentAssumption.Source.PLANNED) return base
+        val ym = YearMonth.from(due)
+        return base.copy(amount = plannedPayment(snapshot, card.id, ym.year, ym.monthValue))
+    }
+
     fun assumption(snapshot: FinanceSnapshot, card: Account): PaymentAssumption {
         val (s, d) = cycleDays(card) ?: return PaymentAssumption(PaymentAssumption.Source.NO_RECORD)
         // 使用者自己決定怎麼繳時就照他的，不再從紀錄推估（R-CARD-27）。

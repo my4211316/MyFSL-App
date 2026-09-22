@@ -76,6 +76,14 @@ class PlanTableTest {
         assertTrue(next.rows.first { it.label == "繳 信用卡 A" }.pastMonths.isEmpty())
     }
 
+    @Test fun `什麼時候付：逐卡逐貸款列加起來＝繳卡費＋貸款那一列（R-PLS-10）`() {
+        // 明細和合計必須是同一組數字，否則使用者一欄加起來會對不上（外部審閱 V37-03 就是這一類）
+        val rows = cash.rows.filter { it.kind == TableRowKind.ITEM && it.label.startsWith("繳 ") }
+        val perMonth = List(12) { m -> rows.sumOf { it.monthly[m] } }
+        assertEquals(cash.rows.first { it.label == "繳卡費＋貸款" }.monthly, perMonth)
+        assertEquals(PlanSummaryCalculator.summarize(snapshot, 2026).debtPayments, perMonth)
+    }
+
     @Test fun `什麼時候付：合計和「什麼時候花」用同一組結果（R-PLS-06）`() {
         fun total(t: PlanTable, label: String) = t.rows.first { it.label == label }.monthly
         assertEquals(summary.income, total(cash, "收入合計"))

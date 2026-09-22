@@ -379,7 +379,6 @@ object DueItems {
     private fun cardTasks(snapshot: FinanceSnapshot, through: LocalDate, inWindow: (LocalDate) -> Boolean, tasks: MutableList<Task>) {
         snapshot.activeCards.forEach { card ->
             val terms = card.card ?: return@forEach
-            val assumption = CardRules.assumption(snapshot, card)
             val payAccount = terms.payAccountId?.takeIf { id -> snapshot.activeAccounts.any { it.id == id && it.kind.isLiquid } }
                 ?: snapshot.methodAccountId(PaymentMethod.TRANSFER)
             val base = CardRules.baseBalance(snapshot, card)
@@ -399,6 +398,8 @@ object DueItems {
                 }
                 if (inWindow(cycle.due)) {
                     val payKey = cardPaymentKey(card.id, ym)
+                    // 推估要逐期算：「照計畫編的金額」看截止日那個月編多少（R-CARD-27、V37-01）
+                    val assumption = CardRules.assumptionFor(snapshot, card, cycle.due)
                     tasks += Task(cycle.due, 2, payKey) { state ->
                         val from = payAccount ?: return@Task null
                         val options = paymentOptions(snapshot, card, base, cycle, state.entries, state.balance(card.id))

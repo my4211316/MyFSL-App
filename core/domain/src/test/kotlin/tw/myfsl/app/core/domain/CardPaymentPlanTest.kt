@@ -94,10 +94,12 @@ class CardPaymentPlanTest {
         // 12 月 (30,763−30,000)×1.25% =  10 → 20,773
         assertEquals(773L, s.totalCardInterest)
         assertEquals(20_773L, s.cardDebtEnd)
-        // 使用者自己編的金額 12 個月都算：那不是 App 推估的，不受「只預測今天以後」限制（R-PLS-05）
-        assertEquals("30,000 × 12", 360_000L, s.totalCardPayments)
+        // 繳款金額要套還款上限（R-PAY-02），上限只有逐月滾動算得出來，所以和其他依帳單繳款的卡一樣
+        // 只算「有編計畫、而且今天以後」的月份（R-PLS-05）：今天 9/1，所以是 9–12 月。
+        assertEquals("30,000 × 4 期", 120_000L, s.totalCardPayments)
         assertEquals(listOf(30_000L, 30_000L, 30_000L, 30_000L), s.cardPayments.subList(8, 12))
-        assertEquals("不會算成兩筆：計畫列算過就不再由卡片加一次", listOf(30_000L, 30_000L), s.cardPayments.subList(0, 2))
+        assertEquals("過去的月份不再推估", listOf(0L, 0L), s.cardPayments.subList(0, 2))
+        assertEquals("逐卡列＝合計列（R-PLS-10）", s.cards.single().payments, s.totalCardPayments)
     }
 
     @Test fun `照計畫編的金額：試算在截止日那個月扣，金額看那個月編多少`() {
