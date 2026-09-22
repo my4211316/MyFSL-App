@@ -531,8 +531,6 @@ class EntryViewModel @Inject constructor(
     }
 
     private fun draftInstallment(snapshot: FinanceSnapshot, item: PlanItem, cardId: Long?, sel: Selection): CardInstallment {
-        val card = snapshot.account(cardId)
-        val payDay = card?.paymentDueDay
         return CardInstallment(
             cardAccountId = if (snapshot.settings.pickCard) cardId else null,
             itemId = item.id,
@@ -541,7 +539,7 @@ class EntryViewModel @Inject constructor(
             months = sel.installmentMonths,
             fee = sel.installmentFee,
             feeValue = sel.installmentFeeValue.trim().removeSuffix("%").replace(",", "").toDoubleOrNull() ?: 0.0,
-            firstPeriodIndex = InstallmentRules.firstPeriodIndex(snapshot.today, payDay),
+            firstPeriodIndex = InstallmentRules.firstPeriodIndex(snapshot.today),
             note = sel.note.trim(),
         )
     }

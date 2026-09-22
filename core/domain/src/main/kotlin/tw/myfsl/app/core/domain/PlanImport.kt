@@ -9,7 +9,6 @@ import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.PlanGroup
 import tw.myfsl.app.core.model.PlanItem
 import tw.myfsl.app.core.model.PlanLine
-import tw.myfsl.app.core.model.Timing
 import tw.myfsl.app.core.model.TrackingMode
 
 /** 匯入方式。 */
@@ -24,15 +23,15 @@ enum class ImportMode(val label: String) {
     ADD_ONLY("只新增"),
 }
 
-/** 一個要匯入的項目：項目本身＋12 個月金額（R-MIX-01：不分支付方式）。 */
+/** 一個要匯入的項目：項目本身＋各支付方式的 12 個月金額。 */
 data class ImportItem(
     val groupName: String,
     val item: PlanItem,
-    val amounts: List<Money>,
+    val amounts: Map<PaymentMethod?, List<Money>>,
     /** 這個項目來自檔案的哪幾列。 */
     val lines: List<Int>,
 ) {
-    val total: Money get() = amounts.sum()
+    val total: Money get() = amounts.values.sumOf { it.sum() }
 }
 
 data class ImportPreview(
@@ -43,9 +42,12 @@ data class ImportPreview(
     val issues: List<PlanIssue>,
 ) {
     val itemCount: Int get() = items.size
-    val lineCount: Int get() = items.size
+    val lineCount: Int get() = items.sumOf { it.amounts.size }
     val income: Money get() = items.filter { it.item.type == FlowType.INCOME }.sumOf { it.total }
     val expense: Money get() = items.filter { it.item.type == FlowType.EXPENSE }.sumOf { it.total }
+    val cardSpending: Money
+        get() = items.filter { it.item.type == FlowType.EXPENSE }
+            .sumOf { it.amounts[PaymentMethod.CREDIT_CARD]?.sum() ?: 0L }
     val errors: List<PlanIssue> get() = issues.filter { it.severity == Severity.ERROR }
     val canImport: Boolean get() = errors.isEmpty() && items.isNotEmpty()
 }
@@ -54,11 +56,12 @@ data class ImportPreview(
  * 年度計畫的 CSV 匯入與匯出。
  *
  * 一列是一個「項目 × 支付方式」，欄位順序貼近常見的年度預算表：
- * 群組、項目、類型、支付方式、時點、可調、追蹤、帳戶、轉入帳戶、備註、現行（年合計，選填）、1–12 月。
+ * 群組、項目、類型、支付方式、日期、可調、追蹤、帳戶、轉入帳戶、備註、現行（年合計，選填）、1–12 月。
+ * 舊表的「時點」欄（上半月／下半月）還可以匯入，只是會被忽略——現在一期就是一個月（R-PER-01）。
  */
 object PlanImport {
 
-    val COLUMNS = listOf("群組", "項目", "類型", "支付方式", "時點", "日期", "可調", "追蹤", "帳戶", "轉入帳戶", "備註", "現行") +
+    val COLUMNS = listOf("群組", "項目", "類型", "支付方式", "日期", "可調", "追蹤", "帳戶", "轉入帳戶", "備註", "現行") +
         (1..12).map { "${it}月" }
 
     private val MONTH_NAMES = listOf("一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二")
@@ -66,8 +69,8 @@ object PlanImport {
     /** 空白範本（含兩列示範）。 */
     fun template(): String = buildString {
         appendLine(COLUMNS.joinToString(","))
-        appendLine("收入,薪資,收入,,上半月,5,否,每月固定,薪轉帳戶,,,780000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000")
-        appendLine("生活,生活費,支出,現金,上下各半,,是,依記帳,,,錢包,108000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000")
+        appendLine("收入,薪資,收入,,5,否,每月固定,薪轉帳戶,,,780000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000")
+        appendLine("生活,生活費,支出,現金,,是,依記帳,,,錢包,108000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000")
     }
 
     /** 把目前的計畫匯出成同一個格式，可以在 Excel 改完再匯回來。 */
@@ -83,14 +86,15 @@ object PlanImport {
         return buildString {
             appendLine(COLUMNS.joinToString(","))
             items.filter { !it.archived }.forEach { item ->
-                run {
-                    val months = amounts[PlanLine(item.id)] ?: List(12) { 0L }
+                val lines = amounts.keys.filter { it.itemId == item.id }.sortedBy { it.method?.ordinal ?: -1 }
+                val rows = lines.ifEmpty { listOf(PlanLine(item.id, if (item.type == FlowType.EXPENSE) PaymentMethod.CASH else null)) }
+                rows.forEach { line ->
+                    val months = amounts[line] ?: List(12) { 0L }
                     val cells = listOf(
                         groupName[item.groupId].orEmpty(),
                         item.name,
                         item.type.label,
-                        "",
-                        item.timing.label,
+                        line.method?.label.orEmpty(),
                         item.dueDay?.toString().orEmpty(),
                         if (item.flexibility == Flexibility.FLEXIBLE) "是" else "否",
                         item.tracking.label,
@@ -136,6 +140,8 @@ object PlanImport {
         }
 
         val byKey = LinkedHashMap<Pair<String, String>, MutableImportItem>()
+        // 沒填支付方式的支出列（R-IMP-06）：當成現金，最後合併成一則提醒，不要一列一則。
+        val assumedCash = mutableListOf<Int>()
         rows.drop(1).forEach { (lineNumber, cells) ->
             fun cell(name: String): String = index[name]?.let { cells.getOrNull(it) }?.trim().orEmpty()
             val name = cell("項目")
@@ -170,9 +176,17 @@ object PlanImport {
                     if (it == null) issues += PlanIssue(Severity.ERROR, "第 $lineNumber 列的日期「$raw」要是 1 到 31")
                 }
             }
-            // 預算不分支付方式（R-MIX-01）：這一欄讀進來只是為了相容舊檔，不影響計畫。
-            if (cell("支付方式").isNotEmpty()) {
-                issues += PlanIssue(Severity.INFO, "第 $lineNumber 列的支付方式欄會被忽略；預算不分現金或刷卡")
+            // 支出沒填支付方式時當成現金：當月就付掉，是最保守的估法（R-IMP-06）。
+            // 不擋匯入——把人卡在門外不會讓他更清楚自己怎麼付錢，先算出水位、對不上再回來補。
+            val declaredMethod = paymentMethod(cell("支付方式"))
+            val method = if (type == FlowType.EXPENSE && declaredMethod == null) {
+                assumedCash += lineNumber
+                PaymentMethod.CASH
+            } else {
+                declaredMethod
+            }
+            if (type != FlowType.EXPENSE && cell("支付方式").isNotEmpty()) {
+                issues += PlanIssue(Severity.WARNING, "第 $lineNumber 列「$name」是${type.label}，支付方式會被忽略")
             }
 
             fun resolveAccount(column: String, label: String): Long? {
@@ -235,13 +249,12 @@ object PlanImport {
                         type = type,
                         accountId = accountId,
                         toAccountId = toAccountId,
-                        timing = timing(cell("時點")),
                         flexibility = if (yes(cell("可調"))) Flexibility.FLEXIBLE else Flexibility.FIXED,
                         tracking = tracking(cell("追蹤")),
                         note = cell("備註"),
                         dueDay = dueDay,
                     ),
-                    amounts = months.toMutableList(),
+                    amounts = linkedMapOf(method to months),
                     lines = mutableListOf(lineNumber),
                 )
             } else {
@@ -255,27 +268,36 @@ object PlanImport {
                         issues += PlanIssue(Severity.ERROR, "第 $lineNumber 列「$name」的${column}和前面那列（第 ${existing.lines.first()} 列）不一樣")
                     }
                 }
-                conflict("時點", timing(cell("時點")) == first.timing)
                 conflict("日期", dueDay == first.dueDay)
                 conflict("可調", (if (yes(cell("可調"))) Flexibility.FLEXIBLE else Flexibility.FIXED) == first.flexibility)
                 conflict("追蹤", tracking(cell("追蹤")) == first.tracking)
                 conflict("帳戶", accountId == first.accountId)
                 conflict("轉入帳戶", toAccountId == first.toAccountId)
-                // 預算不分支付方式（R-MIX-01）：同一個項目的多列直接相加成一列。
-                issues += PlanIssue(
-                    Severity.INFO,
-                    "「$name」有多列（第 ${existing.lines.joinToString("、")} 列與第 $lineNumber 列），金額會相加成一列",
-                )
-                for (m in 0 until 12) existing.amounts[m] = existing.amounts[m] + months[m]
+                if (existing.amounts.containsKey(method)) {
+                    issues += PlanIssue(
+                        Severity.ERROR,
+                        "「$name」的${method?.label ?: type.label}出現兩次（第 ${existing.lines.joinToString("、")} 列與第 $lineNumber 列）",
+                    )
+                } else {
+                    existing.amounts[method] = months
+                }
                 existing.lines += lineNumber
             }
         }
 
-        val items = byKey.values.map { ImportItem(it.groupName, it.item, it.amounts.toList(), it.lines.toList()) }
+        if (assumedCash.isNotEmpty()) {
+            issues += PlanIssue(
+                Severity.WARNING,
+                "有 ${assumedCash.size} 列沒填支付方式（第 ${assumedCash.joinToString("、")} 列），已當成現金：" +
+                    "當月就從帳戶扣。刷卡的請在「支付方式」欄填「信用卡」再匯一次，水位才算得準",
+            )
+        }
+
+        val items = byKey.values.map { ImportItem(it.groupName, it.item, it.amounts.toMap(), it.lines.toList()) }
         val existingGroups = groups.map { normalize(it.name) }.toSet()
         val newGroups = items.map { it.groupName }.distinct().filter { normalize(it) !in existingGroups }
         if (items.isNotEmpty()) {
-            issues += PlanIssue(Severity.INFO, "共 ${items.size} 個項目")
+            issues += PlanIssue(Severity.INFO, "共 ${items.size} 個項目、${items.sumOf { it.amounts.size }} 個計畫列")
             if (newGroups.isNotEmpty()) issues += PlanIssue(Severity.INFO, "會新增群組：${newGroups.joinToString("、")}")
         } else {
             issues += PlanIssue(Severity.ERROR, "檔案裡沒有可以匯入的項目")
@@ -285,8 +307,8 @@ object PlanImport {
 
     private class MutableImportItem(
         val groupName: String,
-        var item: PlanItem,
-        val amounts: MutableList<Money>,
+        val item: PlanItem,
+        val amounts: LinkedHashMap<PaymentMethod?, List<Money>>,
         val lines: MutableList<Int>,
     )
 
@@ -343,7 +365,6 @@ object PlanImport {
         "項目" to listOf("項目", "名稱", "科目"),
         "類型" to listOf("類型", "收支", "種類"),
         "支付方式" to listOf("支付方式", "付款", "付款方式", "支付"),
-        "時點" to listOf("時點", "時間", "上下半月"),
         "日期" to listOf("日期", "發生日", "扣款日", "幾號"),
         "可調" to listOf("可調", "可調整", "彈性"),
         "追蹤" to listOf("追蹤", "追蹤方式", "控管"),
@@ -395,12 +416,6 @@ object PlanImport {
         "信用卡", "刷卡", "card" -> PaymentMethod.CREDIT_CARD
         "轉帳", "轉", "transfer" -> PaymentMethod.TRANSFER
         else -> null
-    }
-
-    private fun timing(raw: String): Timing = when (normalize(raw)) {
-        "上半月", "上", "月初" -> Timing.FIRST_HALF
-        "下半月", "下", "月底" -> Timing.SECOND_HALF
-        else -> Timing.SPLIT
     }
 
     private fun tracking(raw: String): TrackingMode = when (normalize(raw)) {

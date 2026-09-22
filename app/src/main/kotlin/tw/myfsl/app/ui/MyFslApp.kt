@@ -261,8 +261,8 @@ fun MyFslApp() {
                 PeriodScreen(
                     state = state,
                     onStartCheckIn = { navController.navigate("checkin") },
-                    onOpenForecast = {
-                        navController.navigate(Tab.FORECAST.route) {
+                    onOpenPlan = {
+                        navController.navigate(Tab.PLAN.route) {
                             popUpTo(Tab.ENTRY.route)
                             launchSingleTop = true
                         }
@@ -400,6 +400,13 @@ fun MyFslApp() {
                     onAddItem = viewModel::startNew,
                     onEditItem = viewModel::edit,
                     onShowTable = viewModel::setShowTable,
+                    onTableView = viewModel::setTableView,
+                    onOpenForecast = {
+                        navController.navigate(Tab.FORECAST.route) {
+                            popUpTo(Tab.ENTRY.route)
+                            launchSingleTop = true
+                        }
+                    },
                     editorContent = { editor ->
                         PlanItemEditorForm(
                             editor = editor,
@@ -408,7 +415,11 @@ fun MyFslApp() {
                             accounts = state.accounts,
                             onChange = viewModel::change,
                             onType = viewModel::setType,
+                            onAddLine = viewModel::addLine,
+                            onRemoveLine = viewModel::removeLine,
+                            onMethod = viewModel::setMethod,
                             onMonth = viewModel::setMonth,
+                            onToggleLine = viewModel::toggleLine,
                             onQuickFill = viewModel::quickFill,
                             onSave = viewModel::saveItem,
                             onCancel = viewModel::cancelEdit,

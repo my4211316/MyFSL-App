@@ -1,7 +1,6 @@
 package tw.myfsl.app.core.domain
 
 import tw.myfsl.app.core.model.AccountKind
-import tw.myfsl.app.core.model.Half
 import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.Period
 import org.junit.Assert.assertEquals
@@ -10,7 +9,7 @@ import org.junit.Test
 
 class CashFlowEngineTest {
 
-    private val start = Period(2026, 9, Half.FIRST)
+    private val start = Period(2026, 9)
     private val second = start.next()
     private val pool = CashFlowEngine.FALLBACK_CARD_ID
 
@@ -21,7 +20,7 @@ class CashFlowEngineTest {
     private val cash = AccountSeed(2, "現金", AccountKind.CASH, 0)
     private val card = AccountSeed(pool, "信用卡", AccountKind.CREDIT_CARD, 0)
 
-    @Test fun `保守最低水位：同一半月內支出算在收入之前`() {
+    @Test fun `每月水位就是月底餘額（R-PER-01）`() {
         val events = listOf(
             FlowEvent(start, EventKind.INCOME, 50_000, "薪資", toAccountId = 1),
             FlowEvent(start, EventKind.EXPENSE, 15_000, "現金支出", fromAccountId = 1),
@@ -32,15 +31,15 @@ class CashFlowEngineTest {
         )
         val result = CashFlowEngine.run(input(listOf(bank, card), events))
         val (p1, p2) = result.periods
-        assertEquals(85_000L, p1.liquidLow)
+        // 9 月：100,000 + 50,000 − 15,000 = 135,000
         assertEquals(135_000L, p1.liquidEnd)
         assertEquals(10_000L, p1.cardDebtEnd)
-        assertEquals(105_000L, p2.liquidLow)
+        // 10 月：135,000 − 15,000（現金支出）− 15,000（繳卡費）= 105,000
         assertEquals(105_000L, p2.liquidEnd)
         assertEquals(5_000L, p2.cardDebtEnd)
         assertEquals(20_000L, result.periods.sumOf { it.cardSpending })
         assertEquals(15_000L, p2.cardPayments)
-        assertEquals(p1, result.lowest)
+        assertEquals(p2, result.lowest)
         assertEquals(0L, result.structuralGapPerYear)
     }
 
@@ -50,7 +49,7 @@ class CashFlowEngineTest {
         val p = result.periods.single()
         assertEquals(0L, p.liquidOut)
         assertEquals(0L, p.liquidIn)
-        assertEquals(100_000L, p.liquidLow)
+        assertEquals(100_000L, p.liquidEnd)
         assertEquals(70_000L, p.balances[1])
         assertEquals(30_000L, p.balances[2])
     }
@@ -63,7 +62,7 @@ class CashFlowEngineTest {
         )
         val accounts = listOf(bank.copy(balance = 10_000), card.copy(balance = 105_000), loan)
         val p = CashFlowEngine.run(input(accounts, events, periods = 1)).periods.single()
-        assertEquals(105_000L, p.liquidLow)
+        assertEquals(105_000L, p.liquidEnd)
         assertEquals(200_000L, p.borrowing)
         assertEquals(105_000L, p.debtPayoff)
         assertEquals(0L, p.cardPayments)
@@ -87,7 +86,7 @@ class CashFlowEngineTest {
         )
         val result = CashFlowEngine.run(input(listOf(bank, loan), events, periods = 1))
         assertEquals(3_000L, result.totalPrincipalRepaid)
-        assertEquals(168_000L, result.structuralGapPerYear)
+        assertEquals("(10,000 − 3,000) × 12 ÷ 1 期", 84_000L, result.structuralGapPerYear)
         assertEquals(97_000L, result.endLoanDebt)
     }
 

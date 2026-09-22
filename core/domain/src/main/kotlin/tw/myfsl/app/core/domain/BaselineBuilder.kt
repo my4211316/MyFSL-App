@@ -6,7 +6,6 @@ import tw.myfsl.app.core.model.CardPayMode
 import tw.myfsl.app.core.model.FinanceSnapshot
 import tw.myfsl.app.core.model.FlowType
 import tw.myfsl.app.core.model.Flexibility
-import tw.myfsl.app.core.model.Half
 import tw.myfsl.app.core.model.InstallmentPeriod
 import tw.myfsl.app.core.model.ItemActual
 import tw.myfsl.app.core.model.LedgerEntry
@@ -16,7 +15,6 @@ import tw.myfsl.app.core.model.Period
 import tw.myfsl.app.core.model.PlanItem
 import tw.myfsl.app.core.model.PlanLine
 import tw.myfsl.app.core.model.TrackingMode
-import tw.myfsl.app.core.model.split
 import java.time.YearMonth
 
 data class ItemActualView(
@@ -30,7 +28,13 @@ object ActualCalculator {
 
     /**
      * 項目某月至今的實際金額 = 當月這個項目記帳的合計（含對帳差額、到期確認、到期記下）。
-     * 不分支付方式（R-MIX-01）：怎麼付的都算在同一筆預算裡。
+     *
+     * **不分支付方式**（R-MIX-01）：怎麼付的都算在同一筆預算裡，所以計畫編現金、實際刷卡付
+     * 也算進這個項目，不會變成「計畫外支出」。進度條、記帳提示、這個月還剩都用這個數字。
+     *
+     * 要知道錢**什麼時候**離開帳戶（現金當月扣、刷卡隔月繳）時改用 [actualForMethod]：
+     * 那是現金流的問題，要看同一種支付方式的記帳，不能用項目合計去猜。
+     *
      * 分期各期入帳的本金不算（消費當月已經算過全額）；延期付款算在原本的月份以外，不在這裡。
      */
     fun actualFor(
@@ -39,35 +43,55 @@ object ActualCalculator {
         month: Int,
         actuals: List<ItemActual>,
         ledger: List<LedgerEntry>,
-    ): ItemActualView {
-        val status = actuals.firstOrNull {
-            it.itemId == itemId && it.year == year && it.month == month
-        }?.status
-        val entries = ledger.filter {
+    ): ItemActualView = view(entriesOf(itemId, year, month, ledger), statusOf(itemId, year, month, actuals))
+
+    /**
+     * 項目某月、**某一種支付方式**至今的實際金額（R-MIX-01）：現金流預測用。
+     * 計畫列是「項目 × 支付方式」，所以現金列看現金的記帳、刷卡列看刷卡的記帳，各算各的。
+     */
+    fun actualForMethod(
+        itemId: Long,
+        method: PaymentMethod?,
+        year: Int,
+        month: Int,
+        actuals: List<ItemActual>,
+        ledger: List<LedgerEntry>,
+    ): ItemActualView =
+        view(entriesOf(itemId, year, month, ledger).filter { it.method == method }, statusOf(itemId, year, month, actuals))
+
+    private fun statusOf(itemId: Long, year: Int, month: Int, actuals: List<ItemActual>): ActualStatus? =
+        actuals.firstOrNull { it.itemId == itemId && it.year == year && it.month == month }?.status
+
+    private fun entriesOf(itemId: Long, year: Int, month: Int, ledger: List<LedgerEntry>): List<LedgerEntry> =
+        ledger.filter {
             it.itemId == itemId && it.countsForBudget &&
                 it.postingKey?.startsWith(tw.myfsl.app.core.model.PostingKeys.DEFERRAL) != true &&
                 it.budgetMonth.year == year && it.budgetMonth.monthValue == month
         }
-        return ItemActualView(
-            amount = entries.sumOf { it.amount },
-            status = status,
-            reported = status != null || entries.isNotEmpty(),
-        )
-    }
+
+    private fun view(entries: List<LedgerEntry>, status: ActualStatus?) = ItemActualView(
+        amount = entries.sumOf { it.amount },
+        status = status,
+        reported = status != null || entries.isNotEmpty(),
+    )
 }
 
 /**
- * 產生「現況」基準線（R-FC）：從今天所在的半月開始，只放**今天以後**才會發生的事。
+ * 產生「現況」基準線（R-FC）：從今天所在的月份開始，只放**今天以後**才會發生的事。
  *
  * - 起始餘額為各帳戶目前推算的餘額；每張信用卡各自一個帳戶，未指定卡片的刷卡算在預設卡片。
+ * - 一期就是一個月（R-PER-01）：計畫金額整筆放在那個月，不管有沒有填付款日、也不分攤到哪一天。
+ *   日期只用在本月到期、提醒與卡片的結帳週期（R-PER-02）。
+ * - **支付方式看計畫列自己寫的**（R-MIX-01）：現金與轉帳當月從帳戶扣，刷卡進卡片、等繳卡費才動到現金。
+ *   這是使用者編預算時的決定，App 不推估。
  * - 到期項目（R-DUE）：起算日（含）以前到期的視為已在餘額裡；之後到期、已經記下的不再預測；
- *   到期了還沒記下的放在今天所在的半月，還沒到期的依到期日放。
+ *   到期了還沒記下的放在今天所在的月份。
  * - 每月固定的項目本月以前看到期清單；依記帳、回報、確認的項目本月放「計畫 − 已發生」。
  * - 延期款項獨立列出，金額固定。
  */
 object BaselineBuilder {
 
-    fun build(snapshot: FinanceSnapshot, periodCount: Int = snapshot.settings.horizonMonths * 2): ForecastInput {
+    fun build(snapshot: FinanceSnapshot, periodCount: Int = snapshot.settings.horizonMonths): ForecastInput {
         val today = snapshot.today
         val start = Period.of(today)
         val end = start.index + periodCount
@@ -91,7 +115,6 @@ object BaselineBuilder {
         }
         val input = ForecastInput(start, periodCount, seeds, emptyList(), snapshot.settings.safetyLevel, methodAccounts)
         val events = ArrayList<FlowEvent>()
-        val mix = PaymentAssumption.of(snapshot)
 
         val months = Period.range(start, periodCount).map { it.yearMonth }.distinct()
         val currentMonth = YearMonth.from(today)
@@ -100,29 +123,30 @@ object BaselineBuilder {
             for (item in snapshot.items) {
                 if (!snapshot.isItemActiveIn(item, ym.year, ym.monthValue)) continue
                 // 繳給已依合約自動繳款的卡片或貸款：除非標成額外還款，否則不計（R-PAY-01）。
-                if (item.type == FlowType.TRANSFER && snapshot.isAutoManagedDebt(item.toAccountId) && !item.extraRepayment) continue
-                val planned = snapshot.plannedAmount(item.id, ym.year, ym.monthValue)
-                if (planned <= 0) continue
+                if (!snapshot.countsAsOwnTransfer(item)) continue
+                // 計畫列是「項目 × 支付方式」（R-MIX-01）：每一列各自算，現金列看現金的記帳、刷卡列看刷卡的記帳。
+                val byMethod = snapshot.plannedByMethod(item.id, ym.year, ym.monthValue)
+                if (byMethod.isEmpty()) continue
                 if (item.tracking == TrackingMode.AUTO) {
-                    // 每月固定：本月以前看到期清單（還沒記下的才算，見 addDueItems）；之後的月份依到期日放。
+                    // 每月固定：本月以前看到期清單（還沒記下的才算，見 addDueItems）；之後的月份整筆放在那個月。
                     if (!ym.isAfter(currentMonth)) continue
-                    item.occurrences(ym.year, ym.monthValue, planned)
-                        .forEach { (date, amount) -> events.addPlanned(item, mix, Period.of(date), amount, input, end) }
+                    byMethod.forEach { (method, amount) ->
+                        events.addIfInRange(item, method, Period.of(ym), amount, input, end)
+                    }
                     continue
                 }
-                var monthAmount = planned
-                if (ym == currentMonth) {
-                    val actual = ActualCalculator.actualFor(item.id, ym.year, ym.monthValue, snapshot.actuals, snapshot.ledger)
-                    monthAmount = when (actual.status) {
-                        ActualStatus.DONE, ActualStatus.POSTPONED -> 0
-                        else -> (planned - actual.amount).coerceAtLeast(0)
+                byMethod.forEach { (method, planned) ->
+                    var monthAmount = planned
+                    if (ym == currentMonth) {
+                        val actual = ActualCalculator
+                            .actualForMethod(item.id, method, ym.year, ym.monthValue, snapshot.actuals, snapshot.ledger)
+                        monthAmount = when (actual.status) {
+                            ActualStatus.DONE, ActualStatus.POSTPONED -> 0
+                            else -> (planned - actual.amount).coerceAtLeast(0)
+                        }
                     }
-                }
-                if (monthAmount <= 0L) continue
-                // 已經過了的發生日，剩下的額度移到今天所在的半月。
-                item.occurrences(ym.year, ym.monthValue, monthAmount).forEach { (date, amount) ->
-                    val period = if (date.isAfter(today)) Period.of(date) else start
-                    events.addPlanned(item, mix, period, amount, input, end)
+                    if (monthAmount <= 0L) return@forEach
+                    events.addIfInRange(item, method, Period.of(ym), monthAmount, input, end)
                 }
             }
         }
@@ -148,28 +172,6 @@ object BaselineBuilder {
         add(toEvent(item, method, period, amount, input).copy(source = source))
     }
 
-    /**
-     * 依項目的支付結構放入事件（R-MIX-02）：支出照刷卡比例拆成「刷卡」與「非刷卡」兩筆，
-     * 比例是 0 或 1 時只會有一筆；收入與轉帳不分支付方式。
-     */
-    private fun MutableList<FlowEvent>.addPlanned(
-        item: PlanItem,
-        mix: PaymentAssumptionMix,
-        period: Period,
-        amount: Money,
-        input: ForecastInput,
-        endIndex: Int,
-        source: EventSource = EventSource.PLAN,
-    ) {
-        if (item.type != FlowType.EXPENSE) {
-            addIfInRange(item, null, period, amount, input, endIndex, source)
-            return
-        }
-        val (card, rest) = mix.split(amount)
-        addIfInRange(item, PaymentMethod.CREDIT_CARD, period, card, input, endIndex, source)
-        addIfInRange(item, mix.rest, period, rest, input, endIndex, source)
-    }
-
     /** 下一個到期日：本月的 [day] 還沒到就是本月，否則下個月（短月份取月底）。 */
     fun nextDue(today: java.time.LocalDate, day: Int): java.time.LocalDate {
         val ym = YearMonth.from(today)
@@ -179,7 +181,7 @@ object BaselineBuilder {
         return next.atDay(day.coerceIn(1, next.lengthOfMonth()))
     }
 
-    /** 本月以前每月固定、還沒記下的到期項目：到期了放今天所在的半月，還沒到期的依到期日放。 */
+    /** 本月以前每月固定、還沒記下的到期項目：到期了放今天所在的月份，還沒到期的依到期月份放。 */
     private fun addDueItems(snapshot: FinanceSnapshot, input: ForecastInput, endIndex: Int, events: MutableList<FlowEvent>) {
         DueItems.list(snapshot).filter { it.kind == DueKind.PLAN }.forEach { due ->
             val item = due.item ?: return@forEach
@@ -187,11 +189,11 @@ object BaselineBuilder {
         }
     }
 
-    /** 到期日所在的期別；已經到期（還沒記下）的放在今天所在的半月。 */
+    /** 到期日所在的月份；已經到期（還沒記下）的放在今天所在的月份。 */
     private fun periodFor(snapshot: FinanceSnapshot, date: java.time.LocalDate, input: ForecastInput): Period =
         if (date.isAfter(snapshot.today)) Period.of(date) else input.start
 
-    /** 延期款項（R-DEF）：未付清的，在到期月份（已過期的算在本期）依項目時點放入。 */
+    /** 延期款項（R-DEF）：未付清的整筆放在到期月份，已過期的算在本期。 */
     private fun addDeferrals(snapshot: FinanceSnapshot, input: ForecastInput, endIndex: Int, events: MutableList<FlowEvent>) {
         val today = snapshot.today
         snapshot.deferrals.filter { !it.settled && it.amount > 0 }.forEach { deferral ->
@@ -202,9 +204,7 @@ object BaselineBuilder {
             if (!due.isAfter(YearMonth.from(today))) {
                 events.addIfInRange(item, method, input.start, deferral.amount, input, endIndex, EventSource.DEFERRAL)
             } else {
-                item.occurrences(due.year, due.monthValue, deferral.amount).forEach { (date, amount) ->
-                    events.addIfInRange(item, method, Period.of(date), amount, input, endIndex, EventSource.DEFERRAL)
-                }
+                events.addIfInRange(item, method, Period.of(due), deferral.amount, input, endIndex, EventSource.DEFERRAL)
             }
         }
     }
@@ -237,7 +237,7 @@ object BaselineBuilder {
         )
 
     /**
-     * 分期：還沒入帳的每期（R-DUE；到期了還沒記下的放今天所在的半月）。本金不再算成支出（刷卡當月已算過預算），手續費算成支出。
+     * 分期：還沒入帳的每期（R-DUE；到期了還沒記下的放今天所在的月份）。本金不再算成支出（刷卡當月已算過預算），手續費算成支出。
      * 回傳試算期間之後才入帳的本金（依卡片），期末總負債要算進去。
      */
     private fun addInstallments(snapshot: FinanceSnapshot, input: ForecastInput, endIndex: Int, events: MutableList<FlowEvent>): Map<Long, Money> {
@@ -348,6 +348,14 @@ object BaselineBuilder {
                             amount = snapshot.statementOf(card.id, ym)?.minimumPayment ?: assumption.amount,
                             capToStatement = true,
                         )
+                        // 照計畫編的金額（R-CARD-27）：用**截止日那個月**編的金額，因為那才是現金出去的月份。
+                        CardRules.PaymentAssumption.Source.PLANNED -> {
+                            val at = Period.of(cycle.due)
+                            base.copy(
+                                amount = CardRules.plannedPayment(snapshot, card.id, at.year, at.month),
+                                capToStatement = true,
+                            )
+                        }
                     }
                 }
             }

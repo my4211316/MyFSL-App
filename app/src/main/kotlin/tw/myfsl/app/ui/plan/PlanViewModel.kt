@@ -4,6 +4,8 @@ import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import tw.myfsl.app.core.data.FinanceRepository
+import tw.myfsl.app.core.domain.CashOutlook
+import tw.myfsl.app.core.domain.CashOutlookCalculator
 import tw.myfsl.app.core.domain.TextDecoding
 import tw.myfsl.app.core.domain.ImportMode
 import tw.myfsl.app.core.domain.ImportPreview
@@ -16,6 +18,7 @@ import tw.myfsl.app.core.domain.PlanItemForm
 import tw.myfsl.app.core.domain.PlanSummary
 import tw.myfsl.app.core.domain.PlanSummaryCalculator
 import tw.myfsl.app.core.domain.PlanTable
+import tw.myfsl.app.core.domain.PlanTableView
 import tw.myfsl.app.core.domain.PlanTableBuilder
 import tw.myfsl.app.core.domain.PlanValidator
 import tw.myfsl.app.core.model.Account
@@ -64,6 +67,8 @@ data class ImportState(
 @Immutable
 data class ItemEditor(
     val draft: PlanItemDraft,
+    /** 展開中的計畫列（項目 × 支付方式）；null 表示全部收起。 */
+    val expandedLine: Int? = 0,
     val errors: Map<String, String> = emptyMap(),
     val warnings: List<String> = emptyList(),
     /** 已經有記帳，類型不能改（R-EDT-11）。 */
@@ -87,7 +92,11 @@ data class PlanUiState(
     val accounts: List<Account> = emptyList(),
     val message: String? = null,
     val showTable: Boolean = false,
+    /** 年表要回答哪個問題（R-PLS-10）：什麼時候花／什麼時候付。 */
+    val tableView: PlanTableView = PlanTableView.SPEND,
     val table: PlanTable? = null,
+    /** 未來現金水位（R-PLS-09）：照這份計畫走下去，每個月底還剩多少。 */
+    val outlook: CashOutlook? = null,
 )
 
 @HiltViewModel
@@ -101,6 +110,7 @@ class PlanViewModel @Inject constructor(
         val editor: ItemEditor? = null,
         val message: String? = null,
         val showTable: Boolean = false,
+        val tableView: PlanTableView = PlanTableView.SPEND,
     )
 
     private val local = MutableStateFlow(Local())
@@ -115,13 +125,13 @@ class PlanViewModel @Inject constructor(
         val rows = snapshot.activeItems
             .sortedWith(compareBy({ groups[it.groupId]?.sortOrder ?: Int.MAX_VALUE }, { it.sortOrder }))
             .map { item ->
-                val months = amounts[PlanLine(item.id)]
+                val lines = snapshot.planLines(item.id, year)
                 PlanRow(
                     itemId = item.id,
                     groupName = groups[item.groupId]?.name.orEmpty(),
                     itemName = item.name,
-                    detail = detailOf(item),
-                    total = months?.sum() ?: 0L,
+                    detail = detailOf(item, lines),
+                    total = lines.sumOf { line -> amounts[line]?.sum() ?: 0L },
                 )
             }
         return PlanUiState(
@@ -136,15 +146,31 @@ class PlanViewModel @Inject constructor(
             accounts = snapshot.activeAccounts,
             message = local.message,
             showTable = local.showTable,
-            table = if (local.showTable && snapshot.activeItems.isNotEmpty()) PlanTableBuilder.build(snapshot, year) else null,
+            tableView = local.tableView,
+            table = if (local.showTable && snapshot.activeItems.isNotEmpty()) {
+                PlanTableBuilder.build(snapshot, year, local.tableView)
+            } else {
+                null
+            },
+            outlook = if (snapshot.activeAccounts.isEmpty() && snapshot.activeItems.isEmpty()) null else CashOutlookCalculator.build(snapshot),
         )
     }
 
     fun setShowTable(show: Boolean) = local.update { it.copy(showTable = show) }
 
-    /** 列的說明文字。計畫不帶支付方式（R-MIX-01）。 */
-    private fun detailOf(item: PlanItem): String =
-        listOf(item.type.label, item.timing.label, item.flexibility.label, item.tracking.label).joinToString(" · ")
+    fun setTableView(view: PlanTableView) = local.update { it.copy(tableView = view) }
+
+    /** 列的說明文字。支出把計畫列用到的支付方式列出來（R-MIX-01），例如「現金＋信用卡」。 */
+    private fun detailOf(item: PlanItem, lines: List<PlanLine>): String {
+        val methods = lines.mapNotNull { it.method }.distinct().joinToString("＋") { it.label }.takeIf { it.isNotEmpty() }
+        return listOfNotNull(
+            item.type.label,
+            methods,
+            item.dueDay?.let { "每月 $it 號" },
+            item.flexibility.label,
+            item.tracking.label,
+        ).joinToString(" · ")
+    }
 
     fun previousYear() = local.update { it.copy(year = (it.year ?: state.value.year) - 1) }
 
@@ -184,17 +210,36 @@ class PlanViewModel @Inject constructor(
 
     fun setType(type: FlowType) = change { PlanItemForm.changeType(it, type) }
 
-    fun setMonth(month: Int, value: String) = change { PlanItemForm.setMonth(it, month, value) }
+    /** 加一條支付方式列（R-EDT-06），例如生活費除了現金再加一條刷卡。 */
+    fun addLine(method: PaymentMethod) = local.update { current ->
+        val editor = current.editor ?: return@update current
+        val draft = PlanItemForm.addLine(editor.draft, method)
+        current.copy(editor = editor.copy(draft = draft, expandedLine = draft.lines.lastIndex))
+    }
+
+    fun removeLine(index: Int) = local.update { current ->
+        val editor = current.editor ?: return@update current
+        current.copy(editor = editor.copy(draft = PlanItemForm.removeLine(editor.draft, index), expandedLine = 0))
+    }
+
+    fun setMethod(index: Int, method: PaymentMethod) = change { PlanItemForm.setMethod(it, index, method) }
+
+    fun setMonth(index: Int, month: Int, value: String) = change { PlanItemForm.setMonth(it, index, month, value) }
+
+    fun toggleLine(index: Int) = local.update { current ->
+        val editor = current.editor ?: return@update current
+        current.copy(editor = editor.copy(expandedLine = if (editor.expandedLine == index) null else index))
+    }
 
     /** 金額快捷：12 個月同額／年金額平分／清空（R-EDT-01）。 */
-    fun quickFill(kind: QuickFill, amountText: String) = change { draft ->
+    fun quickFill(index: Int, kind: QuickFill, amountText: String) = change { draft ->
         val amount = amountText.replace(",", "").trim().toLongOrNull() ?: 0L
         val months = when (kind) {
             QuickFill.EVERY_MONTH -> PlanEditRules.everyMonth(amount)
             QuickFill.SPREAD_YEAR -> PlanEditRules.spreadYear(amount)
             QuickFill.CLEAR -> PlanEditRules.clear()
         }
-        PlanItemForm.fill(draft, months)
+        PlanItemForm.fill(draft, index, months)
     }
 
     fun cancelEdit() = local.update { it.copy(editor = null) }

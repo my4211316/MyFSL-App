@@ -40,7 +40,7 @@ data class Comparison(
 object ForecastComparisonCalculator {
 
     fun compare(snapshot: FinanceSnapshot, scenarios: List<Scenario>, months: Int): Comparison {
-        val base = BaselineBuilder.build(snapshot, months * 2)
+        val base = BaselineBuilder.build(snapshot, months)
         val baseResult = CashFlowEngine.run(base)
         val labels = baseResult.periods.map { it.period }.distinctBy { it.yearMonth }.map { ForecastSummary.shortLabel(it) }
         val outcomes = listOf(outcome(null, "現況", baseResult)) +
@@ -64,7 +64,7 @@ object ForecastComparisonCalculator {
 
     /** 反推：選定項目要減多少才能達成目標。 */
     fun seek(snapshot: FinanceSnapshot, months: Int, itemIds: Set<Long>, target: GoalTarget, fromMonthOffset: Int = 1): GoalSeekResult {
-        val base = BaselineBuilder.build(snapshot, months * 2)
+        val base = BaselineBuilder.build(snapshot, months)
         val from = maxOf(ScenarioForm.indexFor(snapshot.today, fromMonthOffset), Period.of(snapshot.today).index)
         return GoalSeeker.seek(base, itemIds, target, from)
     }

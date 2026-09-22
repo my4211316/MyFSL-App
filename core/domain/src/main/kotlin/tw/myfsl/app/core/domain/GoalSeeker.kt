@@ -57,7 +57,7 @@ object GoalSeeker {
         val all = run(100.0)
         if (!meets(all)) {
             val early = target is GoalTarget.MinLiquid &&
-                all.periods.filter { it.period.index < fromIndex }.any { it.liquidLow < target.amount }
+                all.periods.filter { it.period.index < fromIndex }.any { it.liquidEnd < target.amount }
             return resultFor(100.0).copy(lowBeforeStart = early)
         }
 
@@ -78,7 +78,7 @@ object GoalSeeker {
             .filter { it.source == EventSource.PLAN && it.itemId in itemIds && it.period.index >= fromIndex }
             .groupBy { it.itemId!! }
             .mapValues { (_, events) ->
-                Math.round(events.sumOf { it.amount } * percent / 100.0 * 24 / input.periodCount)
+                Math.round(events.sumOf { it.amount } * percent / 100.0 * 12 / input.periodCount)
             }
     }
 }

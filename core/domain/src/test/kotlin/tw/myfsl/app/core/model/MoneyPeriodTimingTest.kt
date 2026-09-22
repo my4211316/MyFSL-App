@@ -31,38 +31,42 @@ class MoneyPeriodTimingTest {
         assertNull(MoneyFormat.parse("abc"))
     }
 
-    @Test fun `日期換算半月：15 日含在上半月`() {
-        assertEquals(Period(2026, 9, Half.FIRST), Period.of(LocalDate.of(2026, 9, 1)))
-        assertEquals(Period(2026, 9, Half.FIRST), Period.of(LocalDate.of(2026, 9, 15)))
-        assertEquals(Period(2026, 9, Half.SECOND), Period.of(LocalDate.of(2026, 9, 16)))
-        assertEquals(Period(2026, 9, Half.SECOND), Period.of(LocalDate.of(2026, 9, 30)))
+    @Test fun `日期換算期別：一期就是一個月`() {
+        assertEquals(Period(2026, 9), Period.of(LocalDate.of(2026, 9, 1)))
+        assertEquals(Period(2026, 9), Period.of(LocalDate.of(2026, 9, 15)))
+        assertEquals(Period(2026, 9), Period.of(LocalDate.of(2026, 9, 16)))
+        assertEquals(Period(2026, 9), Period.of(LocalDate.of(2026, 9, 30)))
+        assertEquals(Period(2026, 10), Period.of(LocalDate.of(2026, 10, 1)))
     }
 
     @Test fun `期別加減與跨年`() {
-        val sep = Period(2026, 9, Half.FIRST)
-        assertEquals(Period(2026, 9, Half.SECOND), sep.plus(1))
-        assertEquals(Period(2026, 10, Half.FIRST), sep.plus(2))
-        assertEquals(Period(2027, 1, Half.FIRST), Period(2026, 12, Half.SECOND).next())
-        assertEquals(Period(2026, 12, Half.SECOND), Period(2027, 1, Half.FIRST).plus(-1))
-        listOf(sep, Period(2028, 2, Half.SECOND), Period(2030, 12, Half.SECOND)).forEach {
+        val sep = Period(2026, 9)
+        assertEquals(Period(2026, 10), sep.plus(1))
+        assertEquals(Period(2026, 11), sep.plus(2))
+        assertEquals(Period(2027, 1), Period(2026, 12).next())
+        assertEquals(Period(2026, 12), Period(2027, 1).plus(-1))
+        listOf(sep, Period(2028, 2), Period(2030, 12)).forEach {
             assertEquals(it, Period.fromIndex(it.index))
         }
-        assertEquals(48, Period.range(sep, 48).size)
-        assertEquals(Period(2028, 8, Half.SECOND), Period.range(sep, 48).last())
+        assertEquals(24, Period.range(sep, 24).size)
+        assertEquals(Period(2028, 8), Period.range(sep, 24).last())
     }
 
     @Test fun `期別標籤與起訖日（含閏年二月）`() {
-        assertEquals("9月上", Period(2026, 9, Half.FIRST).label)
-        assertEquals("2026年9月上半月", Period(2026, 9, Half.FIRST).fullLabel)
-        assertEquals(LocalDate.of(2028, 2, 16), Period(2028, 2, Half.SECOND).startDate)
-        assertEquals(LocalDate.of(2028, 2, 29), Period(2028, 2, Half.SECOND).endDate)
-        assertEquals(LocalDate.of(2026, 9, 15), Period(2026, 9, Half.FIRST).endDate)
+        assertEquals("9月", Period(2026, 9).label)
+        assertEquals("2026年9月", Period(2026, 9).fullLabel)
+        assertEquals(LocalDate.of(2028, 2, 1), Period(2028, 2).startDate)
+        assertEquals(LocalDate.of(2028, 2, 29), Period(2028, 2).endDate)
+        assertEquals(LocalDate.of(2026, 9, 30), Period(2026, 9).endDate)
     }
 
-    @Test fun `時點拆分：平分時奇數的一元在下半月`() {
-        assertEquals(4_500L to 4_501L, Timing.SPLIT.split(9_001))
-        assertEquals(9_000L to 0L, Timing.FIRST_HALF.split(9_000))
-        assertEquals(0L to 9_000L, Timing.SECOND_HALF.split(9_000))
-        assertEquals(4_501L, Timing.SPLIT.amountIn(Half.SECOND, 9_001))
+    @Test fun `付款日：有填才有到期日，短月份取月底`() {
+        val undated = PlanItem(1, "生活費", 5, FlowType.EXPENSE)
+        assertNull(undated.dueDateIn(2026, 9))
+        val on5th = undated.copy(dueDay = 5)
+        assertEquals(LocalDate.of(2026, 9, 5), on5th.dueDateIn(2026, 9))
+        val on31st = undated.copy(dueDay = 31)
+        assertEquals(LocalDate.of(2026, 2, 28), on31st.dueDateIn(2026, 2))
+        assertEquals(LocalDate.of(2028, 2, 29), on31st.dueDateIn(2028, 2))
     }
 }

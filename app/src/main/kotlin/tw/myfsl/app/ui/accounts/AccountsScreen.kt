@@ -47,6 +47,7 @@ import tw.myfsl.app.core.domain.AccountForm.Field
 import tw.myfsl.app.core.domain.CardView
 import tw.myfsl.app.core.domain.LoanView
 import tw.myfsl.app.core.model.Account
+import tw.myfsl.app.core.model.CardPaymentPlan
 import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.MoneyFormat
 import tw.myfsl.app.core.model.RepaymentMethod
@@ -258,7 +259,21 @@ private fun cardLines(card: CardView): List<String> = buildList {
             terms.revolvingRatePercent?.let { "循環年利率 ${trim(it)}%" },
             card.interest.takeIf { it > 0 }?.let { "下期利息約 ${MoneyFormat.currency(it)}" },
         ).takeIf { it.isNotEmpty() }?.let { add(it.joinToString(" · ")) }
-        card.assumption?.let { add("試算：" + it.describe(card.account.name).substringAfter("：")) }
+        card.assumption?.let { assumption ->
+            add(
+                if (terms.paymentPlan == CardPaymentPlan.AUTO) {
+                    // 還沒決定怎麼繳：講清楚這是 App 推估的（R-CARD-26）
+                    "試算：" + assumption.describe(card.account.name).substringAfter("：")
+                } else {
+                    // 使用者自己編的繳款計畫（R-CARD-27）：這是他的決定，不是假設
+                    "每期繳：" + terms.paymentPlan.label + when {
+                        assumption.amount > 0 -> "（這一期 ${MoneyFormat.currency(assumption.amount)}）"
+                        terms.paymentPlan == CardPaymentPlan.MINIMUM -> "（還沒輸入帳單，先當全額繳清）"
+                        else -> ""
+                    }
+                },
+            )
+        }
     }
     if (card.monthSpending > 0) add("本月已刷 ${MoneyFormat.currency(card.monthSpending)}")
 }
@@ -352,6 +367,7 @@ private fun CardFields(draft: AccountDraft, errors: Map<String, String>, payAcco
             error = errors[Field.RATE], number = true,
             supporting = "沒繳清時計息用；每期都繳清的卡可以不填。有欠款的卡，建好後請輸入最近一期帳單。",
         )
+        PaymentPlanPicker(draft.paymentPlan) { plan -> onChange { it.copy(paymentPlan = plan) } }
         PayAccountPicker(draft.payAccountId, payAccounts, null) { id -> onChange { it.copy(payAccountId = id) } }
     }
 }
@@ -371,6 +387,22 @@ private fun LoanFields(draft: AccountDraft, errors: Map<String, String>, payAcco
         FieldLabel("攤還方式")
         SegmentedChoice(RepaymentMethod.entries, draft.loanMethod, { it.label }, { m -> onChange { it.copy(loanMethod = m) } })
         PayAccountPicker(draft.payAccountId, payAccounts, errors[Field.PAY_ACCOUNT]) { id -> onChange { it.copy(payAccountId = id) } }
+    }
+}
+
+/**
+ * 每期打算繳多少（R-CARD-27）：預算編列的決定，不是系統機制。
+ * 預設「照紀錄推估」——剛開始用的人不需要先決定下一期怎麼繳（R-CARD-26）。
+ */
+@Composable
+private fun PaymentPlanPicker(selected: CardPaymentPlan, onSelect: (CardPaymentPlan) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+        FieldLabel("每期繳多少")
+        ChoiceChips(CardPaymentPlan.entries, { selected == it }, { it.label }, onSelect)
+        HintText(selected.hint)
+        if (selected == CardPaymentPlan.PLANNED) {
+            HintText("在「計畫」新增一個轉帳項目、轉入這張卡，就可以逐月編金額。")
+        }
     }
 }
 

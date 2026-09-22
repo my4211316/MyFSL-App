@@ -10,7 +10,6 @@ import tw.myfsl.app.core.model.EntrySource
 import tw.myfsl.app.core.model.FinanceSnapshot
 import tw.myfsl.app.core.model.Flexibility
 import tw.myfsl.app.core.model.FlowType
-import tw.myfsl.app.core.model.Half
 import tw.myfsl.app.core.model.LedgerEntry
 import tw.myfsl.app.core.model.Money
 import tw.myfsl.app.core.model.MonthlyAmounts
@@ -21,7 +20,6 @@ import tw.myfsl.app.core.model.PlanItem
 import tw.myfsl.app.core.model.PlanLine
 import tw.myfsl.app.core.model.RepaymentMethod
 import tw.myfsl.app.core.model.ScenarioChange
-import tw.myfsl.app.core.model.Timing
 import tw.myfsl.app.core.model.TrackingMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -41,10 +39,10 @@ import java.time.YearMonth
 class CardInterestTest {
 
     private val today = LocalDate.of(2026, 9, 1)
-    private val sep1 = Period(2026, 9, Half.FIRST)
-    private val sep2 = Period(2026, 9, Half.SECOND)
-    private val oct1 = Period(2026, 10, Half.FIRST)
-    private val oct2 = Period(2026, 10, Half.SECOND)
+    private val sep1 = Period(2026, 9)
+    private val sep2 = Period(2026, 9)
+    private val oct1 = Period(2026, 10)
+    private val oct2 = Period(2026, 10)
 
     private val BANK = 1L
     private val CARD = 3L
@@ -69,7 +67,8 @@ class CardInterestTest {
     ): FinanceSnapshot {
         val amounts: MonthlyAmounts = buildMap {
             put(PlanLine(SALARY), List(12) { 80_000L })
-            if (living > 0) put(PlanLine(LIVING), List(12) { living })
+            // 這一組測的是刷卡之後的計息與繳款，所以生活費整列編在信用卡（R-MIX-01）。
+            if (living > 0) put(PlanLine(LIVING, PaymentMethod.CREDIT_CARD), List(12) { living })
             if (payCardPlan > 0) put(PlanLine(PAY_CARD), List(12) { payCardPlan })
         }
         return FinanceSnapshot(
@@ -83,22 +82,21 @@ class CardInterestTest {
             ),
             groups = listOf(PlanGroup(1, "收入", 1), PlanGroup(5, "生活", 5), PlanGroup(8, "繳款", 8)),
             items = listOfNotNull(
-                PlanItem(SALARY, "薪資", 1, FlowType.INCOME, accountId = BANK, timing = Timing.FIRST_HALF, dueDay = 5),
+                PlanItem(SALARY, "薪資", 1, FlowType.INCOME, accountId = BANK, dueDay = 5),
                 PlanItem(
                     LIVING, "生活費", 5, FlowType.EXPENSE,
-                    timing = Timing.SPLIT, flexibility = Flexibility.FLEXIBLE, tracking = TrackingMode.LEDGER,
+                    flexibility = Flexibility.FLEXIBLE, tracking = TrackingMode.LEDGER,
                 )
                     .takeIf { living > 0 },
-                PlanItem(PAY_CARD, "繳信用卡", 8, FlowType.TRANSFER, accountId = BANK, toAccountId = CARD, timing = Timing.FIRST_HALF, dueDay = 5)
+                PlanItem(PAY_CARD, "繳信用卡", 8, FlowType.TRANSFER, accountId = BANK, toAccountId = CARD, dueDay = 5)
                     .takeIf { payCardPlan > 0 },
             ),
             amountsByYear = mapOf(2026 to amounts, 2027 to amounts, 2028 to amounts),
             actuals = emptyList(),
             ledger = listOfNotNull(paying?.let { paidBefore(CARD, it) }),
-            // 這一組測的是刷卡之後的計息與繳款，所以假設計畫的支出全部刷卡（R-MIX-02）。
             settings = AppSettings(
                 safetyLevel = 0, horizonMonths = 24, autoPostFrom = today.toEpochDay(),
-                transferAccountId = BANK, forecastCardPercent = 100,
+                transferAccountId = BANK,
             ),
         )
     }
@@ -181,10 +179,8 @@ class CardInterestTest {
         val assumption = CardRules.assumption(s, s.account(CARD)!!)
         val outlook = CardRules.outlook(400_000, s.account(CARD)!!.card!!, assumption, monthlySpending = 0)
         assertEquals("(400,000 − 3,000) × 1.25%", 4_963L, outlook.interest)
-        assertEquals(
-            "繳的錢還不夠付循環利息 $4,963，卡債只會變多；每月至少要多繳 $1,963 卡債才不會再增加",
-            CardRules.warning(outlook),
-        )
+        assertTrue("繳 3,000 還不夠付利息 4,963", outlook.growing)
+        assertEquals("每月至少要多繳這麼多，卡債才不會再增加", 1_963L, outlook.extraToStop)
         assertNull("永遠還不完", CardRules.monthsToClear(400_000, s.account(CARD)!!.card!!, assumption))
     }
 
@@ -193,7 +189,7 @@ class CardInterestTest {
         val p1 = result.periods.first { it.period == sep1 }
         assertEquals(0L, p1.cardInterest)
         assertEquals(18_000L, p1.cardPayments)
-        assertEquals(392_000L, p1.cardDebtEnd)
+        assertEquals("400,000 ＋ 一整個月刷的 20,000 − 繳 18,000", 402_000L, p1.cardDebtEnd)
         assertEquals(0L, result.totalCardInterest)
     }
 
@@ -201,7 +197,7 @@ class CardInterestTest {
         val payoff = run(
             snapshot(),
             listOf(
-                ScenarioChange.AddLoan("整合貸款", 420_000, 6.5, 60, RepaymentMethod.EQUAL_PAYMENT, sep1.index, BANK, BANK, Half.SECOND),
+                ScenarioChange.AddLoan("整合貸款", 420_000, 6.5, 60, RepaymentMethod.EQUAL_PAYMENT, sep1.index, BANK, BANK),
                 ScenarioChange.PayOffDebts(listOf(CARD), BANK, sep1.index),
                 ScenarioChange.ChangeMethod(listOf(LIVING), PaymentMethod.CREDIT_CARD, PaymentMethod.CASH, sep1.index),
             ),
@@ -235,11 +231,22 @@ class CardInterestTest {
 
     @Test fun `計畫表：只繳一部分的卡以推估金額估算利息、繳款與卡債變化`() {
         val summary = PlanSummaryCalculator.summarize(snapshot(), 2026)
-        assertEquals("(400,000 − 18,000) × 1.25% = 4,775 × 12", 57_300L, summary.totalCardInterest)
+        // 今天是 2026/9：卡費只預測 9–12 月（R-PLS-05），計畫的刷卡則是整年 12 個月。
+        assertEquals(listOf(9, 10, 11, 12), summary.autoMonths)
+        // 欠款逐月滾動（R-PLS-06）：每個月刷 20,000、繳 18,000，沒繳清的部分才計息，所以利息逐月變大。
+        // 9 月 (400,000 − 18,000) × 1.25% = 4,775；之後 4,860、4,945、5,032，合計 19,612。
+        assertEquals(19_612L, summary.totalCardInterest)
         assertEquals(240_000L, summary.totalCardSpending)
-        assertEquals(216_000L, summary.totalCardPayments)
-        assertEquals("刷卡 240,000 ＋ 利息 57,300 − 繳款 216,000", 81_300L, summary.cardDebtIncrease)
-        assertEquals("960,000 − 240,000 − 57,300", 662_700L, summary.structuralGap)
+        assertEquals("18,000 × 4 個月", 72_000L, summary.totalCardPayments)
+        assertEquals("年底 427,612 − 年初 400,000", 27_612L, summary.cardDebtChange)
+        assertEquals(400_000L, summary.cardDebtStart)
+        assertEquals(427_612L, summary.cardDebtEnd)
+        assertEquals("卡債變多，標題要跟著方向走（R-PLS-07）", "卡債全年增加", summary.cardDebtLabel)
+        // 支出＝實際要繳出去的錢：全部刷卡，所以只有繳卡費 72,000 真的離開帳戶（R-PLS-04）
+        assertEquals("960,000 − 72,000", 888_000L, summary.structuralGap)
+        // 刷得比繳的多，本金是負的（卡債在長大）：0 ＋（72,000 − 19,612 − 240,000）
+        assertEquals(-187_612L, summary.debtPrincipal)
+        assertEquals("不算還本金：960,000 − 240,000 − 19,612", 700_388L, summary.gapWithoutPrincipal)
         // 全額的卡：不計息
         assertEquals(0L, PlanSummaryCalculator.summarize(snapshot(cardTerms = terms(null), paying = null), 2026).totalCardInterest)
     }
@@ -249,9 +256,12 @@ class CardInterestTest {
         val messages = PlanValidator.validate(both, 2026).map { it.message }
         assertTrue(messages.any { it == "「繳信用卡」不計入：「信用卡」已依合約自動繳款。若這是額外還款，請在項目勾選「額外還款」" })
         assertTrue(
-            messages.any { it == "「信用卡」每月刷 $20,000、利息 $4,775，繳 $18,000 不夠；每月至少要多繳 $6,775 卡債才不會再增加" },
+            messages.toString(),
+            messages.any {
+                it == "「信用卡」這一年刷 $80,000、利息 $19,612，繳 $72,000 不夠：年底欠款會從 $400,000 變成 $427,612"
+            },
         )
-        assertTrue(PlanValidator.validate(snapshot(cardTerms = terms(null), paying = null), 2026).none { it.message.contains("才不會再增加") })
+        assertTrue(PlanValidator.validate(snapshot(cardTerms = terms(null), paying = null), 2026).none { it.message.contains("年底欠款會從") })
     }
 
     @Test fun `帳戶頁：目前這一期的帳單、預計繳款、帳單上的最低應繳`() {

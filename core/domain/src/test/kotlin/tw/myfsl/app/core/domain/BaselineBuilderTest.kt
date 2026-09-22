@@ -7,20 +7,18 @@ import org.junit.Test
 import tw.myfsl.app.core.model.ActualStatus
 import tw.myfsl.app.core.model.Deferral
 import tw.myfsl.app.core.model.FlowType
-import tw.myfsl.app.core.model.Half
 import tw.myfsl.app.core.model.ItemActual
 import tw.myfsl.app.core.model.LedgerEntry
 import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.Period
 import tw.myfsl.app.core.model.PlanLine
 import tw.myfsl.app.core.sample.SampleHousehold
+import tw.myfsl.app.core.sample.SampleHousehold.LIVING
 import tw.myfsl.app.core.sample.SampleHousehold.BANK
 import tw.myfsl.app.core.sample.SampleHousehold.CARD_A
 import tw.myfsl.app.core.sample.SampleHousehold.CARD_B
 import tw.myfsl.app.core.sample.SampleHousehold.CASH
 import tw.myfsl.app.core.sample.SampleHousehold.CAR_SERVICE
-import tw.myfsl.app.core.sample.SampleHousehold.FOOD_CASH
-import tw.myfsl.app.core.sample.SampleHousehold.LIVING
 import tw.myfsl.app.core.sample.SampleHousehold.LOAN
 import tw.myfsl.app.core.sample.SampleHousehold.PAY_CARD_B
 import tw.myfsl.app.core.sample.SampleHousehold.PHONE
@@ -30,9 +28,8 @@ import java.time.LocalDate
 
 class BaselineBuilderTest {
 
-    private val sep1 = Period(2026, 9, Half.FIRST)
-    private val sep2 = Period(2026, 9, Half.SECOND)
-    private val oct1 = Period(2026, 10, Half.FIRST)
+    private val sep = Period(2026, 9)
+    private val oct = Period(2026, 10)
     private val snapshot = SampleHousehold.snapshot()
 
     private fun FlowEvent.key() = Triple(itemId, method, period)
@@ -44,8 +41,8 @@ class BaselineBuilderTest {
         assertEquals(CASH, input.methodAccounts[PaymentMethod.CASH])
         assertEquals(BANK, input.methodAccounts[PaymentMethod.TRANSFER])
         assertEquals("預設卡片 = 排序第一張", CARD_A, input.methodAccounts[PaymentMethod.CREDIT_CARD])
-        assertEquals(sep1, input.start)
-        assertEquals(48, input.periodCount)
+        assertEquals(sep, input.start)
+        assertEquals(24, input.periodCount)
 
         val unassigned = BaselineBuilder.build(snapshot.copy(unassignedCardSpending = 800))
         assertEquals(60_800L, unassigned.accounts.single { it.id == CARD_A }.balance)
@@ -55,31 +52,27 @@ class BaselineBuilderTest {
 
     @Test fun `依記帳的項目本月扣掉已花費，已過的發生日移到今天所在的半月`() {
         val byKey = BaselineBuilder.build(snapshot).events.groupBy { it.key() }.mapValues { (_, list) -> list.sumOf { it.amount } }
-        // 現金伙食 9,000 − 4,400 = 4,600，上下各半
-        assertEquals(2_300L, byKey[Triple(FOOD_CASH, PaymentMethod.CASH, sep1)])
-        assertEquals(2_300L, byKey[Triple(FOOD_CASH, PaymentMethod.CASH, sep2)])
-        // 生活費 16,000 − 9,800 = 6,200，上下各半
-        assertEquals(3_100L, byKey[Triple(LIVING, PaymentMethod.CASH, sep1)])
-        assertEquals(3_100L, byKey[Triple(LIVING, PaymentMethod.CASH, sep2)])
-        assertEquals("10 月沒有記帳，整月照計畫：現金伙食 9,000 上下各半", 4_500L, byKey[Triple(FOOD_CASH, PaymentMethod.CASH, oct1)])
-        assertEquals("生活費 16,000 上下各半", 8_000L, byKey[Triple(LIVING, PaymentMethod.CASH, oct1)])
+        // 一期就是一個月（R-PER-01）：剩下的額度整筆算在這個月，不再拆上下半月。
+        // 生活費編了兩列：現金 9,000、信用卡 16,000（R-MIX-01），各自扣自己那一邊的記帳。
+        assertEquals("現金列 9,000 − 4,400", 4_600L, byKey[Triple(LIVING, PaymentMethod.CASH, sep)])
+        assertEquals("信用卡列 16,000 − 9,800", 6_200L, byKey[Triple(LIVING, PaymentMethod.CREDIT_CARD, sep)])
+        assertEquals("10 月沒有記帳，整月照計畫", 9_000L, byKey[Triple(LIVING, PaymentMethod.CASH, oct)])
+        assertEquals(16_000L, byKey[Triple(LIVING, PaymentMethod.CREDIT_CARD, oct)])
     }
 
     @Test fun `每月固定：起算日（今天）以前的視為已在餘額裡，只預測今天以後的發生日（手算：9／14）`() {
         val events = BaselineBuilder.build(snapshot).events
-        // 手機網路：上半月、沒填日期 → 每月 1 號。9/1 已過（已入帳或包含在校正餘額），不再預測。
-        assertTrue(events.none { it.itemId == PHONE && it.period.yearMonth == sep1.yearMonth })
-        // 付款假設是「全部當現金付」，所以從現金帳戶扣（R-MIX-02）。
-        assertEquals(CASH, events.first { it.itemId == PHONE && it.period == oct1 }.fromAccountId)
-        // 薪資：15 號 → 9/15 還沒到，放在上半月。
-        val salary = events.single { it.itemId == SALARY && it.period.yearMonth == sep1.yearMonth }
-        assertEquals(sep1, salary.period)
+        // 手機網路：每月 1 號。9/1 已過（已入帳或包含在校正餘額），不再預測。
+        assertTrue(events.none { it.itemId == PHONE && it.period == sep })
+        // 手機網路編在信用卡列，所以記在卡片上、不是當月從現金扣（R-MIX-01）。
+        assertEquals(CARD_A, events.first { it.itemId == PHONE && it.period == oct }.fromAccountId)
+        // 薪資：15 號 → 9/15 還沒到，算在 9 月。
+        val salary = events.single { it.itemId == SALARY && it.period == sep }
         assertEquals(BANK, salary.toAccountId)
-        // 繳 B 卡（B 卡沒設循環條件）：下半月 → 16 號，照計畫轉帳。
-        val payB = events.single { it.itemId == PAY_CARD_B && it.period.yearMonth == sep1.yearMonth }
-        assertEquals(sep2, payB.period)
+        // 繳 B 卡（B 卡沒設循環條件）：20 號，照計畫轉帳。
+        val payB = events.single { it.itemId == PAY_CARD_B && it.period == sep }
         assertEquals(CARD_B, payB.toAccountId)
-        assertEquals(12_000L, events.single { it.itemId == CAR_SERVICE && it.period == sep2 }.amount)
+        assertEquals(12_000L, events.single { it.itemId == CAR_SERVICE && it.period == sep }.amount)
     }
 
     @Test fun `已過的繳款日不再扣一次：貸款 5 號、今天 14 號，第一期從下個月開始`() {
@@ -87,11 +80,11 @@ class BaselineBuilderTest {
             accounts = snapshot.accounts.map { if (it.id == LOAN) it.copy(loan = it.loan!!.copy(payDay = 5)) else it },
         )
         val loanEvents = BaselineBuilder.build(paidOn5th).events.filter { it.relatedAccountId == LOAN }
-        assertTrue("9/5 已扣過，不能再出現在 9 月", loanEvents.none { it.period.yearMonth == sep1.yearMonth })
-        assertEquals(oct1, loanEvents.minOf { it.period })
+        assertTrue("9/5 已扣過，不能再出現在 9 月", loanEvents.none { it.period == sep })
+        assertEquals(oct, loanEvents.minOf { it.period })
 
-        // 原本 20 號：9/20 還沒到，第一期在 9 月下半月
-        val loan = BaselineBuilder.build(snapshot).events.filter { it.relatedAccountId == LOAN && it.period == sep2 }
+        // 原本 20 號：9/20 還沒到，第一期算在 9 月
+        val loan = BaselineBuilder.build(snapshot).events.filter { it.relatedAccountId == LOAN && it.period == sep }
         assertEquals(10_757L, loan.single { it.kind == EventKind.TRANSFER }.amount)
         assertEquals(3_750L, loan.single { it.kind == EventKind.EXPENSE }.amount)
     }
@@ -99,13 +92,13 @@ class BaselineBuilderTest {
     @Test fun `逐卡排程：依帳單繳款的 A 卡依自己的結帳日與截止日，B 卡沒有`() {
         val input = BaselineBuilder.build(snapshot)
         val cardA = input.events.filter { it.relatedAccountId == CARD_A && it.source == EventSource.CARD_SCHEDULE }
-        // 9/15 截止（上半月）：自由繳 18,000；9/1 那期帳單 = 60,000 − 9/1 之後刷的 9,800 = 50,200
-        assertEquals(18_000L, cardA.filter { it.period == sep1 }.single { it.kind == EventKind.TRANSFER }.amount)
+        // 9/15 截止：自由繳 18,000；9/1 那期帳單 = 60,000 − 9/1 之後刷的 9,800 = 50,200
+        assertEquals(18_000L, cardA.filter { it.period == sep }.single { it.kind == EventKind.TRANSFER }.amount)
         assertEquals(50_200L, input.openStatements[CARD_A])
-        // 10/1 結帳：和 10/15 截止同一個半月，計息與結帳提前
-        val oct1 = cardA.filter { it.period == Period(2026, 10, Half.FIRST) }
-        oct1.single { it.interestRatePercent != null }.run { assertEquals(15.0, interestRatePercent!!, 0.0); assertTrue(statementEarly) }
-        assertTrue(oct1.single { it.statementOf == CARD_A }.statementEarly)
+        // 10/1 結帳、10/15 截止落在同一個月：計息與結帳提前（R-ORD-01）
+        val october = cardA.filter { it.period == Period(2026, 10) }
+        october.single { it.interestRatePercent != null }.run { assertEquals(15.0, interestRatePercent!!, 0.0); assertTrue(statementEarly) }
+        assertTrue(october.single { it.statementOf == CARD_A }.statementEarly)
         assertTrue(input.events.none { it.relatedAccountId == CARD_B && it.source == EventSource.CARD_SCHEDULE })
     }
 
@@ -124,48 +117,53 @@ class BaselineBuilderTest {
     @Test fun `今天在下半月：已過的都不再預測，依記帳的剩餘全部在下半月`() {
         val late = snapshot.copy(today = LocalDate.of(2026, 9, 20))
         val events = BaselineBuilder.build(late).events
-        assertEquals(sep2, BaselineBuilder.build(late).start)
-        assertTrue(events.none { it.itemId == SALARY && it.period.yearMonth == sep1.yearMonth })
-        assertEquals(4_600L, events.filter { it.itemId == FOOD_CASH && it.method == PaymentMethod.CASH && it.period == sep2 }.sumOf { it.amount })
+        assertEquals(sep, BaselineBuilder.build(late).start)
+        assertTrue("薪資 15 號已過", events.none { it.itemId == SALARY && it.period == sep })
+        assertEquals(4_600L, events.filter { it.itemId == LIVING && it.method == PaymentMethod.CASH && it.period == sep }.sumOf { it.amount })
     }
 
     @Test fun `到期確認：已完成移除當月；延期改由延期款放到到期月份`() {
         val done = snapshot.copy(actuals = listOf(ItemActual(CAR_SERVICE, 2026, 9, ActualStatus.DONE, snapshot.today)))
         val doneEvents = BaselineBuilder.build(done).events
-        assertTrue(doneEvents.none { it.itemId == CAR_SERVICE && it.period.yearMonth == sep1.yearMonth })
-        assertTrue("明年同月不受影響", doneEvents.any { it.itemId == CAR_SERVICE && it.period == Period(2027, 9, Half.SECOND) })
+        assertTrue(doneEvents.none { it.itemId == CAR_SERVICE && it.period == sep })
+        assertTrue("明年同月不受影響", doneEvents.any { it.itemId == CAR_SERVICE && it.period == Period(2027, 9) })
 
         val postponed = snapshot.copy(
             actuals = listOf(ItemActual(SUBSIDY, 2026, 9, ActualStatus.POSTPONED, snapshot.today)),
             deferrals = listOf(Deferral(1, SUBSIDY, null, 2026, 9, 2026, 10, 5_000)),
         )
         val events = BaselineBuilder.build(postponed).events
-        assertTrue(events.none { it.itemId == SUBSIDY && it.period.yearMonth == sep1.yearMonth })
+        assertTrue(events.none { it.itemId == SUBSIDY && it.period == sep })
         val deferred = events.single { it.itemId == SUBSIDY && it.source == EventSource.DEFERRAL }
-        assertEquals(oct1, deferred.period)
+        assertEquals(oct, deferred.period)
         assertEquals(5_000L, deferred.amount)
 
         // 已經過期還沒付的延期款放在本期；付清的不再出現
         val overdue = postponed.copy(deferrals = listOf(Deferral(1, SUBSIDY, null, 2026, 7, 2026, 8, 5_000)))
-        assertEquals(sep1, BaselineBuilder.build(overdue).events.single { it.source == EventSource.DEFERRAL }.period)
+        assertEquals(sep, BaselineBuilder.build(overdue).events.single { it.source == EventSource.DEFERRAL }.period)
         val settled = postponed.copy(deferrals = postponed.deferrals.map { it.copy(settled = true) })
         assertTrue(BaselineBuilder.build(settled).events.none { it.source == EventSource.DEFERRAL })
     }
 
     @Test fun `實際金額就是當月這個項目記帳的合計，不分支付方式`() {
-        val view = ActualCalculator.actualFor(FOOD_CASH, 2026, 9, snapshot.actuals, snapshot.ledger)
-        assertEquals("3,775 + 120（漏記差額）+ 420 + 85", 4_400L, view.amount)
+        val view = ActualCalculator.actualFor(LIVING, 2026, 9, snapshot.actuals, snapshot.ledger)
+        assertEquals("現金 4,400 ＋ 刷卡 9,800", 14_200L, view.amount)
         assertTrue(view.reported)
         assertEquals(null, view.status)
+
+        // 現金流要一列一列看：現金列只比對現金記帳、信用卡列只比對刷卡記帳（R-MIX-01）
+        fun byMethod(method: PaymentMethod) =
+            ActualCalculator.actualForMethod(LIVING, method, 2026, 9, snapshot.actuals, snapshot.ledger).amount
+        assertEquals("3,775 + 120（漏記差額）+ 420 + 85", 4_400L, byMethod(PaymentMethod.CASH))
+        assertEquals("刷卡的 9,650 + 150", 9_800L, byMethod(PaymentMethod.CREDIT_CARD))
 
         val other = snapshot.copy(
             ledger = snapshot.ledger + LedgerEntry(
                 date = LocalDate.of(2026, 8, 30), type = FlowType.EXPENSE, amount = 999,
-                itemId = FOOD_CASH, method = PaymentMethod.CASH, accountId = CASH,
+                itemId = LIVING, method = PaymentMethod.CASH, accountId = CASH,
             ),
         )
-        assertEquals("8/30 那筆算在 8 月", 4_400L, ActualCalculator.actualFor(FOOD_CASH, 2026, 9, other.actuals, other.ledger).amount)
-        assertEquals("生活費只剩刷卡的 9,650 + 150", 9_800L, ActualCalculator.actualFor(LIVING, 2026, 9, snapshot.actuals, snapshot.ledger).amount)
+        assertEquals("8/30 那筆算在 8 月", 14_200L, ActualCalculator.actualFor(LIVING, 2026, 9, other.actuals, other.ledger).amount)
 
         val untouched = ActualCalculator.actualFor(PHONE, 2026, 9, snapshot.actuals, snapshot.ledger)
         assertEquals(0L, untouched.amount)
@@ -176,13 +174,12 @@ class BaselineBuilderTest {
         val extra = snapshot.copy(
             ledger = snapshot.ledger + LedgerEntry(
                 date = snapshot.today, type = FlowType.EXPENSE, amount = 600,
-                itemId = FOOD_CASH, method = PaymentMethod.CASH, accountId = CASH,
+                itemId = LIVING, method = PaymentMethod.CASH, accountId = CASH,
             ),
         )
-        // 9,000 − 4,400 − 600 = 4,000，上下各半
-        val events = BaselineBuilder.build(extra).events.filter { it.itemId == FOOD_CASH && it.method == PaymentMethod.CASH }
-        assertEquals(2_000L, events.single { it.period == sep1 }.amount)
-        assertEquals(2_000L, events.single { it.period == sep2 }.amount)
+        // 9,000 − 4,400 − 600 = 4,000，整筆算在 9 月
+        val events = BaselineBuilder.build(extra).events.filter { it.itemId == LIVING && it.method == PaymentMethod.CASH }
+        assertEquals(4_000L, events.single { it.period == sep }.amount)
     }
 
     @Test fun `沒有計畫的年度沿用前一年`() {

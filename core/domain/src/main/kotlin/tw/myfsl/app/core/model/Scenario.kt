@@ -13,7 +13,7 @@ data class Scenario(
     val note: String = "",
 )
 
-/** 期別一律以 [Period.index] 表示，方便序列化。 */
+/** 期別一律以 [Period.index]（年 × 12 + 月 − 1）表示，方便序列化（R-PER-01）。 */
 @Serializable
 sealed interface ScenarioChange {
 
@@ -38,7 +38,6 @@ sealed interface ScenarioChange {
         val startIndex: Int,
         val depositAccountId: Long,
         val payAccountId: Long,
-        val payHalf: Half,
     ) : ScenarioChange
 
     /** 在指定期別一次清償負債（以當時欠款計算），可同時停止原本對這些帳戶的排程繳款。 */

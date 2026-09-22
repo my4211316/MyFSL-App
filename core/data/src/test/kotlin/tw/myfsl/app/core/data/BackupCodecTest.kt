@@ -25,7 +25,9 @@ class BackupCodecTest {
         groups = SampleHousehold.groups.map { it.toEntity() },
         items = SampleHousehold.items.map { it.toEntity() },
         amounts = SampleHousehold.yearlyPlan.flatMap { (line, months) ->
-            months.mapIndexedNotNull { i, v -> if (v != 0L) PlanAmountEntity(line.itemId, 2026, i + 1, v) else null }
+            months.mapIndexedNotNull { i, v ->
+                if (v != 0L) PlanAmountEntity(line.itemId, 2026, i + 1, v, line.method?.name.orEmpty()) else null
+            }
         },
         ledger = SampleHousehold.septemberLedger.map { it.toEntity() },
         scenarios = listOf(
@@ -94,7 +96,7 @@ class BackupCodecTest {
         assertTrue("有對不上的資料時提供救援還原", result.summary.needsRescue)
     }
 
-    @Test fun `第 1 版備份：同一個項目的兩個支付方式合併成一列，識別碼去掉方式（R-MIX-05）`() {
+    @Test fun `第 1 版備份：計畫列的支付方式原樣留著，識別碼去掉方式與日（R-MIX-05）`() {
         // 手寫一份第 1 版的備份：生活費有現金 9,000 與刷卡 16,000 兩列
         val v1 = """
             {"app":"MyFSL","formatVersion":1,"exportedAtMillis":1,
@@ -110,11 +112,12 @@ class BackupCodecTest {
         """.trimIndent()
         val result = BackupCodec.decode(v1) as BackupReadResult.Ok
         assertEquals(BackupFile.FORMAT_VERSION, result.file.formatVersion)
-        assertEquals("兩列相加", listOf(25_000L), result.file.amounts.map { it.amount })
-        assertEquals("同一個月只留一筆，已完成優先", listOf("DONE"), result.file.actuals.map { it.status })
-        assertEquals(listOf("plan:501:2026-01:15"), result.file.postedKeys.map { it.key })
-        // 舊檔的刷卡比例變成試算的付款假設：16,000 ÷ 25,000 = 64%（R-MIX-02）
-        assertEquals(64, result.file.settings?.forecastCardPercent)
+        // 一列＝項目 × 支付方式（R-MIX-01），所以兩列原樣留著
+        assertEquals(listOf(9_000L, 16_000L), result.file.amounts.map { it.amount })
+        assertEquals(listOf("CASH", "CREDIT_CARD"), result.file.amounts.map { it.method })
+        // 「這個月怎麼了」是項目層級的，同一個月只留一筆，已完成優先
+        assertEquals(listOf("DONE"), result.file.actuals.map { it.status })
+        assertEquals("識別碼去掉方式與日（R-MIX-05、R-PER-01）", listOf("plan:501:2026-01"), result.file.postedKeys.map { it.key })
     }
 
     @Test fun `識別碼升版只動 plan，其他原樣`() {

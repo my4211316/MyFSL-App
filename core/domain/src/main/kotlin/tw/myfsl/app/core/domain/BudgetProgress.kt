@@ -9,7 +9,6 @@ import tw.myfsl.app.core.model.MoneyFormat
 import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.PlanItem
 import tw.myfsl.app.core.model.PlanLine
-import tw.myfsl.app.core.model.Timing
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDate
@@ -30,13 +29,17 @@ enum class PaceStatus(val label: String, val severity: Int) {
 fun displayPercent(ratio: Double): Int =
     BigDecimal.valueOf(ratio).movePointRight(2).setScale(0, RoundingMode.HALF_UP).toInt()
 
-/** 可調支出某個項目的本月進度（R-MIX-01：一個項目一列，不分支付方式）。 */
+/**
+ * 支出項目的本月進度（R-MIX-01：一個項目一列，不分支付方式）。
+ * 任何有本月額度的支出項目都有進度條（R-BUD-10）：用了多少、還剩多少。
+ * 「花太快」與「剩下每天可用」只算可調項目——固定項目本來就該一次付掉。
+ */
 data class LineProgress(
     val item: PlanItem,
     val groupName: String,
     val planned: Money,
     val actual: Money,
-    /** 這一列在本月的時間進度 0–1。 */
+    /** 這一列在本月的時間進度 0–1：今天是這個月的第幾天 ÷ 當月天數（R-PER-01）。 */
     val timeRatio: Double,
     val status: PaceStatus,
     val remaining: Money,
@@ -47,6 +50,12 @@ data class LineProgress(
     val actualByMethod: List<Pair<PaymentMethod, Money>> = emptyList(),
 ) {
     val line: PlanLine get() = PlanLine(item.id)
+
+    /** 可調項目才看「花太快」與「剩下每天可用」。 */
+    val flexible: Boolean get() = item.flexibility == Flexibility.FLEXIBLE
+
+    /** 還剩多少（顯示用，不會是負的）。 */
+    val left: Money get() = remaining
 
     /** 「刷卡 $17,100 · 現金 $6,300」；這個月還沒花錢時為 null。 */
     val methodBreakdown: String?
@@ -87,14 +96,16 @@ object BudgetProgressCalculator {
         val daysInMonth = date.lengthOfMonth()
         val day = date.dayOfMonth
 
+        val timeRatio = timeRatio(day, daysInMonth)
+        val daysLeft = daysLeft(day, daysInMonth)
+
         return snapshot.activeItems
-            .filter { it.type == FlowType.EXPENSE && it.flexibility == Flexibility.FLEXIBLE }
+            .filter { it.type == FlowType.EXPENSE }
             .mapNotNull { item ->
                 val planned = snapshot.plannedAmount(item.id, year, month)
                 val actual = ActualCalculator.actualFor(item.id, year, month, snapshot.actuals, snapshot.ledger)
                 if (planned == 0L && actual.amount == 0L) return@mapNotNull null
 
-                val timeRatio = timeRatio(item.timing, day, daysInMonth)
                 val remaining = (planned - actual.amount).coerceAtLeast(0)
                 val draft = LineProgress(
                     item = item,
@@ -112,14 +123,19 @@ object BudgetProgressCalculator {
                     actual.status == ActualStatus.DONE -> PaceStatus.DONE
                     planned == 0L -> PaceStatus.UNPLANNED
                     actual.amount > planned -> PaceStatus.OVER
-                    draft.timePercent == 0 && actual.amount == 0L -> PaceStatus.NOT_STARTED
-                    draft.paceGapPercent > AHEAD_THRESHOLD_PERCENT -> PaceStatus.AHEAD
+                    planned in 1..actual.amount -> PaceStatus.DONE
+                    actual.amount == 0L -> PaceStatus.NOT_STARTED
+                    // 固定項目沒有「花太快」：到期一次付掉就結束，不看時間進度。
+                    draft.flexible && draft.paceGapPercent > AHEAD_THRESHOLD_PERCENT -> PaceStatus.AHEAD
                     else -> PaceStatus.ON_TRACK
                 }
-                val daysLeft = daysLeft(item.timing, day, daysInMonth)
                 draft.copy(
                     status = status,
-                    dailyAllowance = if (remaining > 0 && daysLeft > 0 && status != PaceStatus.DONE && planned > 0) remaining / daysLeft else null,
+                    dailyAllowance = if (draft.flexible && remaining > 0 && daysLeft > 0 && status != PaceStatus.DONE && planned > 0) {
+                        remaining / daysLeft
+                    } else {
+                        null
+                    },
                 )
             }
             .sortedWith(compareBy<LineProgress> { it.status.severity }.thenByDescending { it.paceGapPercent })
@@ -137,16 +153,9 @@ object BudgetProgressCalculator {
     fun byItem(lines: List<LineProgress>): List<ItemBudget> =
         lines.groupBy { it.item.id }.values.map { ItemBudget(it.first().item, it) }
 
-    fun timeRatio(timing: Timing, day: Int, daysInMonth: Int): Double = when (timing) {
-        Timing.SPLIT -> day.toDouble() / daysInMonth
-        Timing.FIRST_HALF -> (day / 15.0).coerceAtMost(1.0)
-        Timing.SECOND_HALF -> ((day - 15).coerceAtLeast(0).toDouble() / (daysInMonth - 15)).coerceAtMost(1.0)
-    }
+    /** 本月的時間進度（R-PER-01）：今天是第幾天 ÷ 當月天數。 */
+    fun timeRatio(day: Int, daysInMonth: Int): Double = (day.toDouble() / daysInMonth).coerceIn(0.0, 1.0)
 
-    /** 含今天在內剩下的天數。 */
-    fun daysLeft(timing: Timing, day: Int, daysInMonth: Int): Int = when (timing) {
-        Timing.SPLIT -> daysInMonth - day + 1
-        Timing.FIRST_HALF -> (15 - day + 1).coerceAtLeast(0)
-        Timing.SECOND_HALF -> daysInMonth - maxOf(day, 16) + 1
-    }
+    /** 含今天在內，這個月還剩幾天。 */
+    fun daysLeft(day: Int, daysInMonth: Int): Int = (daysInMonth - day + 1).coerceAtLeast(0)
 }

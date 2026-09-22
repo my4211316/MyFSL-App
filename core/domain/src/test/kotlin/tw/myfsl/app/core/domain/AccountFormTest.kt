@@ -5,7 +5,6 @@ import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.CardInstallment
 import tw.myfsl.app.core.model.CardTerms
-import tw.myfsl.app.core.model.Half
 import tw.myfsl.app.core.model.InstallmentFee
 import tw.myfsl.app.core.model.LoanTerms
 import tw.myfsl.app.core.model.Period
@@ -188,12 +187,12 @@ class AccountFormTest {
     // ---------- 分期第一期與提示 ----------
 
     @Test fun `分期第一期：下個月、依繳款日決定上下半月`() {
-        assertEquals(Period(2026, 10, Half.FIRST).index, InstallmentRules.firstPeriodIndex(LocalDate.of(2026, 9, 5), 15))
-        assertEquals(Period(2026, 10, Half.SECOND).index, InstallmentRules.firstPeriodIndex(LocalDate.of(2026, 9, 5), 25))
-        assertEquals(Period(2027, 1, Half.FIRST).index, InstallmentRules.firstPeriodIndex(LocalDate.of(2026, 12, 20), null))
+        assertEquals(Period(2026, 10).index, InstallmentRules.firstPeriodIndex(LocalDate.of(2026, 9, 5)))
+        assertEquals(Period(2026, 10).index, InstallmentRules.firstPeriodIndex(LocalDate.of(2026, 9, 5)))
+        assertEquals(Period(2027, 1).index, InstallmentRules.firstPeriodIndex(LocalDate.of(2026, 12, 20)))
         val installment = CardInstallment(
             amount = 36_000, months = 12, purchaseDate = LocalDate.of(2026, 9, 5),
-            fee = InstallmentFee.PER_PERIOD, feeValue = 50.0, firstPeriodIndex = Period(2026, 10, Half.FIRST).index,
+            fee = InstallmentFee.PER_PERIOD, feeValue = 50.0, firstPeriodIndex = Period(2026, 10).index,
         )
         assertEquals(" · 分 12 期，每期 $3,050", InstallmentRules.savedSuffix(installment))
     }

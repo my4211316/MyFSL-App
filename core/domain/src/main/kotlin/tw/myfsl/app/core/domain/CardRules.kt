@@ -3,6 +3,7 @@ package tw.myfsl.app.core.domain
 import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.CardPayMode
+import tw.myfsl.app.core.model.CardPaymentPlan
 import tw.myfsl.app.core.model.CardTerms
 import tw.myfsl.app.core.model.FinanceSnapshot
 import tw.myfsl.app.core.model.FlowType
@@ -113,7 +114,7 @@ object CardRules {
      * 信用卡不能只繳利息，所以不做「只繳利息」的假設。
      */
     data class PaymentAssumption(val source: Source, val amount: Money = 0, val needsBill: Boolean = false) {
-        enum class Source { LAST_FULL, LAST_AMOUNT, STATEMENT_MINIMUM, NO_RECORD }
+        enum class Source { LAST_FULL, LAST_AMOUNT, STATEMENT_MINIMUM, NO_RECORD, PLANNED }
 
         val paysFull: Boolean get() = source == Source.LAST_FULL || source == Source.NO_RECORD
 
@@ -127,11 +128,45 @@ object CardRules {
             } else {
                 "$cardName：還沒有繳款紀錄，先假設全額繳清"
             }
+
+            Source.PLANNED -> "$cardName：照計畫編的金額繳，這一期 ${MoneyFormat.currency(amount)}，沒繳清的部分計息"
         }
     }
 
+    /**
+     * 使用者在年度計畫裡編給這張卡的繳款（R-CARD-27）：計畫中轉入這張卡的項目，那個月的合計。
+     * 選「照計畫編的金額」時這就是每期繳款，所以那些轉帳項目不再另外算一次現金流。
+     */
+    fun plannedPayment(snapshot: FinanceSnapshot, cardId: Long, year: Int, month: Int): Money =
+        snapshot.activeItems
+            .filter { it.type == FlowType.TRANSFER && it.toAccountId == cardId }
+            .sumOf { item -> snapshot.plannedAmount(item.id, year, month) }
+
     fun assumption(snapshot: FinanceSnapshot, card: Account): PaymentAssumption {
         val (s, d) = cycleDays(card) ?: return PaymentAssumption(PaymentAssumption.Source.NO_RECORD)
+        // 使用者自己決定怎麼繳時就照他的，不再從紀錄推估（R-CARD-27）。
+        when (card.card?.paymentPlan) {
+            CardPaymentPlan.FULL -> return PaymentAssumption(PaymentAssumption.Source.LAST_FULL)
+            CardPaymentPlan.MINIMUM -> {
+                val bill = snapshot.cardStatements
+                    .filter { it.cardId == card.id && it.minimumPayment != null }
+                    .maxByOrNull { it.yearMonth }
+                return if (bill != null) {
+                    PaymentAssumption(PaymentAssumption.Source.STATEMENT_MINIMUM, bill.minimumPayment!!)
+                } else {
+                    // 選了最低卻還沒輸入帳單：不知道最低是多少，先假設全額並提醒。
+                    PaymentAssumption(PaymentAssumption.Source.NO_RECORD, needsBill = true)
+                }
+            }
+            CardPaymentPlan.PLANNED -> {
+                val ym = latestCycle(card, snapshot.today)?.yearMonth ?: YearMonth.from(snapshot.today)
+                return PaymentAssumption(
+                    PaymentAssumption.Source.PLANNED,
+                    plannedPayment(snapshot, card.id, ym.year, ym.monthValue),
+                )
+            }
+            CardPaymentPlan.AUTO, null -> Unit
+        }
         val prefix = "${tw.myfsl.app.core.model.PostingKeys.CARD_PAYMENT}${card.id}:"
         val lastYm = snapshot.ledger.mapNotNull { e ->
             e.postingKey?.takeIf { it.startsWith(prefix) }?.removePrefix(prefix)?.let { runCatching { YearMonth.parse(it) }.getOrNull() }
@@ -156,7 +191,7 @@ object CardRules {
     /** 某一期的建議金額：依推估，不超過帳單還沒繳的部分（本月到期與試算一致）。 */
     fun suggested(assumption: PaymentAssumption, options: PaymentOptions): Money = when (assumption.source) {
         PaymentAssumption.Source.LAST_FULL, PaymentAssumption.Source.NO_RECORD -> options.full
-        PaymentAssumption.Source.LAST_AMOUNT -> minOf(assumption.amount, options.full)
+        PaymentAssumption.Source.LAST_AMOUNT, PaymentAssumption.Source.PLANNED -> minOf(assumption.amount, options.full)
         PaymentAssumption.Source.STATEMENT_MINIMUM -> minOf(options.minimum ?: assumption.amount, options.full)
     }
 
@@ -182,27 +217,18 @@ object CardRules {
      */
     fun outlook(balance: Money, terms: CardTerms, assumption: PaymentAssumption, monthlySpending: Money, payment: Money? = null): CardOutlook {
         val debt = balance.coerceAtLeast(0)
-        if (assumption.paysFull && payment == null) return CardOutlook(debt, 0, debt + monthlySpending, monthlySpending)
+        // 全額繳清＝繳掉上一期的帳單（就是結轉過來的欠款）；當期新刷的要下一期才繳（R-CARD-20）。
+        if (assumption.paysFull && payment == null) return CardOutlook(debt, 0, debt, monthlySpending)
         val paid = minOf(payment ?: assumption.amount, debt)
         return CardOutlook(debt, monthlyInterest(debt - paid, terms.revolvingRatePercent), paid, monthlySpending)
-    }
-
-    /** 卡債會變多時的提醒文字；會下降時為 null。 */
-    fun warning(outlook: CardOutlook): String? {
-        if (!outlook.growing) return null
-        val extra = MoneyFormat.currency(outlook.extraToStop)
-        return if (outlook.payment <= outlook.interest) {
-            "繳的錢還不夠付循環利息 ${MoneyFormat.currency(outlook.interest)}，卡債只會變多；每月至少要多繳 $extra 卡債才不會再增加"
-        } else {
-            "每月刷 ${MoneyFormat.currency(outlook.spending)}、利息 ${MoneyFormat.currency(outlook.interest)}，" +
-                "繳 ${MoneyFormat.currency(outlook.payment)} 不夠；每月至少要多繳 $extra 卡債才不會再增加"
-        }
     }
 
     /** 照繳款推估、不再刷卡時，大約幾個月能還完；永遠還不完時為 null（R-CARD-06）。 */
     fun monthsToClear(balance: Money, terms: CardTerms, assumption: PaymentAssumption, monthlySpending: Money = 0, maxMonths: Int = 600): Int? {
         var remaining = balance
         if (remaining <= 0) return 0
+        // 全額繳清：下一期帳單就把目前的欠款繳掉（之後每期都只是繳上一期，卡債不會累積）。
+        if (assumption.paysFull) return 1
         for (month in 1..maxMonths) {
             val o = outlook(remaining, terms, assumption, monthlySpending)
             val next = remaining + o.interest + monthlySpending - o.payment

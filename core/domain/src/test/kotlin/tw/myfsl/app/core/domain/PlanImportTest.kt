@@ -4,7 +4,6 @@ import tw.myfsl.app.core.sample.SampleHousehold
 import tw.myfsl.app.core.model.Flexibility
 import tw.myfsl.app.core.model.FlowType
 import tw.myfsl.app.core.model.PaymentMethod
-import tw.myfsl.app.core.model.Timing
 import tw.myfsl.app.core.model.TrackingMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -49,42 +48,40 @@ class PlanImportTest {
         assertEquals(108_000L, preview.expense)
     }
 
-    @Test fun `同一個項目的多列合併成一列，金額相加（R-MIX-01）`() {
+    @Test fun `同一個項目的兩種支付方式合併成一個項目`() {
         val preview = parse(
             csv(
-                "生活,生活費,支出,現金,上下各半,,是,依記帳,,,,108000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000",
-                "生活,生活費,支出,信用卡,上下各半,,是,依記帳,,,,192000,16000,16000,16000,16000,16000,16000,16000,16000,16000,16000,16000,16000",
+                "生活,生活費,支出,現金,,是,依記帳,,,,108000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000,9000",
+                "生活,生活費,支出,信用卡,,是,依記帳,,,,192000,16000,16000,16000,16000,16000,16000,16000,16000,16000,16000,16000,16000",
             ),
         )
         assertTrue(preview.errors.isEmpty())
         assertEquals(1, preview.itemCount)
         val item = preview.items.single()
-        // 預算不分支付方式：兩列直接相加成一列（R-MIX-01）
-        assertEquals(List(12) { 25_000L }, item.amounts)
+        assertEquals(setOf(PaymentMethod.CASH, PaymentMethod.CREDIT_CARD), item.amounts.keys)
         assertEquals(300_000L, item.total)
+        assertEquals(192_000L, preview.cardSpending)
         assertEquals(listOf(2, 3), item.lines)
-        assertTrue(preview.issues.any { it.message.contains("相加成一列") })
-        assertEquals(Timing.SPLIT, item.item.timing)
         assertEquals(Flexibility.FLEXIBLE, item.item.flexibility)
         assertEquals(TrackingMode.LEDGER, item.item.tracking)
     }
 
-    @Test fun `收入與轉帳：帶入帳戶；支付方式欄一律忽略（R-MIX-01）`() {
+    @Test fun `收入與轉帳：帶入帳戶，支付方式忽略`() {
         val preview = parse(
             csv(
-                "收入,薪資,收入,,上半月,,否,自動計入,薪轉帳戶,,,780000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000",
-                "繳款,繳信用卡 A,轉帳,現金,上半月,,否,自動計入,薪轉帳戶,信用卡 A,,216000,18000,18000,18000,18000,18000,18000,18000,18000,18000,18000,18000,18000",
+                "收入,薪資,收入,,,否,自動計入,薪轉帳戶,,,780000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000,65000",
+                "繳款,繳信用卡 A,轉帳,現金,,否,自動計入,薪轉帳戶,信用卡 A,,216000,18000,18000,18000,18000,18000,18000,18000,18000,18000,18000,18000,18000",
             ),
         )
         assertTrue(preview.errors.isEmpty())
         val salary = preview.items.first { it.item.name == "薪資" }
         assertEquals(FlowType.INCOME, salary.item.type)
         assertEquals(SampleHousehold.BANK, salary.item.accountId)
-        assertEquals(FlowType.INCOME, salary.item.type)
+        assertEquals(setOf<PaymentMethod?>(null), salary.amounts.keys)
         val pay = preview.items.first { it.item.name == "繳信用卡 A" }
         assertEquals(SampleHousehold.BANK, pay.item.accountId)
         assertEquals(SampleHousehold.CARD_A, pay.item.toAccountId)
-        assertTrue(preview.issues.any { it.message.contains("支付方式欄會被忽略") })
+        assertTrue(preview.issues.any { it.message.contains("支付方式會被忽略") })
     }
 
     @Test fun `表頭可以用別的說法，月份可以用中文`() {
@@ -104,7 +101,7 @@ class PlanImportTest {
 
     @Test fun `Excel 貼上的 Tab 分隔也能讀`() {
         val text = PlanImport.COLUMNS.joinToString("\t") + "\n" +
-            "生活\t家用\t支出\t現金\t上下各半\t\t是\t依記帳\t\t\t\t12000\t1000\t1000\t1000\t1000\t1000\t1000\t1000\t1000\t1000\t1000\t1000\t1000"
+            "生活\t家用\t支出\t現金\t\t是\t依記帳\t\t\t\t12000\t1000\t1000\t1000\t1000\t1000\t1000\t1000\t1000\t1000\t1000\t1000\t1000"
         val preview = PlanImport.parse(text, 2027, accounts, groups)
         assertTrue(preview.errors.isEmpty())
         assertEquals(12_000L, preview.expense)
@@ -118,41 +115,60 @@ class PlanImportTest {
     @Test fun `群組：沒填算未分類，沒有的群組會列出來`() {
         val preview = parse(
             csv(
-                ",隨手記,支出,現金,上下各半,,是,依記帳,,,,1200,100,100,100,100,100,100,100,100,100,100,100,100",
-                "訂閱,AI,支出,信用卡,上半月,,否,自動計入,,,,43200,3600,3600,3600,3600,3600,3600,3600,3600,3600,3600,3600,3600",
+                ",隨手記,支出,現金,,是,依記帳,,,,1200,100,100,100,100,100,100,100,100,100,100,100,100",
+                "訂閱,AI,支出,信用卡,,否,自動計入,,,,43200,3600,3600,3600,3600,3600,3600,3600,3600,3600,3600,3600,3600",
             ),
         )
         assertEquals(listOf("未分類", "訂閱"), preview.newGroups)
         assertTrue(preview.issues.any { it.message == "會新增群組：未分類、訂閱" })
         // 生活是示意資料已有的群組，不會列為新增
-        val known = parse("生活,家用,支出,現金,上下各半,,是,依記帳,,,,0,0,0,0,0,0,0,0,0,0,0,0,0".let { csv(it) })
+        val known = parse("生活,家用,支出,現金,,是,依記帳,,,,0,0,0,0,0,0,0,0,0,0,0,0,0".let { csv(it) })
         assertTrue(known.newGroups.isEmpty())
     }
 
     // ---------- 檢查 ----------
 
-    @Test fun `錯誤：類型看不懂、找不到帳戶、轉出等於轉入`() {
+    @Test fun `錯誤：類型看不懂、找不到帳戶、轉出等於轉入、重複列`() {
         val preview = parse(
             csv(
-                "生活,亂寫,飲料,現金,上下各半,,否,自動計入,,,,0,0,0,0,0,0,0,0,0,0,0,0,0",
-                "生活,沒付款,支出,,上下各半,,否,自動計入,,,,1200,100,100,100,100,100,100,100,100,100,100,100,100",
-                "收入,兼職,收入,,上半月,,否,自動計入,不存在的帳戶,,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000",
-                "繳款,自己轉自己,轉帳,,上半月,,否,自動計入,薪轉帳戶,薪轉帳戶,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000",
-                "生活,家用,支出,現金,上下各半,,是,依記帳,,,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000",
-                "生活,家用,支出,現金,上下各半,,是,依記帳,,,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000",
+                "生活,亂寫,飲料,現金,,否,自動計入,,,,0,0,0,0,0,0,0,0,0,0,0,0,0",
+                "生活,沒付款,支出,,,否,自動計入,,,,1200,100,100,100,100,100,100,100,100,100,100,100,100",
+                "收入,兼職,收入,,,否,自動計入,不存在的帳戶,,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000",
+                "繳款,自己轉自己,轉帳,,,否,自動計入,薪轉帳戶,薪轉帳戶,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000",
+                "生活,家用,支出,現金,,是,依記帳,,,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000",
+                "生活,家用,支出,現金,,是,依記帳,,,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000",
             ),
         )
         val messages = preview.errors.map { it.message }
         assertTrue(messages.any { it.startsWith("第 2 列的類型「飲料」") })
-        assertFalse("支出沒填支付方式不再是錯誤（R-MIX-01）", messages.any { it.contains("要填支付方式") })
         assertTrue(messages.any { it == "第 4 列找不到帳戶「不存在的帳戶」" })
         assertTrue(messages.any { it == "第 5 列「自己轉自己」轉出與轉入是同一個帳戶" })
-        assertFalse("同一個項目的兩列直接相加，不再是錯誤", messages.any { it.contains("出現兩次") })
+        assertTrue(messages.any { it == "「家用」的現金出現兩次（第 6 列與第 7 列）" })
         assertFalse(preview.canImport)
     }
 
+    @Test fun `支出沒填支付方式：當成現金，合併成一則提醒，不擋匯入（R-IMP-06）`() {
+        val preview = parse(
+            csv(
+                "生活,沒付款,支出,,,否,自動計入,,,,1200,100,100,100,100,100,100,100,100,100,100,100,100",
+                "生活,也沒付款,支出,,,否,自動計入,,,,1200,100,100,100,100,100,100,100,100,100,100,100,100",
+                "生活,有填,支出,信用卡,,否,自動計入,,,,1200,100,100,100,100,100,100,100,100,100,100,100,100",
+            ),
+        )
+        assertTrue(preview.errors.toString(), preview.canImport)
+        assertEquals(
+            listOf(
+                "有 2 列沒填支付方式（第 2、3 列），已當成現金：當月就從帳戶扣。" +
+                    "刷卡的請在「支付方式」欄填「信用卡」再匯一次，水位才算得準",
+            ),
+            preview.issues.filter { it.severity == Severity.WARNING }.map { it.message },
+        )
+        assertEquals(listOf(PaymentMethod.CASH), preview.items.first { it.item.name == "沒付款" }.amounts.keys.toList())
+        assertEquals(listOf(PaymentMethod.CREDIT_CARD), preview.items.first { it.item.name == "有填" }.amounts.keys.toList())
+    }
+
     @Test fun `錯誤：金額看不懂、缺表頭、空檔案`() {
-        val bad = parse("生活,家用,支出,現金,上下各半,,是,依記帳,,,,12000,1000,一千,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000".let { csv(it) })
+        val bad = parse("生活,家用,支出,現金,,是,依記帳,,,,12000,1000,一千,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000".let { csv(it) })
         assertTrue(bad.errors.any { it.message == "第 2 列 二月的金額「一千」看不懂" })
 
         val noHeader = PlanImport.parse("群組,金額\n生活,100", 2027, accounts, groups)
@@ -165,8 +181,8 @@ class PlanImportTest {
     @Test fun `警示：現行和 12 個月合計不一樣、整列 0`() {
         val preview = parse(
             csv(
-                "年度,年終,收入,,上半月,,否,到期確認,薪轉帳戶,,,180000,0,180000,6000,0,0,0,0,0,6000,0,0,0",
-                "生活,沒用到,支出,現金,上下各半,,否,自動計入,,,,0,0,0,0,0,0,0,0,0,0,0,0,0",
+                "年度,年終,收入,,,否,到期確認,薪轉帳戶,,,180000,0,180000,6000,0,0,0,0,0,6000,0,0,0",
+                "生活,沒用到,支出,現金,,否,自動計入,,,,0,0,0,0,0,0,0,0,0,0,0,0,0",
             ),
         )
         assertTrue(preview.errors.isEmpty())
@@ -182,29 +198,29 @@ class PlanImportTest {
     @Test fun `錯誤：帳戶名稱對到好幾個、同項目多列欄位不一致、負數`() {
         val preview = parse(
             csv(
-                "繳款,繳卡費,轉帳,,上半月,,否,自動計入,薪轉帳戶,信用卡,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000",
-                "生活,餐費,支出,現金,上半月,,是,依記帳,,,,1200,100,100,100,100,100,100,100,100,100,100,100,100",
-                "生活,餐費,支出,信用卡,下半月,,是,依記帳,,,,1200,100,100,100,100,100,100,100,100,100,100,100,100",
-                "生活,退貨,支出,現金,上半月,,否,依記帳,,,,-100,-100,0,0,0,0,0,0,0,0,0,0,0",
+                "繳款,繳卡費,轉帳,,,否,自動計入,薪轉帳戶,信用卡,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000",
+                "生活,餐費,支出,現金,5,是,依記帳,,,,1200,100,100,100,100,100,100,100,100,100,100,100,100",
+                "生活,餐費,支出,信用卡,10,是,依記帳,,,,1200,100,100,100,100,100,100,100,100,100,100,100,100",
+                "生活,退貨,支出,現金,,否,依記帳,,,,-100,-100,0,0,0,0,0,0,0,0,0,0,0",
             ),
         )
         val messages = preview.errors.map { it.message }
         assertTrue(messages.toString(), messages.contains("第 2 列的轉入帳戶「信用卡」對到好幾個帳戶（信用卡 A、信用卡 B），請填完整名稱"))
-        assertTrue(messages.toString(), messages.contains("第 4 列「餐費」的時點和前面那列（第 3 列）不一樣"))
+        assertTrue(messages.toString(), messages.contains("第 4 列「餐費」的日期和前面那列（第 3 列）不一樣"))
         assertTrue(messages.toString(), messages.contains("第 5 列 一月的金額不能是負數；退款或收入請另列一個項目"))
         assertFalse(preview.canImport)
 
         // 帳戶開頭相同但只有一個時可以用簡稱
-        val short = parse(csv("收入,薪資,收入,,上半月,,否,自動計入,薪轉,,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000"))
+        val short = parse(csv("收入,薪資,收入,,,否,自動計入,薪轉,,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000"))
         assertTrue(short.errors.isEmpty())
         assertEquals(SampleHousehold.BANK, short.items.single().item.accountId)
     }
 
     @Test fun `日期欄：可寫 15 或 15號，超出範圍報錯`() {
-        val ok = parse(csv("收入,薪資,收入,,上半月,15號,否,自動計入,薪轉帳戶,,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000"))
+        val ok = parse(csv("收入,薪資,收入,,15號,否,自動計入,薪轉帳戶,,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000"))
         assertTrue(ok.errors.isEmpty())
         assertEquals(15, ok.items.single().item.dueDay)
-        val bad = parse(csv("收入,薪資,收入,,上半月,32,否,自動計入,薪轉帳戶,,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000"))
+        val bad = parse(csv("收入,薪資,收入,,32,否,自動計入,薪轉帳戶,,,12000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000,1000"))
         assertTrue(bad.errors.any { it.message == "第 2 列的日期「32」要是 1 到 31" })
     }
 
@@ -225,7 +241,11 @@ class PlanImportTest {
 
         val plan = PlanSummaryCalculator.summarize(snapshot, 2026)
         assertEquals(plan.totalIncome, preview.income)
-        assertEquals("匯出的是計畫裡的支出，不含貸款與循環利息", plan.totalPlannedExpense, preview.expense)
+        // 檔案裡的「支出」是支出列的加總；計畫摘要的支出是現金流口徑（含繳卡費、貸款月繳），兩者本來就不同
+        val plannedExpense = snapshot.activeItems
+            .filter { it.type == FlowType.EXPENSE }
+            .sumOf { item -> snapshot.planForYear(2026).filterKeys { it.itemId == item.id }.values.sumOf { m -> m.sum() } }
+        assertEquals(plannedExpense, preview.expense)
         // 轉帳項目逐一原樣匯回（依合約自動繳的卡費不是計畫項目，不在檔案裡）
         val transfers = snapshot.activeItems.filter { it.type == FlowType.TRANSFER }
         assertEquals(
@@ -237,15 +257,15 @@ class PlanImportTest {
             snapshot.activeItems.associate { it.name to it.dueDay },
             preview.items.associate { it.item.name to it.item.dueDay },
         )
+        assertEquals(plan.totalCardSpending, preview.cardSpending)
 
         // 逐列比對金額
         val living = preview.items.first { it.item.name == "生活費" }
-        assertEquals(List(12) { 16_000L }, living.amounts)
+        assertEquals(months(9_000, 9_000, 9_000, 9_000, 9_000, 9_000, 9_000, 9_000, 9_000, 9_000, 9_000, 9_000), living.amounts[PaymentMethod.CASH])
         assertEquals(TrackingMode.LEDGER, living.item.tracking)
         val service = preview.items.first { it.item.name == "汽車保養" }
-        assertEquals(months(0, 0, 12_000, 0, 0, 0, 0, 0, 12_000, 0, 0, 0), service.amounts)
+        assertEquals(months(0, 0, 12_000, 0, 0, 0, 0, 0, 12_000, 0, 0, 0), service.amounts[PaymentMethod.CREDIT_CARD])
         assertEquals(TrackingMode.CONFIRM, service.item.tracking)
-        assertEquals(Timing.SECOND_HALF, service.item.timing)
     }
 
     // ---------- 編輯快捷 ----------

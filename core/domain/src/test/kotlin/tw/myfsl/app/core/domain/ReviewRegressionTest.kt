@@ -97,11 +97,11 @@ class ReviewRegressionTest {
             ledger = emptyList(),
             installments = listOf(CardInstallment(
                 id = 7, cardAccountId = 2, purchaseDate = LocalDate.of(2026, 9, 20),
-                amount = 12000, months = 12, firstPeriodIndex = Period(2026, 10, Half.FIRST).index
+                amount = 12000, months = 12, firstPeriodIndex = Period(2026, 10).index
             )),
         )
         val result = CashFlowEngine.run(BaselineBuilder.build(s, 4))
-        assertEquals("先入帳分期、再結帳：分期本金算進帳單", 1000L, result.periods.first { it.period == Period(2026, 11, Half.FIRST) }.cardPayments)
+        assertEquals("先入帳分期、再結帳：分期本金算進帳單", 1000L, result.periods.first { it.period == Period(2026, 11) }.cardPayments)
         assertEquals("全額繳清不計息", 0L, result.totalCardInterest)
     }
 
@@ -153,7 +153,7 @@ class ReviewRegressionTest {
             method = PaymentMethod.CREDIT_CARD, accountId = 2, installmentId = 7)
         val s0 = base().copy(ledger = listOf(purchase), installments = listOf(CardInstallment(
             id = 7, cardAccountId = 2, purchaseDate = LocalDate.of(2026, 8, 20), amount = 12000, months = 12,
-            fee = InstallmentFee.PER_PERIOD, feeValue = 50.0, firstPeriodIndex = Period(2026, 9, Half.SECOND).index,
+            fee = InstallmentFee.PER_PERIOD, feeValue = 50.0, firstPeriodIndex = Period(2026, 9).index,
         )))
         val period = DueItems.list(s0).single { it.kind == DueKind.INSTALLMENT }
         val s1 = s0.record(period)
@@ -196,8 +196,8 @@ class ReviewRegressionTest {
     @Test fun f12NewSpendingAfterPayoffAccruesInterestByOriginalTerms() {
         // 今天 9/18（9 月下半月）清償；10 月上半月刷 30,000；卡片 10 日結帳、5 日截止、自由繳 2,000、年利率 12%
         val start = Period.of(today)
-        val oct1 = Period(2026, 10, Half.FIRST)
-        val nov1 = Period(2026, 11, Half.FIRST)
+        val oct1 = Period(2026, 10)
+        val nov1 = Period(2026, 11)
         val applied = ScenarioApplier.apply(BaselineBuilder.build(base(), 6), listOf(
             ScenarioChange.PayOffDebts(listOf(2L), 1, start.index),
             ScenarioChange.OneOff("之後又刷", oct1.index, FlowType.EXPENSE, 30000, method = PaymentMethod.CREDIT_CARD),
@@ -220,7 +220,7 @@ class ReviewRegressionTest {
 
     @Test fun deferredPaymentCountsInOriginalBudgetMonth() {
         val e = LedgerEntry(date = LocalDate.of(2026, 10, 3), type = FlowType.EXPENSE, amount = 100, itemId = 10,
-            method = PaymentMethod.CASH, source = EntrySource.DUE, postingKey = "plan:10:2026-09:15")
+            method = PaymentMethod.CASH, source = EntrySource.DUE, postingKey = "plan:10:2026-09")
         assertEquals(java.time.YearMonth.of(2026, 9), e.budgetMonth)
     }
 }

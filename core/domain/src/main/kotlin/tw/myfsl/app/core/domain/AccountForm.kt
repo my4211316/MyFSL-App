@@ -2,6 +2,7 @@ package tw.myfsl.app.core.domain
 
 import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
+import tw.myfsl.app.core.model.CardPaymentPlan
 import tw.myfsl.app.core.model.CardTerms
 import tw.myfsl.app.core.model.LoanTerms
 import tw.myfsl.app.core.model.Money
@@ -28,6 +29,8 @@ data class AccountDraft(
     val scheduleEnabled: Boolean = false,
     /** 循環年利率（選填）：沒繳清時計息用。 */
     val revolvingRate: String = "",
+    /** 每期打算繳多少（R-CARD-27）：預設讓 App 照紀錄推估。 */
+    val paymentPlan: CardPaymentPlan = CardPaymentPlan.AUTO,
     // ---- 貸款進階 ----
     val loanEnabled: Boolean = false,
     val loanRate: String = "",
@@ -79,6 +82,7 @@ object AccountForm {
         payDay = (account.loan?.payDay ?: account.paymentDueDay)?.toString().orEmpty(),
         scheduleEnabled = account.card != null,
         revolvingRate = account.card?.revolvingRatePercent?.let(::trim).orEmpty(),
+        paymentPlan = account.card?.paymentPlan ?: CardPaymentPlan.AUTO,
         loanEnabled = account.loan != null,
         loanRate = account.loan?.annualRatePercent?.let(::trim).orEmpty(),
         loanMonths = account.loan?.remainingMonths?.toString().orEmpty(),
@@ -130,7 +134,7 @@ object AccountForm {
                 } else {
                     null
                 }
-                card = CardTerms(revolvingRatePercent = rate, payAccountId = draft.payAccountId)
+                card = CardTerms(revolvingRatePercent = rate, payAccountId = draft.payAccountId, paymentPlan = draft.paymentPlan)
             }
             cardStatementDay = statementDay
         }

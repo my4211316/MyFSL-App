@@ -42,7 +42,7 @@ import tw.myfsl.app.core.model.MoneyFormat
 data class ChartSeries(val name: String, val color: Color, val values: List<Money>)
 
 /**
- * 現金水位折線圖（dataviz skill）：每個點是一個月的最低水位，2dp 細線，虛線為安全線（旁邊有文字標示）。
+ * 現金水位折線圖（dataviz skill）：每個點是一個月的月底水位（R-FC-09），2dp 細線，虛線為安全線（旁邊有文字標示）。
  * 點圖看當月各線數值；兩條線以上一定有圖例。文字一律用主題字色，線色只畫在色塊上。
  * 線色由呼叫端從 [tw.myfsl.app.ui.theme.chartColors] 依固定順序取。
  */
@@ -138,7 +138,7 @@ fun CashLineChart(
                     .padding(horizontal = tw.myfsl.app.ui.theme.Spacing.md, vertical = tw.myfsl.app.ui.theme.Spacing.sm),
                 verticalArrangement = Arrangement.spacedBy(tw.myfsl.app.ui.theme.Spacing.xs),
             ) {
-                Text("${labels.getOrNull(index).orEmpty()} 最低水位", style = MaterialTheme.typography.labelMedium)
+                Text("${labels.getOrNull(index).orEmpty()} 月底水位", style = MaterialTheme.typography.labelMedium)
                 series.forEach { s ->
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(tw.myfsl.app.ui.theme.Spacing.sm)) {
                         Box(Modifier.size(width = 16.dp, height = 4.dp).background(s.color, MaterialTheme.shapes.extraSmall))

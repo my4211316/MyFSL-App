@@ -39,7 +39,29 @@ data class CardTerms(
     val revolvingRatePercent: Double? = null,
     /** 繳款的扣款帳戶；未設定時用支付方式「轉帳」的帳戶。 */
     val payAccountId: Long? = null,
+    /** 每期繳多少（R-CARD-27）：預設讓 App 照紀錄推估，使用者也可以在預算裡自己決定。 */
+    val paymentPlan: CardPaymentPlan = CardPaymentPlan.AUTO,
 )
+
+/**
+ * 這張卡的**繳款計畫**（R-CARD-27）：整年打算怎麼繳。這是預算編列的決定，不是系統機制。
+ * 和 [CardPayMode] 不一樣——那是「本月這一期要怎麼繳」，每期都可以臨時換（R-CARD-21）。
+ * 一開始不用決定（[AUTO]，照 R-CARD-26 推估），想規劃現金流的人可以自己指定。
+ * 四種都照 [CardTerms.revolvingRatePercent] 計息——選了怎麼繳不影響利息怎麼算。
+ */
+enum class CardPaymentPlan(val label: String, val hint: String) {
+    /** 照最近的繳款紀錄推估（R-CARD-26）：不用事先決定。 */
+    AUTO("照紀錄推估", "看你上一期怎麼繳，就假設之後每期一樣"),
+
+    /** 每期繳掉上一期的帳單，永遠不計息；當期新刷的下一期才繳。 */
+    FULL("全額繳清", "每期繳掉上一期帳單，不會有循環利息"),
+
+    /** 照年度計畫裡「繳這張卡」的項目金額，每個月可以不一樣。 */
+    PLANNED("照計畫編的金額", "在計畫裡自己編每個月要繳多少，沒繳完的部分計息"),
+
+    /** 照帳單上的最低應繳。 */
+    MINIMUM("帳單最低", "只繳最低應繳，其餘滾利息（要先輸入帳單）"),
+}
 
 /** 貸款條件：由目前欠款與剩餘期數產生每月還款排程。 */
 data class LoanTerms(

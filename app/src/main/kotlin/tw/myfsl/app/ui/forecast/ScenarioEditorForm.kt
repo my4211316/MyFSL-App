@@ -29,7 +29,6 @@ import tw.myfsl.app.core.domain.ScenarioDraft
 import tw.myfsl.app.core.domain.ScenarioForm.Field
 import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.FlowType
-import tw.myfsl.app.core.model.Half
 import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.PlanItem
 import tw.myfsl.app.core.model.RepaymentMethod
@@ -134,8 +133,6 @@ private fun ChangeCard(
                 }
                 FieldLabel("攤還方式")
                 SegmentedChoice(RepaymentMethod.entries, c.repayment, { it.label }, { m -> update { it.copy(repayment = m) } })
-                FieldLabel("每月繳款時間")
-                SegmentedChoice(Half.entries, c.payHalf, { it.label }, { h -> update { it.copy(payHalf = h) } })
                 AccountChips("撥款帳戶", liquid, c.depositAccountId, e("deposit")) { id -> update { it.copy(depositAccountId = id) } }
                 AccountChips("扣款帳戶", liquid, c.payAccountId, e("pay")) { id -> update { it.copy(payAccountId = id) } }
                 if (c.kind == ChangeKind.CONSOLIDATE) {

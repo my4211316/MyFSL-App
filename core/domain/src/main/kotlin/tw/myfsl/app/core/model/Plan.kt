@@ -7,20 +7,13 @@ enum class FlowType(val label: String) {
 }
 
 /**
- * 支出的支付方式。**計畫不使用支付方式**（R-MIX-01）：預算只有金額，怎麼付是記帳當下的事實。
- * 試算要知道哪些錢會變卡債，用的是設定裡的付款假設（R-MIX-02），不是項目屬性。
+ * 支出的支付方式。**計畫列自己帶支付方式**（R-MIX-01）：那是使用者編預算時的決定，不是 App 的推估。
+ * 刷卡是隔月才真的付錢，所以「這筆打算用現金付還是刷卡」會直接改變月現金流的時間點。
  */
 enum class PaymentMethod(val label: String) {
     CASH("現金"),
     CREDIT_CARD("信用卡"),
     TRANSFER("轉帳"),
-}
-
-/** 金額落在月內哪一段。 */
-enum class Timing(val label: String) {
-    FIRST_HALF("上半月"),
-    SECOND_HALF("下半月"),
-    SPLIT("上下各半"),
 }
 
 enum class Flexibility(val label: String) {
@@ -48,7 +41,7 @@ data class PlanGroup(
     val sortOrder: Int = 0,
 )
 
-/** 預算項目，例如「生活費」。一個項目一年只有一組 12 個月金額，不分支付方式（R-MIX-01）。 */
+/** 預算項目，例如「生活費」。支出的金額依支付方式分列在 [PlanLine]（R-MIX-01）。 */
 data class PlanItem(
     val id: Long = 0,
     val name: String,
@@ -58,15 +51,15 @@ data class PlanItem(
     val accountId: Long? = null,
     /** 轉帳：轉入帳戶，例如繳卡費時的信用卡。 */
     val toAccountId: Long? = null,
-    val timing: Timing = Timing.SPLIT,
     val flexibility: Flexibility = Flexibility.FIXED,
     val tracking: TrackingMode = TrackingMode.AUTO,
     val note: String = "",
     val archived: Boolean = false,
     val sortOrder: Int = 0,
     /**
-     * 每月幾號發生（1–31；短月份取月底）。「每月固定」在這一天到期。
-     * 沒填時依時點：上半月 1 號、下半月 16 號、上下各半兩天都有。
+     * 每月幾號發生（1–31；短月份取月底）。「每月固定」在這一天到期，也會提醒（R-REM-01）。
+     * **沒填就是沒填**（R-PER-02）：App 不替你猜哪一天。沒填的項目整個月都可以點一下付掉，
+     * 不會提醒，試算也只算在「這個月」，不放在任何一天。
      */
     val dueDay: Int? = null,
     /** 轉帳到已依合約自動繳款的卡片或貸款時：true 表示這是「額外還款」，會另外計入；false 則不計（避免重複）。 */
@@ -75,36 +68,26 @@ data class PlanItem(
     val archivedFrom: Int? = null,
 ) {
     /**
-     * 某月的發生日與金額：有 [dueDay] 時一天；沒有時依時點拆成上、下半月。
-     * 回傳 (日期, 金額) 清單，金額為 0 的略過。
+     * 某月的到期日：有填 [dueDay] 才有（短月份取月底）；沒填時為 null，
+     * 表示「這個月，但不知道哪一天」（R-PER-02）。
      */
-    fun occurrences(year: Int, month: Int, monthAmount: Money): List<Pair<java.time.LocalDate, Money>> {
+    fun dueDateIn(year: Int, month: Int): java.time.LocalDate? {
+        val day = dueDay ?: return null
         val ym = java.time.YearMonth.of(year, month)
-        fun day(d: Int) = ym.atDay(d.coerceIn(1, ym.lengthOfMonth()))
-        val list = if (dueDay != null) {
-            listOf(day(dueDay) to monthAmount)
-        } else {
-            val (first, second) = timing.split(monthAmount)
-            listOf(day(1) to first, day(16) to second)
-        }
-        return list.filter { it.second != 0L }
+        return ym.atDay(day.coerceIn(1, ym.lengthOfMonth()))
     }
 }
 
-/** 計畫表的一列：一個項目一列（R-MIX-01）。 */
+/**
+ * 計畫表的一列：**一個項目 × 一種支付方式**（R-MIX-01）。
+ * 例如「生活費」可以同時有現金列（每月 10,000）與信用卡列（每月 13,000）。
+ * 收入與轉帳沒有支付方式（[method] 為 null），一個項目就是一列。
+ */
 data class PlanLine(
     val itemId: Long,
+    val method: PaymentMethod? = null,
 )
 
 /** 某年度所有計畫列的 12 個月金額：索引 0 = 1 月。 */
 typealias MonthlyAmounts = Map<PlanLine, List<Money>>
 
-/** 依時點把月金額拆成（上半月, 下半月）；平分時奇數的 1 元放在下半月。 */
-fun Timing.split(monthAmount: Money): Pair<Money, Money> = when (this) {
-    Timing.FIRST_HALF -> monthAmount to 0L
-    Timing.SECOND_HALF -> 0L to monthAmount
-    Timing.SPLIT -> (monthAmount / 2).let { it to monthAmount - it }
-}
-
-fun Timing.amountIn(half: Half, monthAmount: Money): Money =
-    split(monthAmount).let { if (half == Half.FIRST) it.first else it.second }

@@ -44,7 +44,7 @@ object InstallmentRules {
             remaining -= principal
             InstallmentPeriod(
                 number = index + 1,
-                periodIndex = installment.firstPeriodIndex + index * 2,
+                periodIndex = installment.firstPeriodIndex + index,
                 principal = principal,
                 fee = fee,
             )
@@ -138,18 +138,15 @@ object InstallmentRules {
     }
 
     /**
-     * 今天以後才入帳的第一個期別：各期在期別開始那天（1 日或 16 日）入帳，
-     * 所以今天所在的半月那一期已經入帳，下一個半月起才是未入帳。
+     * 今天以後才入帳的第一期：各期在那個月入帳（R-PER-01），
+     * 所以本月那一期已經入帳，下個月起才是未入帳。
      */
     fun pendingFromIndex(today: java.time.LocalDate): Int = Period.of(today).index + 1
 
-    /**
-     * 第一期入帳的期別：消費後的下一個月，落在該卡繳款日所在的半月。
-     * 沒有繳款日時用 15 日（上半月）。
-     */
-    fun firstPeriodIndex(purchaseDate: java.time.LocalDate, payDay: Int?): Int {
+    /** 第一期入帳的月份：消費後的下一個月（R-PER-01；繳款日只影響提醒，不影響落在哪一期）。 */
+    fun firstPeriodIndex(purchaseDate: java.time.LocalDate): Int {
         val next = purchaseDate.plusMonths(1)
-        return Period(next.year, next.monthValue, Period.halfOfDay(payDay ?: 15)).index
+        return Period(next.year, next.monthValue).index
     }
 
     /** 記下分期消費後的提示尾巴。 */

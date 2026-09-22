@@ -89,8 +89,10 @@ data class PeriodResult(
     val liquidStart: Money,
     val liquidIn: Money,
     val liquidOut: Money,
-    /** 保守估計的期間最低水位：當期支出都在收入之前；新借款撥款視為期初到位。 */
-    val liquidLow: Money,
+    /**
+     * 這個月的水位（R-FC-09）：月底的可動用餘額。一期就是一個月（R-PER-01），
+     * 月內誰先誰後不猜——沒填付款日的項目本來就沒有「哪一天」。
+     */
     val liquidEnd: Money,
     val cardDebtEnd: Money,
     val loanDebtEnd: Money,
@@ -115,10 +117,10 @@ class ForecastResult(
     val periods: List<PeriodResult>,
 ) {
     val startLiquid: Money = input.accounts.filter { it.kind.isLiquid }.sumOf { it.balance }
-    val lowest: PeriodResult? = periods.minByOrNull { it.liquidLow }
-    val lowestLiquid: Money = lowest?.liquidLow ?: startLiquid
-    val firstBelowSafety: PeriodResult? = periods.firstOrNull { it.liquidLow < input.safetyLevel }
-    val firstNegative: PeriodResult? = periods.firstOrNull { it.liquidLow < 0 }
+    val lowest: PeriodResult? = periods.minByOrNull { it.liquidEnd }
+    val lowestLiquid: Money = lowest?.liquidEnd ?: startLiquid
+    val firstBelowSafety: PeriodResult? = periods.firstOrNull { it.liquidEnd < input.safetyLevel }
+    val firstNegative: PeriodResult? = periods.firstOrNull { it.liquidEnd < 0 }
     val totalIncome: Money = periods.sumOf { it.income }
     val totalExpense: Money = periods.sumOf { it.expense }
     val totalPrincipalRepaid: Money = periods.sumOf { it.loanPrincipalRepaid }
@@ -138,13 +140,13 @@ class ForecastResult(
     val endTotalDebt: Money = endCardDebt + endPendingInstallments + endLoanDebt
 
     /**
-     * 試算期間年化缺口：(收入 − 支出 − 貸款本金還款) × 24 ÷ 期數。
+     * 試算期間年化缺口：(收入 − 支出 − 貸款本金還款) × 12 ÷ 期數。一期就是一個月（R-PER-01）。
      * 支出含一般消費、貸款利息、循環利息、分期手續費；不含分期本金入帳（消費當月已算）、一次清償與新借款。
-     * 第一期若只剩半個半月，仍以整期計算（R-FC-10）。
+     * 第一期若只剩半個月，仍以整個月計算（R-FC-10）。
      */
     val structuralGapPerYear: Money =
         if (periods.isEmpty()) 0
-        else Math.round((totalIncome - totalExpense - totalPrincipalRepaid).toDouble() * 24 / periods.size)
+        else Math.round((totalIncome - totalExpense - totalPrincipalRepaid).toDouble() * 12 / periods.size)
 
     /** 第一次有扣款帳戶餘額變成負數的期別與帳戶；總水位夠、個別帳戶不夠時也要提醒。 */
     val firstShortfall: Pair<PeriodResult, Long>? = run {
@@ -155,7 +157,7 @@ class ForecastResult(
     }
 }
 
-/** 以半月為單位逐期模擬所有帳戶餘額。純函式，無副作用。 */
+/** 以月為單位逐期模擬所有帳戶餘額（R-PER-01）。純函式，無副作用。 */
 object CashFlowEngine {
 
     /** 沒有任何信用卡、計畫卻有刷卡時，模擬用的替代卡片。 */
@@ -300,7 +302,6 @@ object CashFlowEngine {
                 liquidStart = liquidStart,
                 liquidIn = liquidIn,
                 liquidOut = liquidOut,
-                liquidLow = liquidStart + borrowing - liquidOut,
                 liquidEnd = sumOf(balances, kinds) { it.isLiquid },
                 cardDebtEnd = sumOf(balances, kinds) { it == AccountKind.CREDIT_CARD },
                 loanDebtEnd = sumOf(balances, kinds) { it.isLiability && it != AccountKind.CREDIT_CARD },
@@ -322,9 +323,9 @@ object CashFlowEngine {
     }
 
     /**
-     * 同一個半月內的處理順序（R-ORD-01）：分期入帳 → 循環利息 → 情境清償 → 卡片繳款 → 貸款 → 其他收支。
-     * 結帳（先計上一期沒繳清的利息，再結算帳單）一般在最後：上一期的繳款先繳，這個半月的刷卡算進這一期帳單；
-     * 這一期的截止日也落在同一個半月時（例如 1 日結帳、15 日截止），結帳與計息提前：計息在清償之前、結帳在卡片繳款之前。
+     * 同一個月內的處理順序（R-ORD-01）：分期入帳 → 循環利息 → 情境清償 → 卡片繳款 → 貸款 → 其他收支。
+     * 結帳（先計上一期沒繳清的利息，再結算帳單）一般在最後：上一期的繳款先繳，這個月的刷卡算進這一期帳單；
+     * 結帳日與截止日之間沒有跨月時（例如 1 日結帳、15 日截止），結帳與計息提前：計息在清償之前、結帳在卡片繳款之前。
      */
     private fun priority(event: FlowEvent): Int = when {
         event.statementOf != null -> if (event.statementEarly) 4 else 9

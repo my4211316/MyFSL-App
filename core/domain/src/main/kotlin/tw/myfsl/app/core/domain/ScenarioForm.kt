@@ -4,7 +4,6 @@ import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.FinanceSnapshot
 import tw.myfsl.app.core.model.Flexibility
 import tw.myfsl.app.core.model.FlowType
-import tw.myfsl.app.core.model.Half
 import tw.myfsl.app.core.model.Money
 import tw.myfsl.app.core.model.MoneyFormat
 import tw.myfsl.app.core.model.PaymentMethod
@@ -38,7 +37,6 @@ data class ChangeDraft(
     val rate: String = "",
     val months: String = "60",
     val repayment: RepaymentMethod = RepaymentMethod.EQUAL_PAYMENT,
-    val payHalf: Half = Half.FIRST,
     val depositAccountId: Long? = null,
     val payAccountId: Long? = null,
     val debtAccountIds: Set<Long> = emptySet(),
@@ -90,10 +88,10 @@ object ScenarioForm {
         }
     }
 
-    /** 月份偏移轉成期別：該月上半月，但不早於今天所在的期別。 */
+    /** 月份偏移轉成期別：那個月，但不早於今天所在的月份（R-PER-01）。 */
     fun indexFor(today: LocalDate, monthOffset: Int): Int {
         val ym = YearMonth.from(today).plusMonths(monthOffset.toLong())
-        return maxOf(Period(ym.year, ym.monthValue, Half.FIRST).index, Period.of(today).index)
+        return maxOf(Period(ym.year, ym.monthValue).index, Period.of(today).index)
     }
 
     fun offsetFor(today: LocalDate, index: Int): Int =
@@ -162,7 +160,7 @@ object ScenarioForm {
                         (c.kind == ChangeKind.LOAN || debts.isNotEmpty())
                     ) {
                         val name = c.name.trim().ifEmpty { if (c.kind == ChangeKind.CONSOLIDATE) "整合貸款" else "新貸款" }
-                        changes += ScenarioChange.AddLoan(name, principal, r, n, c.repayment, at, deposit, pay, c.payHalf)
+                        changes += ScenarioChange.AddLoan(name, principal, r, n, c.repayment, at, deposit, pay)
                         if (c.kind == ChangeKind.CONSOLIDATE) {
                             changes += ScenarioChange.PayOffDebts(debts.sorted(), deposit, at, c.stopScheduledPayments, c.includeInstallments)
                         }
@@ -227,7 +225,7 @@ object ScenarioForm {
                     val base = ChangeDraft(
                         kind = ChangeKind.LOAN, monthOffset = offsetFor(today, change.startIndex), name = change.name,
                         amount = change.principal.toString(), rate = trim(change.annualRatePercent), months = change.months.toString(),
-                        repayment = change.method, payHalf = change.payHalf, depositAccountId = change.depositAccountId, payAccountId = change.payAccountId,
+                        repayment = change.method, depositAccountId = change.depositAccountId, payAccountId = change.payAccountId,
                     )
                     if (next is ScenarioChange.PayOffDebts && next.atIndex == change.startIndex && next.fromAccountId == change.depositAccountId) {
                         drafts += base.copy(

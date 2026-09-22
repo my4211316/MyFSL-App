@@ -5,10 +5,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Archive
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -16,7 +22,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import tw.myfsl.app.core.domain.PlanItemDraft
 import tw.myfsl.app.core.domain.PlanItemForm.Field
 import tw.myfsl.app.core.model.Account
@@ -25,7 +34,6 @@ import tw.myfsl.app.core.model.FlowType
 import tw.myfsl.app.core.model.MoneyFormat
 import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.PlanGroup
-import tw.myfsl.app.core.model.Timing
 import tw.myfsl.app.core.model.TrackingMode
 import tw.myfsl.app.ui.components.ChoiceChips
 import tw.myfsl.app.ui.components.DangerButton
@@ -33,6 +41,7 @@ import tw.myfsl.app.ui.components.ErrorText
 import tw.myfsl.app.ui.components.FieldLabel
 import tw.myfsl.app.ui.components.FormScaffold
 import tw.myfsl.app.ui.components.HintText
+import tw.myfsl.app.ui.components.MethodIcon
 import tw.myfsl.app.ui.components.SectionCard
 import tw.myfsl.app.ui.components.SectionHeader
 import tw.myfsl.app.ui.components.SegmentedChoice
@@ -42,7 +51,7 @@ import tw.myfsl.app.ui.components.WarningText
 import tw.myfsl.app.ui.components.methodIcon
 import tw.myfsl.app.ui.theme.Spacing
 
-/** 計畫項目的新增／編輯（設計稿：支付結構改版 v1）。一個項目一組 12 個月金額，支付方式是項目的屬性（R-MIX-01）。 */
+/** 計畫項目的新增／編輯（設計稿：全畫面改版 v1）。每一列支付方式由使用者自己選。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PlanItemEditorForm(
@@ -52,8 +61,12 @@ fun PlanItemEditorForm(
     accounts: List<Account>,
     onChange: ((PlanItemDraft) -> PlanItemDraft) -> Unit,
     onType: (FlowType) -> Unit,
-    onMonth: (Int, String) -> Unit,
-    onQuickFill: (QuickFill, String) -> Unit,
+    onAddLine: (PaymentMethod) -> Unit,
+    onRemoveLine: (Int) -> Unit,
+    onMethod: (Int, PaymentMethod) -> Unit,
+    onMonth: (Int, Int, String) -> Unit,
+    onToggleLine: (Int) -> Unit,
+    onQuickFill: (Int, QuickFill, String) -> Unit,
     onSave: () -> Unit,
     onCancel: () -> Unit,
     onArchive: () -> Unit,
@@ -120,16 +133,13 @@ fun PlanItemEditorForm(
             FlowType.EXPENSE -> Unit
         }
 
-        Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-            FieldLabel("時點")
-            ChoiceChips(Timing.entries, { draft.timing == it }, { it.label }, { t -> onChange { it.copy(timing = t) } })
-        }
         TextInput(
             "每月幾號（選填）",
             draft.dueDay,
             { v -> onChange { it.copy(dueDay = v.filter(Char::isDigit).take(2)) } },
             error = errors[Field.DUE_DAY],
-            supporting = "填了就以這天為準：每月固定的項目這天出現在「本月到期」，試算也放在這天。短月份取月底。",
+            supporting = "填了才提醒：這天出現在「本月到期」，到期前 7／3 天提醒，短月份取月底。" +
+                "不填就是沒有固定哪一天：整個月都列在「本月到期」，可以點一下付掉，或用記帳一點一點花。",
             number = true,
         )
         Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
@@ -142,8 +152,36 @@ fun PlanItemEditorForm(
             HintText(draft.tracking.hint)
         }
 
-        SectionHeader("每月金額")
-        MonthAmounts(draft = draft, errors = errors, onMonth = onMonth, onQuickFill = onQuickFill)
+        SectionHeader(if (draft.type == FlowType.EXPENSE) "每月金額（依支付方式分列）" else "每月金額")
+        if (draft.type == FlowType.EXPENSE) {
+            HintText("同一個項目可以同時有現金列和信用卡列；某幾個月刷卡、其他月付現，就在各列填該月的金額。")
+        }
+        errors[Field.LINES]?.let { ErrorText(it) }
+
+        draft.lines.forEachIndexed { index, _ ->
+            LineCard(
+                index = index,
+                draft = draft,
+                expanded = editor.expandedLine == index,
+                errors = errors,
+                onToggle = { onToggleLine(index) },
+                onMethod = { onMethod(index, it) },
+                onRemove = { onRemoveLine(index) },
+                onMonth = { month, value -> onMonth(index, month, value) },
+                onQuickFill = { kind, amount -> onQuickFill(index, kind, amount) },
+            )
+        }
+        if (draft.type == FlowType.EXPENSE && draft.unusedMethods.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                draft.unusedMethods.forEach { method ->
+                    AssistChip(
+                        onClick = { onAddLine(method) },
+                        label = { Text("加${method.label}列") },
+                        leadingIcon = { Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    )
+                }
+            }
+        }
 
         TextInput("備註（選填）", draft.note, { v -> onChange { it.copy(note = v) } })
 
@@ -155,40 +193,69 @@ fun PlanItemEditorForm(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun MonthAmounts(
+private fun LineCard(
+    index: Int,
     draft: PlanItemDraft,
+    expanded: Boolean,
     errors: Map<String, String>,
+    onToggle: () -> Unit,
+    onMethod: (PaymentMethod) -> Unit,
+    onRemove: () -> Unit,
     onMonth: (Int, String) -> Unit,
     onQuickFill: (QuickFill, String) -> Unit,
 ) {
+    val line = draft.lines[index]
+    val hasError = errors.keys.any { it.startsWith("line$index-") }
     SectionCard {
-        Text(
-            "全年 " + MoneyFormat.currency(draft.total),
-            style = MaterialTheme.typography.titleSmall,
-        )
-        var quick by remember { mutableStateOf("") }
-        TextInput("快速填入金額", quick, { quick = it }, number = true)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-            QuickFill.entries.forEach { kind -> AssistChip(onClick = { onQuickFill(kind, quick) }, label = { Text(kind.label) }) }
-        }
-        (0 until 12).chunked(3).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                row.forEach { m ->
-                    TextInput(
-                        "${m + 1} 月",
-                        draft.months[m],
-                        { onMonth(m + 1, it) },
-                        modifier = Modifier.weight(1f),
-                        error = errors[Field.month(m + 1)]?.let { "" },
-                        number = true,
-                    )
-                }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            MethodIcon(line.method)
+            Column(Modifier.weight(1f)) {
+                Text(
+                    (line.method?.label ?: draft.type.label) + "列",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (hasError) MaterialTheme.colorScheme.error else Color.Unspecified,
+                )
+                Text("全年 " + MoneyFormat.currency(draft.lineTotal(index)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (draft.lines.size > 1) {
+                IconButton(onClick = onRemove) { Icon(Icons.Rounded.Delete, contentDescription = "刪除這一列") }
+            }
+            IconButton(onClick = onToggle) {
+                Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = if (expanded) "收起每月金額" else "展開每月金額")
             }
         }
-        errors.filterKeys { it.startsWith("month") }.values.forEach { ErrorText(it) }
+
+        if (draft.type == FlowType.EXPENSE) {
+            SegmentedChoice(PaymentMethod.entries, line.method, { it.label }, onMethod, icon = ::methodIcon)
+            errors[Field.method(index)]?.let { ErrorText(it) }
+        }
+
+        if (expanded) {
+            var quick by remember { mutableStateOf("") }
+            TextInput("快速填入金額", quick, { quick = it }, number = true)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                QuickFill.entries.forEach { kind -> AssistChip(onClick = { onQuickFill(kind, quick) }, label = { Text(kind.label) }) }
+            }
+            (0 until 12).chunked(3).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    row.forEach { m ->
+                        TextInput(
+                            "${m + 1} 月",
+                            line.months[m],
+                            { onMonth(m + 1, it) },
+                            modifier = Modifier.weight(1f),
+                            error = errors[Field.month(index, m + 1)]?.let { "" },
+                            number = true,
+                        )
+                    }
+                }
+            }
+            errors.filterKeys { it.startsWith("line$index-month") }.values.forEach { ErrorText(it) }
+        }
     }
 }
 
+/** 選一個帳戶（晶片），沒有帳戶時提示先新增。 */
 @Composable
 private fun AccountChoice(label: String, selected: Long?, accounts: List<Account>, error: String?, onSelect: (Long) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {

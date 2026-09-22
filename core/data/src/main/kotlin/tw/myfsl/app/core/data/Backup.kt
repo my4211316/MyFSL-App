@@ -9,11 +9,14 @@ import tw.myfsl.app.core.data.db.DeferralEntity
 import tw.myfsl.app.core.data.db.PostedKeyEntity
 import tw.myfsl.app.core.data.db.ItemActualEntity
 import tw.myfsl.app.core.data.db.LedgerEntryEntity
+import tw.myfsl.app.core.data.db.Migrations
 import tw.myfsl.app.core.data.db.PlanAmountEntity
 import tw.myfsl.app.core.data.db.PlanGroupEntity
 import tw.myfsl.app.core.data.db.PlanItemEntity
 import tw.myfsl.app.core.data.db.ScenarioEntity
 import tw.myfsl.app.core.model.AppSettings
+import tw.myfsl.app.core.model.FlowType
+import tw.myfsl.app.core.model.PaymentMethod
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -32,12 +35,9 @@ data class SettingsBackup(
     val autoPostFrom: Long? = null,
     /** 到期前幾天提醒；舊備份沒有時用預設的 7、3 天。 */
     val reminderDays: List<Int>? = null,
-    /** 試算的付款假設（R-MIX-02）；舊備份沒有時用預設的「全部當現金付」。 */
-    val forecastCardPercent: Int? = null,
 ) {
     fun toSettings(current: AppSettings) = current.copy(
         reminderDays = reminderDays ?: AppSettings().reminderDays,
-        forecastCardPercent = forecastCardPercent ?: AppSettings().forecastCardPercent,
         safetyLevel = safetyLevel,
         horizonMonths = horizonMonths,
         checkInDay = DayOfWeek.of(checkInDay.coerceIn(1, 7)),
@@ -51,7 +51,7 @@ data class SettingsBackup(
     companion object {
         fun of(s: AppSettings) = SettingsBackup(
             s.safetyLevel, s.horizonMonths, s.checkInDay.value, s.pickCard, s.cashAccountId, s.transferAccountId, s.cardPostingDays,
-            s.defaultCardId, s.autoPostFrom, s.reminderDays, s.forecastCardPercent,
+            s.defaultCardId, s.autoPostFrom, s.reminderDays,
         )
     }
 }
@@ -82,11 +82,10 @@ data class BackupFile(
         const val APP = "MyFSL"
 
         /**
-         * 3：計畫不再帶支付方式（R-MIX-01），試算的付款假設改成設定裡的一個數字（R-MIX-02）。
-         * 第 1 版（項目 × 支付方式）與第 2 版（項目帶支付方式）的備份還原時會自動轉換，
-         * 見 [BackupCodec.upgradeFromV1] 與 [BackupCodec.upgradeFromV2]。
+         * 5：計畫列帶回支付方式（R-MIX-01）——那是使用者編預算時的決定，而且刷卡隔月才付，
+         * 會直接改變月現金流。第 1–4 版的備份還原時會自動轉換，見 [BackupCodec] 的 upgradeFromV1–V4。
          */
-        const val FORMAT_VERSION = 3
+        const val FORMAT_VERSION = 5
     }
 }
 
@@ -128,42 +127,23 @@ object BackupCodec {
     private data class V1File(val amounts: List<V1Amount> = emptyList())
 
     /**
-     * 把第 1 版備份升到第 2 版（R-MIX-05）：
-     * 同一個項目的多個支付方式列合併成一列（金額相加），項目的支付方式取金額最大的那一個；
+     * 把第 1 版備份升到第 2 版：第 1 版的計畫列本來就是「項目 × 支付方式」，和第 5 版一樣，
+     * 所以**支付方式原樣保留**（舊檔用「-」表示沒有方式，換成空字串）。
      * 每月狀態去掉支付方式只留一筆（已完成優先）；到期識別碼拿掉中間的支付方式段。
      */
     private fun upgradeFromV1(file: BackupFile, text: String): BackupFile {
-        val legacy = try {
-            json.decodeFromString(V1File.serializer(), text).amounts
-        } catch (e: SerializationException) {
-            emptyList()
-        }
-        val methodByItem = legacy
-            .filter { it.method.isNotEmpty() && it.method != "-" }
-            .groupBy { it.itemId }
-            .mapValues { (_, rows) ->
-                rows.groupBy { it.method }.maxByOrNull { (_, ms) -> ms.sumOf { it.amount } }?.key
-            }
-        // 第 3 版的項目沒有支付方式；舊檔的刷卡比例改成試算的付款假設（R-MIX-02）。
-        val cardTotal = legacy.filter { it.method == "CREDIT_CARD" }.sumOf { it.amount }
-        val allTotal = legacy.sumOf { it.amount }
-        val cardPercent = if (allTotal > 0) Math.round(cardTotal * 100.0 / allTotal).toInt() else 0
-        val settings = file.settings?.copy(forecastCardPercent = cardPercent)
-        val amounts = file.amounts
-            .groupBy { Triple(it.itemId, it.year, it.month) }
-            .map { (key, rows) -> PlanAmountEntity(key.first, key.second, key.third, rows.sumOf { it.amount }) }
+        val amounts = file.amounts.map { it.copy(method = if (it.method == "-") "" else it.method) }
         val actuals = file.actuals
             .groupBy { Triple(it.itemId, it.year, it.month) }
             .map { (_, rows) -> rows.minByOrNull { it.status } ?: rows.first() }
         val ledger = file.ledger.map { it.copy(postingKey = it.postingKey?.let(::upgradePlanKey)) }
         val postedKeys = file.postedKeys.map { it.copy(key = upgradePlanKey(it.key)) }
         return file.copy(
-            formatVersion = BackupFile.FORMAT_VERSION,
+            formatVersion = 2,
             amounts = amounts,
             actuals = actuals,
             ledger = ledger,
             postedKeys = postedKeys,
-            settings = settings,
         )
     }
 
@@ -175,8 +155,8 @@ object BackupCodec {
     private data class V2File(val items: List<V2Item> = emptyList(), val amounts: List<V1Amount> = emptyList())
 
     /**
-     * 把第 2 版備份升到第 3 版（R-MIX-02）：項目上的支付方式換算成整體的刷卡比例，
-     * 寫進設定的「試算付款假設」；項目本身不再帶支付方式。
+     * 把第 2 版備份升到第 3 版：第 2 版把支付方式放在**項目**上，第 5 版放在**計畫列**上，
+     * 所以把項目的方式蓋回它自己的計畫列（那些列本來就沒有方式）。
      */
     private fun upgradeFromV2(file: BackupFile, text: String): BackupFile {
         val legacy = try {
@@ -184,15 +164,52 @@ object BackupCodec {
         } catch (e: SerializationException) {
             null
         }
-        val cardItems = legacy?.items.orEmpty().filter { it.method == "CREDIT_CARD" }.map { it.id }.toSet()
-        val byItem = legacy?.amounts.orEmpty().groupBy { it.itemId }.mapValues { (_, rows) -> rows.sumOf { it.amount } }
-        val cardTotal = byItem.filterKeys { it in cardItems }.values.sum()
-        val allTotal = byItem.values.sum()
-        val cardPercent = if (allTotal > 0) Math.round(cardTotal * 100.0 / allTotal).toInt() else 0
+        val methodByItem = legacy?.items.orEmpty().mapNotNull { item -> item.method?.let { item.id to it } }.toMap()
+        if (methodByItem.isEmpty()) return file.copy(formatVersion = 3)
         return file.copy(
-            formatVersion = BackupFile.FORMAT_VERSION,
-            settings = file.settings?.copy(forecastCardPercent = cardPercent),
+            formatVersion = 3,
+            amounts = file.amounts.map {
+                if (it.method.isEmpty()) it.copy(method = methodByItem[it.itemId].orEmpty()) else it
+            },
         )
+    }
+
+    /**
+     * 把第 3 版備份升到第 4 版（R-PER-01）：期別編號從半月（年 × 24 + …）換成月（年 × 12 + …），
+     * 到期識別碼去掉最後的「日」那一段。項目的「時點」欄位讀回來時會被忽略，不用處理。
+     */
+    private fun upgradeFromV3(file: BackupFile): BackupFile = file.copy(
+        formatVersion = 4,
+        installments = file.installments.map { it.copy(firstPeriodIndex = monthIndexOf(it.firstPeriodIndex)) },
+        scenarios = file.scenarios.map { it.copy(changesJson = Migrations.rewriteScenarioIndexes(it.changesJson)) },
+        ledger = file.ledger.map { it.copy(postingKey = it.postingKey?.let(::upgradeMonthKey)) },
+        postedKeys = file.postedKeys.map { it.copy(key = upgradeMonthKey(it.key)) },
+    )
+
+    /**
+     * 把第 4 版備份升到第 5 版（R-MIX-01）：計畫列帶回支付方式。
+     * 第 3、4 版的計畫完全沒有支付方式，救不回來，所以支出一律當成**現金**——
+     * 那是對現金流最保守的假設（錢當月就離開帳戶）。想要正確的刷卡／現金結構，重新匯入一次 CSV 就好。
+     */
+    private fun upgradeFromV4(file: BackupFile): BackupFile {
+        val expenses = file.items.filter { it.type == FlowType.EXPENSE.name }.map { it.id }.toSet()
+        return file.copy(
+            formatVersion = 5,
+            amounts = file.amounts.map {
+                if (it.method.isEmpty() && it.itemId in expenses) it.copy(method = PaymentMethod.CASH.name) else it
+            },
+        )
+    }
+
+    /** 半月編號 → 月編號。 */
+    private fun monthIndexOf(halfIndex: Int): Int = halfIndex / 24 * 12 + halfIndex % 24 / 2
+
+    /** `plan:12:2026-09:15` → `plan:12:2026-09`；其他識別碼原樣保留。 */
+    internal fun upgradeMonthKey(key: String): String {
+        if (!key.startsWith("plan:")) return key
+        val parts = key.split(":")
+        if (parts.size != 4) return key
+        return parts.take(3).joinToString(":")
     }
 
     /** `plan:12:CASH:2026-09:15` → `plan:12:2026-09:15`；其他識別碼原樣保留。 */
@@ -212,7 +229,9 @@ object BackupCodec {
             return BackupReadResult.Error("這不是 MyFSL 的備份檔，或檔案已損壞")
         }
         val v2 = if (raw.formatVersion < 2) upgradeFromV1(raw, text.removePrefix(BOM)) else raw
-        val file = if (v2.formatVersion < 3) upgradeFromV2(v2, text.removePrefix(BOM)) else v2
+        val v3 = if (v2.formatVersion < 3) upgradeFromV2(v2, text.removePrefix(BOM)) else v2
+        val v4 = if (v3.formatVersion < 4) upgradeFromV3(v3) else v3
+        val file = if (v4.formatVersion < 5) upgradeFromV4(v4) else v4
         if (file.app != BackupFile.APP) return BackupReadResult.Error("這不是 MyFSL 的備份檔")
         if (file.formatVersion > BackupFile.FORMAT_VERSION) {
             return BackupReadResult.Error("這個備份來自較新版本的 App，請先更新 App 再還原")
@@ -225,7 +244,8 @@ object BackupCodec {
             "項目".takeIf { duplicates(file.items) { it.id } },
             "記帳".takeIf { duplicates(file.ledger) { it.id } },
             "分期".takeIf { duplicates(file.installments) { it.id } },
-            "計畫金額".takeIf { duplicates(file.amounts) { listOf(it.itemId, it.year, it.month) } },
+            // 一列＝項目 × 支付方式 × 年 × 月（R-MIX-01），和資料表的主鍵一致
+            "計畫金額".takeIf { duplicates(file.amounts) { listOf(it.itemId, it.method, it.year, it.month) } },
             "延期款".takeIf { duplicates(file.deferrals) { it.id } },
             "帳單".takeIf { duplicates(file.cardStatements) { listOf(it.cardId, it.year, it.month) } },
             "到期項目識別碼".takeIf { duplicates(file.ledger.mapNotNull { it.postingKey }) { it } },

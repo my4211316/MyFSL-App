@@ -26,7 +26,7 @@ import androidx.room.RoomDatabase
 )
 abstract class AppDatabase : RoomDatabase() {
     companion object {
-        const val VERSION = 3
+        const val VERSION = 5
         const val NAME = "myfsl.db"
     }
 

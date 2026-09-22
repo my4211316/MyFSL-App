@@ -23,6 +23,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Upload
+import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -45,9 +46,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import tw.myfsl.app.core.domain.ImportMode
 import tw.myfsl.app.core.domain.PlanIssue
+import tw.myfsl.app.core.domain.PlanTableView
 import tw.myfsl.app.core.domain.Severity
 import tw.myfsl.app.core.model.MoneyFormat
 import tw.myfsl.app.ui.components.BottomActions
+import tw.myfsl.app.ui.components.CashLineChart
+import tw.myfsl.app.ui.components.ChartSeries
 import tw.myfsl.app.ui.components.GroupLabel
 import tw.myfsl.app.ui.components.HintText
 import tw.myfsl.app.ui.components.ListCard
@@ -64,10 +68,14 @@ import tw.myfsl.app.ui.components.StatusBadge
 import tw.myfsl.app.ui.components.SummaryTile
 import tw.myfsl.app.ui.components.Tone
 import tw.myfsl.app.ui.theme.Spacing
+import tw.myfsl.app.ui.theme.chartColors
 import tw.myfsl.app.ui.theme.warningColors
 
 /**
- * 計畫（設計稿：全畫面改版 v1）：年度摘要、計畫檢查、項目清單或月份表格。
+ * 計畫（設計稿：全畫面改版 v1）：年度摘要、未來現金水位、計畫檢查、項目清單或月份表格。
+ *
+ * 水位圖放在這裡（R-PLS-09）：那是「照這份計畫走下去會怎樣」，和年度計畫是同一件事；
+ * 要比較「改了會怎樣」請到試算開情境（R-SCN）。
  * 匯入、匯出、下載範本一年只用幾次，收在右上角選單；還沒有計畫時畫面中間直接給「匯入 CSV」。
  */
 @Composable
@@ -84,6 +92,8 @@ fun PlanScreen(
     onAddItem: () -> Unit,
     onEditItem: (Long) -> Unit,
     onShowTable: (Boolean) -> Unit,
+    onTableView: (PlanTableView) -> Unit,
+    onOpenForecast: () -> Unit,
     editorContent: @Composable (ItemEditor) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -137,34 +147,109 @@ fun PlanScreen(
                 } else {
                     item(key = "summary") {
                         Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                            // 三格加得起來（R-PLS-08）：收入 − 支出 = 結構缺口，中間不再外加任何一格。
                             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                                 SummaryTile("全年收入", MoneyFormat.currency(summary.totalIncome), Modifier.weight(1f))
                                 SummaryTile("全年支出", MoneyFormat.currency(summary.totalExpense), Modifier.weight(1f))
                             }
-                            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                                SummaryTile(
-                                    "結構缺口", MoneyFormat.signed(summary.structuralGap), Modifier.weight(1f),
-                                    valueColor = if (summary.structuralGap < 0) MaterialTheme.colorScheme.error else Color.Unspecified,
-                                )
-                                SummaryTile(
-                                    "卡債全年增加", MoneyFormat.signed(summary.cardDebtIncrease), Modifier.weight(1f),
-                                    valueColor = if (summary.cardDebtIncrease > 0) MaterialTheme.colorScheme.error else Color.Unspecified,
+                            SummaryTile(
+                                "結構缺口（收入 − 支出）", MoneyFormat.signed(summary.structuralGap), Modifier.fillMaxWidth(),
+                                valueColor = if (summary.structuralGap < 0) MaterialTheme.colorScheme.error else Color.Unspecified,
+                            )
+                            // 支出＝一定要付出去的錢：貸款月繳與繳卡費都在裡面（R-PLS-04）。
+                            HintText(
+                                "支出含貸款月繳 ${MoneyFormat.currency(summary.totalLoanPayments)}" +
+                                    "（利息 ${MoneyFormat.currency(summary.totalLoanInterest)}）" +
+                                    "、繳卡費 ${MoneyFormat.currency(summary.totalCardPayments)}" +
+                                    "（循環利息 ${MoneyFormat.currency(summary.totalCardInterest)}）",
+                            )
+                            // 編列的是「打算花多少」，支出是「要付出去多少」——刷卡隔月繳，兩者本來就不一樣（R-PLS-10）。
+                            if (summary.totalCardSpending > 0) {
+                                HintText(
+                                    "今年打算花 ${MoneyFormat.currency(summary.totalPlannedExpense)}" +
+                                        "（刷卡 ${MoneyFormat.currency(summary.totalCardSpending)}" +
+                                        " ＋ 非刷卡 ${MoneyFormat.currency(summary.totalNonCardSpending)}）：" +
+                                        "刷的要等繳卡費才真的出去，所以和上面的支出不一樣",
                                 )
                             }
-                            // 支出是真正的費用（含利息）；貸款本金不是費用，另外列（R-PLS-04）。
-                            HintText(
-                                "支出含貸款利息 ${MoneyFormat.currency(summary.totalLoanInterest)}" +
-                                    "、循環利息 ${MoneyFormat.currency(summary.totalCardInterest)}；" +
-                                    "另還貸款本金 ${MoneyFormat.currency(summary.totalLoanPrincipal)}",
-                            )
-                            // 只編了幾個月時，自動產生的貸款與卡費也只算那幾個月（R-PLS-05）。
+                            // 還本金不是花掉，是把負債換成淨值，所以另外標出來（R-PLS-04）。
+                            if (summary.debtPrincipal != 0L) {
+                                HintText(
+                                    "其中 ${MoneyFormat.currency(summary.debtPrincipal)} 是在還債務本金；" +
+                                        "不算還本金的話，費用比收入${if (summary.gapWithoutPrincipal < 0) "多" else "少"} " +
+                                        MoneyFormat.currency(kotlin.math.abs(summary.gapWithoutPrincipal)),
+                                )
+                            }
+                            // 卡債的標題跟著方向走（R-PLS-07）：不會用「增加」描述一個負數。
+                            if (summary.cards.isNotEmpty()) {
+                                HintText(
+                                    "${summary.cardDebtLabel} ${MoneyFormat.currency(kotlin.math.abs(summary.cardDebtChange))}：" +
+                                        "年初 ${MoneyFormat.currency(summary.cardDebtStart)} → " +
+                                        "年底 ${MoneyFormat.currency(summary.cardDebtEnd)}",
+                                    color = if (summary.cardDebtChange > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                // 逐卡把「刷多少 vs 繳多少」講出來（R-PLS-10）：這是編刷卡列時最需要看到的一句話。
+                                summary.cards.filter { it.spending > 0 || it.payments > 0 }.forEach { card ->
+                                    HintText(
+                                        "${card.name}：刷 ${MoneyFormat.currency(card.spending)}" +
+                                            "、利息 ${MoneyFormat.currency(card.interest)}" +
+                                            "、繳 ${MoneyFormat.currency(card.payments)}" +
+                                            " → 年底 ${MoneyFormat.currency(card.end)}",
+                                        color = if (card.change > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            if (summary.loans.isNotEmpty()) {
+                                HintText(
+                                    "貸款年底還欠 ${MoneyFormat.currency(summary.loanDebtEnd)}" +
+                                        "（年初 ${MoneyFormat.currency(summary.loanDebtStart)}）",
+                                )
+                            }
+                            // 自動產生的貸款與卡費只算「有編計畫、而且今天以後」的月份（R-PLS-05）。
                             if (summary.monthCount in 1..11) {
                                 HintText(
-                                    "這一年只編了 ${summary.plannedMonths.first()}–${summary.plannedMonths.last()} 月，" +
-                                        "貸款與卡費也只算這 ${summary.monthCount} 個月",
+                                    "貸款與卡費只算 ${summary.autoMonths.first()}–${summary.autoMonths.last()} 月" +
+                                        "（共 ${summary.monthCount} 個月）：有編計畫、而且今天以後的月份才預測",
                                     color = MaterialTheme.warningColors.warning,
                                 )
                             }
+                        }
+                    }
+                }
+
+                val outlook = state.outlook
+                if (outlook != null && outlook.hasCurve) {
+                    item(key = "cash") {
+                        SectionCard {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                                Text("未來現金水位", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                                outlook.monthsUntilBelowSafety?.let { months ->
+                                    StatusBadge(
+                                        if (months <= 0) "本月低於安全線" else "約 $months 個月後低於安全線",
+                                        tone = Tone.WARNING,
+                                        icon = Icons.Rounded.Warning,
+                                    )
+                                }
+                            }
+                            CashLineChart(
+                                series = listOf(ChartSeries("現況", MaterialTheme.chartColors.at(0), outlook.monthlyLows)),
+                                labels = outlook.monthLabels,
+                                safetyLevel = outlook.safetyLevel,
+                                height = 120.dp,
+                                interactive = false,
+                            )
+                            Text(
+                                "最低 ${MoneyFormat.currency(outlook.lowest)}" + (outlook.lowestLabel?.let { "（$it）" } ?: ""),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (outlook.lowest < outlook.safetyLevel) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                            )
+                            HintText("一個月一個點，就是月底還剩多少。照這份計畫走下去的結果，還沒有改任何東西。")
+                            outlook.shortfall?.let { HintText(it) }
+                            TextButton(onClick = onOpenForecast, modifier = Modifier.padding(start = 0.dp)) { Text("到試算比較不同做法") }
                         }
                     }
                 }
@@ -180,7 +265,7 @@ fun PlanScreen(
                 }
                 val table = state.table
                 if (state.showTable && table != null) {
-                    item(key = "table") { PlanMonthTable(table, onEditItem) }
+                    item(key = "table") { PlanMonthTable(table, onEditItem, onTableView) }
                 } else if (state.rows.isNotEmpty()) {
                     state.rows.groupBy { it.groupName }.forEach { (group, rows) ->
                         item(key = "group-$group") { PlanRowGroup(group, rows, onEditItem) }

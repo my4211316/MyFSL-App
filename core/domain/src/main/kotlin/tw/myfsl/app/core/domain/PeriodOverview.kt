@@ -37,22 +37,22 @@ data class PeriodOverview(
     val liquidAccounts: List<Account>,
     /** 要留給卡費的現金（R-CARD-25）；[liquid] 扣掉它才是真正可以用的。 */
     val cardReserve: Money = 0,
-    /** 未來每月最低水位，第一個值為本月。 */
-    val monthlyLows: List<Money>,
-    val monthLabels: List<String>,
-    val safetyLevel: Money,
-    val lowest: Money,
-    val lowestLabel: String?,
-    /** 首次低於安全線距今幾個月；不會低於時為 null。 */
-    val monthsUntilBelowSafety: Int?,
+    /** 未來現金水位（R-PLS-09）：圖表在計畫畫面，本期只留一句提醒。 */
+    val outlook: CashOutlook,
     val checkIn: CheckInReminder,
     val budget: List<LineProgress>,
     val upcoming: List<UpcomingItem>,
     /** 需要提醒備份時的文字；最近備份過為 null。 */
     val backupReminder: String? = null,
-    /** 總水位夠、但某個扣款帳戶會不夠扣時的提醒（R-FC-12）。 */
-    val shortfall: String? = null,
-)
+) {
+    val monthlyLows: List<Money> get() = outlook.monthlyLows
+    val monthLabels: List<String> get() = outlook.monthLabels
+    val safetyLevel: Money get() = outlook.safetyLevel
+    val lowest: Money get() = outlook.lowest
+    val lowestLabel: String? get() = outlook.lowestLabel
+    val monthsUntilBelowSafety: Int? get() = outlook.monthsUntilBelowSafety
+    val shortfall: String? get() = outlook.shortfall
+}
 
 /** 本期畫面的資料：現金、水位、本週檢查、可調支出進度、接下來到期。 */
 object PeriodOverviewCalculator {
@@ -61,8 +61,6 @@ object PeriodOverviewCalculator {
         val today = snapshot.today
         val input = BaselineBuilder.build(snapshot)
         val result = CashFlowEngine.run(input)
-        val lows = ForecastSummary.monthlyLows(result)
-        val labels = result.periods.map { it.period }.distinctBy { it.yearMonth }.map { ForecastSummary.shortLabel(it) }
         val start = Period.of(today)
 
         val upcoming = result.periods
@@ -89,12 +87,7 @@ object PeriodOverviewCalculator {
             liquid = snapshot.activeAccounts.filter { it.kind.isLiquid }.sumOf { it.balance },
             liquidAccounts = snapshot.activeAccounts.filter { it.kind.isLiquid },
             cardReserve = CardRules.reserve(snapshot),
-            monthlyLows = lows,
-            monthLabels = labels,
-            safetyLevel = snapshot.settings.safetyLevel,
-            lowest = result.lowestLiquid,
-            lowestLabel = result.lowest?.period?.let { ForecastSummary.shortLabel(it) },
-            monthsUntilBelowSafety = result.firstBelowSafety?.let { ForecastSummary.monthsUntil(start, it.period) },
+            outlook = CashOutlookCalculator.from(result, snapshot),
             checkIn = CheckInReminder(
                 daysSinceLast = last?.let { ChronoUnit.DAYS.between(it, today) },
                 // 到期確認＋到期還沒記下的項目（R-DUE-05）
@@ -106,9 +99,6 @@ object PeriodOverviewCalculator {
             budget = BudgetProgressCalculator.forMonth(snapshot),
             upcoming = upcoming,
             backupReminder = backupReminder(snapshot),
-            shortfall = result.firstShortfall?.let { (p, id) ->
-                "「${result.input.accountName(id)}」約 ${ForecastSummary.shortLabel(p.period)} 會不夠扣款，記得先從其他帳戶轉入"
-            },
         )
     }
 

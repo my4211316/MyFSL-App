@@ -17,7 +17,6 @@ import tw.myfsl.app.core.model.PlanGroup
 import tw.myfsl.app.core.model.PlanItem
 import tw.myfsl.app.core.model.PlanLine
 import tw.myfsl.app.core.model.RepaymentMethod
-import tw.myfsl.app.core.model.Timing
 import tw.myfsl.app.core.model.TrackingMode
 import java.time.LocalDate
 
@@ -47,7 +46,6 @@ object SampleHousehold {
     const val PARKING = 401L
     const val POLICY_INTEREST = 402L
     const val LIVING = 501L
-    const val FOOD_CASH = 505L
     const val HOUSEHOLD = 502L
     const val FUEL = 503L
     const val PHONE = 504L
@@ -93,46 +91,49 @@ object SampleHousehold {
         PlanGroup(8, "繳卡費與貸款", 8),
     )
 
-    private fun income(id: Long, name: String, timing: Timing, tracking: TrackingMode) =
-        PlanItem(id, name, 1, FlowType.INCOME, accountId = BANK, timing = timing, tracking = tracking)
+    private fun income(id: Long, name: String, tracking: TrackingMode, dueDay: Int? = null) =
+        PlanItem(id, name, 1, FlowType.INCOME, accountId = BANK, tracking = tracking, dueDay = dueDay)
 
+    /**
+     * [dueDay] 沒填就是沒填（R-PER-02）：那一項整個月都可以點一下付掉，不提醒。
+     * 可調、到期確認的項目本來就沒有固定的哪一天，所以都不填。
+     */
     private fun expense(
         id: Long,
         name: String,
         group: Long,
-        timing: Timing,
+        dueDay: Int? = null,
         flexible: Boolean = false,
         tracking: TrackingMode = TrackingMode.AUTO,
     ) = PlanItem(
         id, name, group, FlowType.EXPENSE,
-        timing = timing,
         flexibility = if (flexible) Flexibility.FLEXIBLE else Flexibility.FIXED,
         tracking = tracking,
+        dueDay = dueDay,
     )
 
     val items = listOf(
-        income(SALARY, "薪資", Timing.FIRST_HALF, TrackingMode.AUTO).copy(dueDay = 15),
-        income(BONUS, "年終獎金", Timing.FIRST_HALF, TrackingMode.CONFIRM),
-        income(SUBSIDY, "教育補助", Timing.FIRST_HALF, TrackingMode.CONFIRM),
-        expense(INCOME_TAX, "所得稅", 2, Timing.SECOND_HALF),
-        expense(VEHICLE_TAX, "牌照燃料稅", 2, Timing.SECOND_HALF),
-        expense(INSURANCE, "保險費", 2, Timing.FIRST_HALF),
-        expense(ELECTRICITY, "電費", 3, Timing.SECOND_HALF),
-        expense(GAS, "瓦斯", 3, Timing.SECOND_HALF),
-        expense(PARKING, "停車費", 4, Timing.FIRST_HALF),
-        expense(POLICY_INTEREST, "保單借款利息", 4, Timing.SECOND_HALF),
-        expense(LIVING, "生活費", 5, Timing.SPLIT, flexible = true, tracking = TrackingMode.LEDGER),
-        expense(FOOD_CASH, "現金伙食", 5, Timing.SPLIT, flexible = true, tracking = TrackingMode.LEDGER),
-        expense(HOUSEHOLD, "家用", 5, Timing.SPLIT, flexible = true, tracking = TrackingMode.LEDGER),
-        expense(FUEL, "交通油資", 5, Timing.SPLIT, flexible = true, tracking = TrackingMode.LEDGER),
-        expense(PHONE, "手機網路", 5, Timing.FIRST_HALF),
-        expense(LESSONS, "才藝課", 6, Timing.FIRST_HALF, flexible = true),
-        expense(CONTEST, "比賽報名", 6, Timing.SECOND_HALF, flexible = true, tracking = TrackingMode.CONFIRM),
-        expense(RED_ENVELOPE, "紅包", 7, Timing.FIRST_HALF, flexible = true, tracking = TrackingMode.CONFIRM),
-        expense(BIRTHDAY, "生日", 7, Timing.SECOND_HALF, flexible = true, tracking = TrackingMode.CONFIRM),
-        expense(CAR_SERVICE, "汽車保養", 7, Timing.SECOND_HALF, tracking = TrackingMode.CONFIRM),
-        expense(TRIP, "家族旅遊", 7, Timing.SECOND_HALF, flexible = true, tracking = TrackingMode.CONFIRM),
-        PlanItem(PAY_CARD_B, "繳信用卡 B", 8, FlowType.TRANSFER, accountId = BANK, toAccountId = CARD_B, timing = Timing.SECOND_HALF),
+        income(SALARY, "薪資", TrackingMode.AUTO, dueDay = 15),
+        income(BONUS, "年終獎金", TrackingMode.CONFIRM),
+        income(SUBSIDY, "教育補助", TrackingMode.CONFIRM),
+        expense(INCOME_TAX, "所得稅", 2, dueDay = 25),
+        expense(VEHICLE_TAX, "牌照燃料稅", 2, dueDay = 25),
+        expense(INSURANCE, "保險費", 2, dueDay = 10),
+        expense(ELECTRICITY, "電費", 3, dueDay = 20),
+        expense(GAS, "瓦斯", 3, dueDay = 20),
+        expense(PARKING, "停車費", 4, dueDay = 1),
+        expense(POLICY_INTEREST, "保單借款利息", 4, dueDay = 20),
+        expense(LIVING, "生活費", 5, flexible = true, tracking = TrackingMode.LEDGER),
+        expense(HOUSEHOLD, "家用", 5, flexible = true, tracking = TrackingMode.LEDGER),
+        expense(FUEL, "交通油資", 5, flexible = true, tracking = TrackingMode.LEDGER),
+        expense(PHONE, "手機網路", 5, dueDay = 1),
+        expense(LESSONS, "才藝課", 6, dueDay = 1, flexible = true),
+        expense(CONTEST, "比賽報名", 6, flexible = true, tracking = TrackingMode.CONFIRM),
+        expense(RED_ENVELOPE, "紅包", 7, flexible = true, tracking = TrackingMode.CONFIRM),
+        expense(BIRTHDAY, "生日", 7, flexible = true, tracking = TrackingMode.CONFIRM),
+        expense(CAR_SERVICE, "汽車保養", 7, tracking = TrackingMode.CONFIRM),
+        expense(TRIP, "家族旅遊", 7, flexible = true, tracking = TrackingMode.CONFIRM),
+        PlanItem(PAY_CARD_B, "繳信用卡 B", 8, FlowType.TRANSFER, accountId = BANK, toAccountId = CARD_B, dueDay = 20),
     )
 
     private fun months(vararg pairs: Pair<Int, Money>): List<Money> =
@@ -140,29 +141,32 @@ object SampleHousehold {
 
     private fun everyMonth(amount: Money): List<Money> = List(12) { amount }
 
-    /** 每一年都使用同一份計畫。 */
+    /**
+     * 每一年都使用同一份計畫。一列是「項目 × 支付方式」（R-MIX-01）：
+     * 「生活費」同時有現金列 9,000 與信用卡列 16,000——現金當月就扣，刷卡要等繳卡費才動到現金。
+     */
     val yearlyPlan: MonthlyAmounts = mapOf(
         PlanLine(SALARY) to everyMonth(65_000),
         PlanLine(BONUS) to months(2 to 150_000),
         PlanLine(SUBSIDY) to months(3 to 5_000, 9 to 5_000),
-        PlanLine(INCOME_TAX) to months(5 to 45_000),
-        PlanLine(VEHICLE_TAX) to months(4 to 7_120, 7 to 4_800),
-        PlanLine(INSURANCE) to months(1 to 45_000, 7 to 45_000),
-        PlanLine(ELECTRICITY) to months(1 to 900, 3 to 900, 5 to 1_200, 7 to 1_500, 9 to 1_500, 11 to 900),
-        PlanLine(GAS) to months(2 to 700, 4 to 700, 6 to 700, 8 to 700, 10 to 700, 12 to 700),
-        PlanLine(PARKING) to everyMonth(2_000),
-        PlanLine(POLICY_INTEREST) to months(6 to 30_000, 12 to 30_000),
-        PlanLine(LIVING) to everyMonth(16_000),
-        PlanLine(FOOD_CASH) to everyMonth(9_000),
-        PlanLine(HOUSEHOLD) to everyMonth(1_000),
-        PlanLine(FUEL) to everyMonth(3_500),
-        PlanLine(PHONE) to everyMonth(2_400),
-        PlanLine(LESSONS) to everyMonth(6_000),
-        PlanLine(CONTEST) to months(4 to 6_000, 10 to 6_000),
-        PlanLine(RED_ENVELOPE) to months(2 to 40_000),
-        PlanLine(BIRTHDAY) to months(2 to 5_000, 6 to 5_000, 11 to 5_000),
-        PlanLine(CAR_SERVICE) to months(3 to 12_000, 9 to 12_000),
-        PlanLine(TRIP) to months(8 to 52_180),
+        PlanLine(INCOME_TAX, PaymentMethod.TRANSFER) to months(5 to 45_000),
+        PlanLine(VEHICLE_TAX, PaymentMethod.TRANSFER) to months(4 to 7_120, 7 to 4_800),
+        PlanLine(INSURANCE, PaymentMethod.TRANSFER) to months(1 to 45_000, 7 to 45_000),
+        PlanLine(ELECTRICITY, PaymentMethod.TRANSFER) to months(1 to 900, 3 to 900, 5 to 1_200, 7 to 1_500, 9 to 1_500, 11 to 900),
+        PlanLine(GAS, PaymentMethod.TRANSFER) to months(2 to 700, 4 to 700, 6 to 700, 8 to 700, 10 to 700, 12 to 700),
+        PlanLine(PARKING, PaymentMethod.TRANSFER) to everyMonth(2_000),
+        PlanLine(POLICY_INTEREST, PaymentMethod.TRANSFER) to months(6 to 30_000, 12 to 30_000),
+        PlanLine(LIVING, PaymentMethod.CASH) to everyMonth(9_000),
+        PlanLine(LIVING, PaymentMethod.CREDIT_CARD) to everyMonth(16_000),
+        PlanLine(HOUSEHOLD, PaymentMethod.CASH) to everyMonth(1_000),
+        PlanLine(FUEL, PaymentMethod.CREDIT_CARD) to everyMonth(3_500),
+        PlanLine(PHONE, PaymentMethod.CREDIT_CARD) to everyMonth(2_400),
+        PlanLine(LESSONS, PaymentMethod.TRANSFER) to everyMonth(6_000),
+        PlanLine(CONTEST, PaymentMethod.CASH) to months(4 to 6_000, 10 to 6_000),
+        PlanLine(RED_ENVELOPE, PaymentMethod.CASH) to months(2 to 40_000),
+        PlanLine(BIRTHDAY, PaymentMethod.CASH) to months(2 to 5_000, 6 to 5_000, 11 to 5_000),
+        PlanLine(CAR_SERVICE, PaymentMethod.CREDIT_CARD) to months(3 to 12_000, 9 to 12_000),
+        PlanLine(TRIP, PaymentMethod.CREDIT_CARD) to months(8 to 52_180),
         PlanLine(PAY_CARD_B) to everyMonth(9_000),
     )
 
@@ -182,18 +186,18 @@ object SampleHousehold {
 
     /**
      * 9 月的記帳。項目本月花多少一律由這些記帳加總得到：
-     * 現金伙食 4,400、生活費（刷卡）9,800、交通油資 2,300、家用 300。
+     * 生活費・現金 4,400、生活費・刷卡 9,800、交通油資 2,300、家用 300。
      */
     val septemberLedger = listOf(
-        entry(1, 12, FOOD_CASH, PaymentMethod.CASH, 3_775, CASH, "9/1–9/12 現金支出（示意）"),
+        entry(1, 12, LIVING, PaymentMethod.CASH, 3_775, CASH, "9/1–9/12 現金支出（示意）"),
         entry(2, 12, LIVING, PaymentMethod.CREDIT_CARD, 9_650, CARD_A, "9/1–9/12 刷卡（示意）"),
         entry(3, 12, FUEL, PaymentMethod.CREDIT_CARD, 1_500, CARD_B, "加油（示意）"),
-        entry(4, 7, FOOD_CASH, PaymentMethod.CASH, 120, CASH, "", EntrySource.MISSED),
+        entry(4, 7, LIVING, PaymentMethod.CASH, 120, CASH, "", EntrySource.MISSED),
         entry(5, 13, HOUSEHOLD, PaymentMethod.CASH, 300, CASH, "清潔用品"),
         entry(6, 13, FUEL, PaymentMethod.CREDIT_CARD, 800, null, "加油"),
-        entry(7, 14, FOOD_CASH, PaymentMethod.CASH, 420, CASH, "買菜"),
+        entry(7, 14, LIVING, PaymentMethod.CASH, 420, CASH, "買菜"),
         entry(8, 14, LIVING, PaymentMethod.CREDIT_CARD, 150, CARD_A, "午餐"),
-        entry(9, 14, FOOD_CASH, PaymentMethod.CASH, 85, CASH, "早餐"),
+        entry(9, 14, LIVING, PaymentMethod.CASH, 85, CASH, "早餐"),
     )
 
     /** 8/15 在本月到期記下的 A 卡繳款（8/1 那期帳單沒繳清，只繳 18,000）；試算從這筆推估之後每期的繳法。 */

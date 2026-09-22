@@ -2,6 +2,7 @@ package tw.myfsl.app.core.domain
 
 import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
+import tw.myfsl.app.core.model.CardPaymentPlan
 import tw.myfsl.app.core.model.AppSettings
 import tw.myfsl.app.core.model.FinanceSnapshot
 import tw.myfsl.app.core.model.FlowType
@@ -20,10 +21,50 @@ data class GroupTotal(val group: PlanGroup, val monthly: List<Money>) {
 }
 
 /**
+ * 一張卡在這一年的推估（R-PLS-06）：欠款**逐月滾動**——這個月的刷卡與利息加進去、繳款扣掉，
+ * 餘額帶到下個月。所以利息會隨欠款下降，也看得出年底還欠多少、照這樣還要幾個月才還得完。
+ */
+data class CardProjection(
+    val accountId: Long,
+    val name: String,
+    /** 這一年開始時的欠款（從今天的餘額一路滾過來）。 */
+    val start: Money,
+    /** 這一年結束時的欠款。 */
+    val end: Money,
+    val spending: Money,
+    val interest: Money,
+    val payments: Money,
+    /** 照這個繳法、含計畫的刷卡，大約幾個月還得完；永遠還不完時為 null（R-CARD-06）。 */
+    val monthsToClear: Int?,
+    /** 這一年每個月要繳多少（12 格，只有推估的月份有值；過去的月份看實際紀錄，R-PLS-11）。 */
+    val monthlyPayments: List<Money> = List(12) { 0L },
+) {
+    /** 這一年的卡債變化：正數 = 變多。 */
+    val change: Money get() = end - start
+}
+
+/** 一筆貸款在這一年的推估：照攤還表逐月往前推，跨年會接續（R-PLS-06）。 */
+data class LoanProjection(
+    val accountId: Long,
+    val name: String,
+    val start: Money,
+    val end: Money,
+    val principal: Money,
+    val interest: Money,
+    /** 這一年結束時還剩幾期。 */
+    val remainingMonths: Int,
+    /** 這一年每個月要繳多少（本金＋利息，12 格；過去的月份看實際紀錄，R-PLS-11）。 */
+    val monthlyPayments: List<Money> = List(12) { 0L },
+)
+
+/**
  * 年度計畫表的三層彙總：明細 → 信用卡帳 / 非刷卡帳 → 月現金流。
  *
- * 支出是**真正的費用**：計畫裡的支出，加上貸款利息與循環利息（R-PLS-04）。
- * 貸款本金還款不是費用，是把錢從口袋換到資產負債表，所以另外列。
+ * **支出＝這個月一定要付出去的錢**（R-PLS-04）：非刷卡支出 ＋ 貸款月繳（本金＋利息）＋ 繳卡費。
+ * 使用者把貸款的攤還條件、卡片的帳單與最低應繳輸進來之後，每期要繳多少就是算得出來的，
+ * 那就是一筆一定要付的預算項目，和水電費沒有兩樣——所以整筆放進支出，不再拆成「利息算支出、本金另外列」。
+ * 利息也**不另外加一次**：它已經包在實際繳出去的錢裡了。
+ * 想看「不算還本金的話結構差多少」，看 [gapWithoutPrincipal]。
  */
 data class PlanSummary(
     val year: Int,
@@ -45,9 +86,18 @@ data class PlanSummary(
     val groups: List<GroupTotal>,
     /** 這一年有編計畫的月份範圍（1–12）；沒有計畫時為空。自動產生的繳款只算在這個範圍內（R-PLS-05）。 */
     val plannedMonths: List<Int> = (1..12).toList(),
+    /** 逐卡的推估（R-PLS-06）。 */
+    val cards: List<CardProjection> = emptyList(),
+    /** 逐筆貸款的推估（R-PLS-06）。 */
+    val loans: List<LoanProjection> = emptyList(),
+    /**
+     * 自動產生的繳款（卡費、貸款）實際算了哪幾個月（R-PLS-05）：
+     * 有編計畫、而且不早於今天所在的月份——過去的月份不預測。
+     */
+    val autoMonths: List<Int> = (1..12).toList(),
 ) {
-    /** 全年支出 = 計畫支出 ＋ 貸款利息 ＋ 循環利息。 */
-    val expense: List<Money> get() = List(12) { plannedExpense[it] + loanInterest[it] + cardInterest[it] }
+    /** 全年支出 = 非刷卡支出 ＋ 繳卡費 ＋ 貸款月繳（R-PLS-04）。刷卡的錢算在繳卡費那一筆，不重複算。 */
+    val expense: List<Money> get() = List(12) { nonCardSpending[it] + cardPayments[it] + loanPayments[it] }
 
     /** 繳貸款總額（本金＋利息）。 */
     val loanPayments: List<Money> get() = List(12) { loanPrincipal[it] + loanInterest[it] }
@@ -64,7 +114,7 @@ data class PlanSummary(
     val totalCardInterest: Money get() = cardInterest.sum()
 
     /** 這一年算了幾個月的自動繳款（畫面用來說明「只算 10–12 月」）。 */
-    val monthCount: Int get() = plannedMonths.size
+    val monthCount: Int get() = autoMonths.size
 
     /** 每月繳卡費＋貸款。 */
     val debtPayments: List<Money> get() = List(12) { cardPayments[it] + loanPayments[it] }
@@ -72,14 +122,37 @@ data class PlanSummary(
     /** 月現金流：收入 − 非刷卡支出 − 繳卡費 − 貸款繳款。 */
     val monthlyCashFlow: List<Money> get() = List(12) { income[it] - nonCardSpending[it] - cardPayments[it] - loanPayments[it] }
 
-    /** 卡債全年淨增加（正數 = 刷的、加上利息，比繳的多）。 */
-    val cardDebtIncrease: Money get() = totalCardSpending + totalCardInterest - totalCardPayments
+    /** 年初、年底的卡債與貸款餘額（R-PLS-06）。 */
+    val cardDebtStart: Money get() = cards.sumOf { it.start }
+    val cardDebtEnd: Money get() = cards.sumOf { it.end }
+    val loanDebtStart: Money get() = loans.sumOf { it.start }
+    val loanDebtEnd: Money get() = loans.sumOf { it.end }
+
+    /** 卡債全年變化（正數 = 變多、負數 = 變少）：年底欠款 − 年初欠款。 */
+    val cardDebtChange: Money get() = cardDebtEnd - cardDebtStart
+
+    /** 畫面的標題跟著方向走（R-PLS-07）：不會用「增加」去描述一個負數。 */
+    val cardDebtLabel: String get() = when {
+        cardDebtChange > 0 -> "卡債全年增加"
+        cardDebtChange < 0 -> "卡債全年減少"
+        else -> "卡債全年不變"
+    }
 
     /** 某月卡債預計變化：刷卡 ＋ 循環利息 − 繳卡費。 */
     fun cardDebtChange(month: Int): Money = cardSpending[month - 1] + cardInterest[month - 1] - cardPayments[month - 1]
 
-    /** 年度結構缺口：收入 − 支出（含利息） − 貸款本金還款。 */
-    val structuralGap: Money get() = totalIncome - totalExpense - totalLoanPrincipal
+    /** 年度結構缺口 = 收入 − 支出（R-PLS-04）：這一年帳戶實際會多或少多少錢。 */
+    val structuralGap: Money get() = totalIncome - totalExpense
+
+    /**
+     * 支出裡有多少是在**還債務本金**（R-PLS-04）：貸款本金 ＋（繳卡費 − 循環利息 − 刷卡消費）。
+     * 這些錢不是花掉，是把負債換成淨值，所以另外標出來。
+     */
+    val debtPrincipal: Money get() =
+        totalLoanPrincipal + (totalCardPayments - totalCardInterest - totalCardSpending)
+
+    /** 不算還本金的缺口：只看真正的費用（含利息）比收入多或少多少。 */
+    val gapWithoutPrincipal: Money get() = structuralGap + debtPrincipal
 }
 
 enum class Severity { INFO, WARNING, ERROR }
@@ -102,9 +175,9 @@ object PlanSummaryCalculator {
      */
     fun plannedMonthRange(amounts: MonthlyAmounts, snapshot: FinanceSnapshot, year: Int): List<Int> {
         val months = (1..12).filter { month ->
-            snapshot.items.any { item ->
-                snapshot.isItemActiveIn(item, year, month) &&
-                    (amounts[PlanLine(item.id)]?.getOrElse(month - 1) { 0L } ?: 0L) != 0L
+            amounts.any { (line, values) ->
+                (values.getOrElse(month - 1) { 0L }) != 0L &&
+                    snapshot.item(line.itemId)?.let { snapshot.isItemActiveIn(it, year, month) } == true
             }
         }
         val first = months.minOrNull() ?: return emptyList()
@@ -122,32 +195,36 @@ object PlanSummaryCalculator {
         val cardPay = LongArray(12)
         val loanPay = LongArray(12)
         val byGroup = mutableMapOf<Long, LongArray>()
+        // 計畫裡自己編的繳卡費，逐卡分開記：沒有依帳單繳款的卡，就靠這些轉帳還（R-PAY-01）。
+        val planCardPay = mutableMapOf<Long, LongArray>()
 
-        val mix = PaymentAssumption.of(snapshot)
-        for (item in snapshot.items) {
-            val monthly = amounts[PlanLine(item.id)] ?: continue
-            val skipTransfer = item.type == FlowType.TRANSFER && snapshot.isAutoManagedDebt(item.toAccountId) && !item.extraRepayment
-            run {
-                for (m in 0 until 12) {
-                    val amount = monthly.getOrElse(m) { 0L }
-                    if (amount == 0L || !snapshot.isItemActiveIn(item, year, m + 1)) continue
-                    when (item.type) {
-                        FlowType.INCOME -> income[m] += amount
-                        FlowType.EXPENSE -> {
-                            expense[m] += amount
-                            // 刷卡與非刷卡依試算的付款假設拆（R-MIX-02）。
-                            val (cardPart, restPart) = mix.split(amount)
-                            card[m] += cardPart
-                            nonCard[m] += restPart
-                            byGroup.getOrPut(item.groupId) { LongArray(12) }[m] += amount
-                        }
+        // 一列是「項目 × 支付方式」（R-MIX-01）：刷卡與非刷卡直接看計畫列自己寫的，不推估。
+        for ((line, monthly) in amounts) {
+            val item = snapshot.item(line.itemId) ?: continue
+            // 選了「照計畫編的金額」的卡（R-CARD-27）：這筆轉帳就是繳款，照使用者編的月份算，12 個月都算——
+            // 那是他自己編的，不是 App 推估的，所以不受「只預測今天以後」的限制（R-PLS-05）。
+            val fromPlan = item.type == FlowType.TRANSFER && snapshot.paysCardFromPlan(item.toAccountId)
+            val skipTransfer = !fromPlan && item.type == FlowType.TRANSFER &&
+                snapshot.isAutoManagedDebt(item.toAccountId) && !item.extraRepayment
+            for (m in 0 until 12) {
+                val amount = monthly.getOrElse(m) { 0L }
+                if (amount == 0L || !snapshot.isItemActiveIn(item, year, m + 1)) continue
+                when (item.type) {
+                    FlowType.INCOME -> income[m] += amount
+                    FlowType.EXPENSE -> {
+                        expense[m] += amount
+                        if (line.method == PaymentMethod.CREDIT_CARD) card[m] += amount else nonCard[m] += amount
+                        byGroup.getOrPut(item.groupId) { LongArray(12) }[m] += amount
+                    }
 
-                        FlowType.TRANSFER -> if (!skipTransfer) {
-                            when (kinds[item.toAccountId]) {
-                                AccountKind.CREDIT_CARD -> cardPay[m] += amount
-                                AccountKind.LOAN, AccountKind.POLICY_LOAN -> loanPay[m] += amount
-                                else -> Unit
+                    FlowType.TRANSFER -> if (!skipTransfer) {
+                        when (kinds[item.toAccountId]) {
+                            AccountKind.CREDIT_CARD -> {
+                                cardPay[m] += amount
+                                planCardPay.getOrPut(item.toAccountId!!) { LongArray(12) }[m] += amount
                             }
+                            AccountKind.LOAN, AccountKind.POLICY_LOAN -> loanPay[m] += amount
+                            else -> Unit
                         }
                     }
                 }
@@ -157,28 +234,103 @@ object PlanSummaryCalculator {
         // 自動產生的繳款只算在「有編計畫的月份範圍」內（R-PLS-05）：
         // 只編了 10–12 月，就不該拿 12 個月的貸款去比 3 個月的計畫。
         val plannedMonths = plannedMonthRange(amounts, snapshot, year)
+        // 而且不早於今天所在的月份：過去的卡費與貸款已經發生過，不該再預測一次。
+        val autoMonths = autoMonthsOf(snapshot, year)
 
-        // 依帳單繳款的卡：逐卡以目前欠款估算每月利息與依推估繳款方式的繳款。
+        // 逐卡把欠款一個月一個月往前滾（R-PLS-06）：刷卡與利息加進去、繳款扣掉，餘額帶到下個月。
+        // 有依帳單繳款的卡照推估的繳款方式自動繳（R-CARD-26）；沒有的就看計畫裡自己編的繳卡費。
         val interest = LongArray(12)
-        snapshot.activeCards.filter { it.hasCardSchedule }.forEach { account ->
-            val terms = account.card!!
-            val outlook = CardRules.outlook(account.balance, terms, CardRules.assumption(snapshot, account), monthlySpending = 0)
-            plannedMonths.forEach { month ->
-                interest[month - 1] += outlook.interest
-                cardPay[month - 1] += outlook.payment
+        val cards = snapshot.activeCards.map { account ->
+            val terms = account.card
+            val scheduled = account.hasCardSchedule && terms != null
+            val assumption = if (scheduled) CardRules.assumption(snapshot, account) else null
+            // 計畫的刷卡都算在預設卡片上（R-CARD-05）。
+            val ownSpending: (Int, Int) -> Money =
+                if (account.id == snapshot.defaultCardId) { y, m -> cardSpendingOf(snapshot, y, m) } else { _, _ -> 0L }
+            val ownPayment: (Int) -> Money = { month -> planCardPay[account.id]?.getOrElse(month - 1) { 0L } ?: 0L }
+            // 繳款由計畫編的卡：照期別計息，但繳款金額看計畫，而且不再往 cardPay 加一次。
+            val fromPlan = scheduled && snapshot.paysCardFromPlan(account.id)
+            var balance = CardRules.baseBalance(snapshot, account).coerceAtLeast(0)
+            if (scheduled) balance = rollTo(balance, terms!!, assumption!!, snapshot, year, ownSpending)
+            val start = balance
+            var spent = 0L
+            var paid = 0L
+            var owed = 0L
+            val perMonth = LongArray(12)
+            autoMonths.forEach { month ->
+                val spending = ownSpending(year, month)
+                val payment: Money
+                val monthInterest: Money
+                if (fromPlan) {
+                    val outlook = CardRules.outlook(balance, terms!!, assumption!!, spending, payment = ownPayment(month))
+                    payment = outlook.payment
+                    monthInterest = outlook.interest
+                    interest[month - 1] += monthInterest
+                } else if (scheduled) {
+                    val outlook = CardRules.outlook(balance, terms!!, assumption!!, spending)
+                    payment = outlook.payment
+                    monthInterest = outlook.interest
+                    interest[month - 1] += monthInterest
+                    // 依合約自動繳的那一筆才由這裡加進繳卡費；計畫自己編的已經算過了。
+                    cardPay[month - 1] += payment
+                } else {
+                    // 還款最多還到欠款為 0（R-PAY-02）。
+                    payment = minOf(ownPayment(month), balance + spending)
+                    monthInterest = 0
+                }
+                spent += spending
+                paid += payment
+                owed += monthInterest
+                perMonth[month - 1] = payment
+                balance = (balance + monthInterest + spending - payment).coerceAtLeast(0)
             }
+            val monthly = autoMonths.map { ownSpending(year, it) }
+            CardProjection(
+                accountId = account.id,
+                name = account.name,
+                start = start,
+                end = balance,
+                spending = spent,
+                interest = owed,
+                payments = paid,
+                monthsToClear = if (!scheduled) {
+                    null
+                } else {
+                    CardRules.monthsToClear(start, terms!!, assumption!!, if (monthly.isEmpty()) 0L else Math.round(monthly.average()))
+                },
+                monthlyPayments = perMonth.toList(),
+            )
         }
 
-        // 依攤還條件自動繳款的貸款：照攤還表逐期拆本金與利息。
+        // 依攤還條件自動繳款的貸款（R-PLS-06）：照攤還表逐期拆本金與利息，跨年接著算下去。
         val loanInterest = LongArray(12)
-        accounts.filter { !it.archived && it.loan != null && it.balance > 0 }.forEach { loan ->
+        val loans = accounts.filter { !it.archived && it.loan != null && it.balance > 0 }.mapNotNull { loan ->
             val terms = loan.loan!!
             val schedule = LoanAmortization.schedule(loan.balance, terms.annualRatePercent, terms.remainingMonths, terms.method)
-            plannedMonths.forEachIndexed { index, month ->
-                val row = schedule.getOrNull(index) ?: return@forEachIndexed
+            // 第一期繳款在哪個月：之後每個月一期，所以第 n 個月就是攤還表的第 n 期（R-PLS-05）。
+            val firstDue = java.time.YearMonth.from(BaselineBuilder.nextDue(snapshot.trackingFrom, terms.payDay))
+            fun rowIndex(month: Int): Int =
+                ((year - firstDue.year) * 12 + (month - firstDue.monthValue))
+            val first = autoMonths.firstOrNull() ?: return@mapNotNull null
+            val start = schedule.getOrNull(rowIndex(first) - 1)?.balanceAfter
+                ?: loan.balance.takeIf { rowIndex(first) <= 0 }
+                ?: 0L
+            var principal = 0L
+            var paidInterest = 0L
+            var end = start
+            var remaining = schedule.size
+            val perMonth = LongArray(12)
+            autoMonths.forEach { month ->
+                val row = schedule.getOrNull(rowIndex(month)) ?: return@forEach
                 loanPay[month - 1] += row.principal
                 loanInterest[month - 1] += row.interest
+                principal += row.principal
+                paidInterest += row.interest
+                perMonth[month - 1] = row.principal + row.interest
+                end = row.balanceAfter
+                remaining = schedule.size - row.number
             }
+            LoanProjection(loan.id, loan.name, start, end, principal, paidInterest, remaining, perMonth.toList())
         }
 
         return PlanSummary(
@@ -193,8 +345,64 @@ object PlanSummaryCalculator {
             cardInterest = interest.toList(),
             groups = snapshot.groups.sortedBy { it.sortOrder }.mapNotNull { g -> byGroup[g.id]?.let { GroupTotal(g, it.toList()) } },
             plannedMonths = plannedMonths,
+            cards = cards,
+            loans = loans,
+            autoMonths = autoMonths,
         )
     }
+
+    /** 某年某月計畫裡刷卡的支出（R-MIX-01）：計畫列自己寫的，不推估。 */
+    private fun cardSpendingOf(snapshot: FinanceSnapshot, year: Int, month: Int): Money =
+        snapshot.planForYear(year).entries.sumOf { (line, values) ->
+            if (line.method != PaymentMethod.CREDIT_CARD) return@sumOf 0L
+            val item = snapshot.item(line.itemId) ?: return@sumOf 0L
+            if (item.type != FlowType.EXPENSE || !snapshot.isItemActiveIn(item, year, month)) 0L
+            else values.getOrElse(month - 1) { 0L }
+        }
+
+    /**
+     * 這一年實際會算到的自動繳款月份（R-PLS-05）：有編計畫、而且不早於今天所在的月份。
+     * 逐月滾動與年度彙總都用這一份，所以「2026 年底的欠款」和「2027 年初的欠款」一定是同一個數字。
+     */
+    fun autoMonthsOf(snapshot: FinanceSnapshot, year: Int): List<Int> {
+        val thisMonth = java.time.YearMonth.from(snapshot.today)
+        return plannedMonthRange(snapshot.planForYear(year), snapshot, year)
+            .filter { !java.time.YearMonth.of(year, it).isBefore(thisMonth) }
+    }
+
+    /**
+     * 把卡債從今天所在的月份滾到 [year] 的 1 月（R-PLS-06）：
+     * 看 2027 年的時候，起點是 2026 年繳完之後剩下的欠款，不是今天的欠款。
+     * 中間的每一年都只算那一年會算到的月份（[autoMonthsOf]），
+     * 所以上一年畫面上的「年底欠款」就是這一年的「年初欠款」。
+     * [year] 不晚於今天所在的年份時，起點就是今天的欠款。
+     */
+    private fun rollTo(
+        balance: Money,
+        terms: tw.myfsl.app.core.model.CardTerms,
+        assumption: CardRules.PaymentAssumption,
+        snapshot: FinanceSnapshot,
+        year: Int,
+        spendingOf: (Int, Int) -> Money,
+    ): Money {
+        var current = balance
+        var ym = java.time.YearMonth.from(snapshot.today)
+        val target = java.time.YearMonth.of(year, 1)
+        val months = mutableMapOf<Int, List<Int>>()
+        var guard = 0
+        while (ym.isBefore(target) && guard++ < MAX_ROLL_MONTHS) {
+            val allowed = months.getOrPut(ym.year) { autoMonthsOf(snapshot, ym.year) }
+            if (ym.monthValue in allowed) {
+                val spending = spendingOf(ym.year, ym.monthValue)
+                val outlook = CardRules.outlook(current, terms, assumption, spending)
+                current = (current + outlook.interest + spending - outlook.payment).coerceAtLeast(0)
+            }
+            ym = ym.plusMonths(1)
+        }
+        return current
+    }
+
+    private const val MAX_ROLL_MONTHS = 600
 }
 
 /** 自動檢查計畫表的常見錯誤，取代人工核對。 */
@@ -229,10 +437,18 @@ object PlanValidator {
                         from.id == to.id -> issues += PlanIssue(Severity.ERROR, "「${item.name}」轉出與轉入是同一個帳戶", item.id)
                     }
                     if (to != null && snapshot.isAutoManagedDebt(to.id) && lines.isNotEmpty()) {
-                        issues += if (item.extraRepayment) {
-                            PlanIssue(Severity.INFO, "「${item.name}」是額外還款：除了「${to.name}」依合約的月繳之外另外計入", item.id)
-                        } else {
-                            PlanIssue(
+                        issues += when {
+                            // 卡片選了「照計畫編的金額」：這筆就是每期繳款（R-CARD-27），不是被忽略、也不是額外的。
+                            snapshot.paysCardFromPlan(to.id) -> PlanIssue(
+                                Severity.INFO,
+                                "「${item.name}」就是「${to.name}」每期要繳的金額；沒繳完的部分照利率計息",
+                                item.id,
+                            )
+
+                            item.extraRepayment ->
+                                PlanIssue(Severity.INFO, "「${item.name}」是額外還款：除了「${to.name}」依合約的月繳之外另外計入", item.id)
+
+                            else -> PlanIssue(
                                 Severity.WARNING,
                                 "「${item.name}」不計入：「${to.name}」已依合約自動繳款。若這是額外還款，請在項目勾選「額外還款」",
                                 item.id,
@@ -240,7 +456,8 @@ object PlanValidator {
                         }
                     }
                     // 還款最多還到欠款為 0（R-PAY-02）：不會再增加欠款的負債，全年計畫比欠款多時提醒。
-                    val counted = to != null && to.kind.isLiability && (!snapshot.isAutoManagedDebt(to.id) || item.extraRepayment)
+                    val counted = to != null && to.kind.isLiability &&
+                        (!snapshot.isAutoManagedDebt(to.id) || item.extraRepayment || snapshot.paysCardFromPlan(to.id))
                     val growsWithSpending = to?.id == snapshot.defaultCardId
                     val planned = lines.sumOf { line -> amounts[line].orEmpty().sum() }
                     if (counted && !growsWithSpending && planned > to!!.balance.coerceAtLeast(0)) {
@@ -268,30 +485,61 @@ object PlanValidator {
             }
         }
 
-        // 計畫不帶支付方式（R-MIX-01）：只看試算的付款假設需要哪些帳戶（R-MIX-02）。
-        val mix = PaymentAssumption.of(snapshot)
-        val hasExpense = items.any { !it.archived && it.type == FlowType.EXPENSE } &&
-            amounts.any { (_, months) -> months.any { it != 0L } }
-        if (hasExpense && !mix.allCash && snapshot.defaultCardId == null) {
-            issues += PlanIssue(Severity.WARNING, "試算假設會刷卡，但還沒有信用卡帳戶；試算時先用一張沒有利息的替代卡片")
+        // 計畫列自己帶支付方式（R-MIX-01）：看實際用到哪些方式，就檢查那些方式有沒有帳戶。
+        fun planned(method: PaymentMethod) = amounts.any { (line, months) ->
+            line.method == method && months.any { it != 0L } &&
+                snapshot.item(line.itemId)?.archived == false
         }
-        if (hasExpense && mix.cardRatio < 1.0 && resolve(settings.cashAccountId, liquid, AccountKindHint.CASH) == null) {
-            issues += PlanIssue(Severity.ERROR, "計畫有支出，但沒有可以扣款的帳戶，請先新增現金或銀行帳戶")
+        if (planned(PaymentMethod.CREDIT_CARD) && snapshot.defaultCardId == null) {
+            issues += PlanIssue(Severity.WARNING, "計畫有刷卡，但還沒有信用卡帳戶；試算時先用一張沒有利息的替代卡片")
         }
-        // 逐卡看卡債走向：計畫的刷卡都算在預設卡片上（R-CARD-05）。
-        val monthlySpending = Math.round(summary.totalCardSpending / 12.0)
-        snapshot.activeCards.forEach { card ->
-            val terms = card.card ?: return@forEach
-            if (!card.hasCardSchedule) return@forEach
-            val spending = if (card.id == snapshot.defaultCardId) monthlySpending else 0L
-            CardRules.warning(CardRules.outlook(card.balance, terms, CardRules.assumption(snapshot, card), spending))?.let {
-                issues += PlanIssue(Severity.WARNING, "「${card.name}」$it")
+        if (planned(PaymentMethod.CASH) && resolve(settings.cashAccountId, liquid, AccountKindHint.CASH) == null) {
+            issues += PlanIssue(Severity.ERROR, "計畫有現金支出，但沒有可以扣款的帳戶，請先新增現金或銀行帳戶")
+        }
+        if (planned(PaymentMethod.TRANSFER) && resolve(settings.transferAccountId, liquid, AccountKindHint.BANK) == null) {
+            issues += PlanIssue(Severity.ERROR, "計畫有轉帳支出，但沒有可以扣款的帳戶，請先新增銀行帳戶")
+        }
+        // 繳款計畫要編得起來才算得出現金流（R-CARD-27）。
+        snapshot.activeCards.filter { it.hasCardSchedule }.forEach { card ->
+            when (card.card?.paymentPlan) {
+                CardPaymentPlan.PLANNED -> {
+                    val planned = (1..12).sumOf { m -> CardRules.plannedPayment(snapshot, card.id, year, m) }
+                    if (planned == 0L) {
+                        issues += PlanIssue(
+                            Severity.WARNING,
+                            "「${card.name}」選了「${CardPaymentPlan.PLANNED.label}」，但計畫裡沒有繳這張卡的項目：" +
+                                "請新增一個轉帳項目（轉入「${card.name}」）並編上每個月要繳多少",
+                        )
+                    }
+                }
+
+                CardPaymentPlan.MINIMUM -> {
+                    val hasBill = snapshot.cardStatements.any { it.cardId == card.id && it.minimumPayment != null }
+                    if (!hasBill) {
+                        issues += PlanIssue(
+                            Severity.WARNING,
+                            "「${card.name}」選了「${CardPaymentPlan.MINIMUM.label}」，但還沒輸入帳單的最低應繳：" +
+                                "目前先當成全額繳清試算",
+                        )
+                    }
+                }
+
+                CardPaymentPlan.AUTO, CardPaymentPlan.FULL, null -> Unit
             }
         }
-        if (summary.cardDebtIncrease > 0) {
+        // 逐卡看卡債走向（R-PLS-06）：和上面的彙總用同一組逐月滾動的結果，畫面不會出現兩種假設。
+        summary.cards.filter { it.change > 0 }.forEach { card ->
             issues += PlanIssue(
                 Severity.WARNING,
-                "全年刷卡加利息比繳卡費多 ${MoneyFormat.currency(summary.cardDebtIncrease)}，差額會累積成卡債",
+                "「${card.name}」這一年刷 ${MoneyFormat.currency(card.spending)}、利息 ${MoneyFormat.currency(card.interest)}，" +
+                    "繳 ${MoneyFormat.currency(card.payments)} 不夠：年底欠款會從 ${MoneyFormat.currency(card.start)} 變成 " +
+                    "${MoneyFormat.currency(card.end)}",
+            )
+        }
+        if (summary.cardDebtChange > 0) {
+            issues += PlanIssue(
+                Severity.WARNING,
+                "全年刷卡加利息比繳卡費多 ${MoneyFormat.currency(summary.cardDebtChange)}，差額會累積成卡債",
             )
         }
         if (summary.totalIncome == 0L && items.any { !it.archived }) {

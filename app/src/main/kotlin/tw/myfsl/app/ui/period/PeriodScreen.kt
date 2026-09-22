@@ -51,12 +51,12 @@ import tw.myfsl.app.ui.components.ToneProgress
 import tw.myfsl.app.ui.theme.Spacing
 import tw.myfsl.app.ui.theme.chartColors
 
-/** 本期（設計稿：全畫面改版 v1）：可動用現金、現金水位、備份提醒、本週檢查、本月可調支出、接下來到期。 */
+/** 本期（設計稿：全畫面改版 v1）：可動用現金、現金水位一句話、備份提醒、本週檢查、本月支出進度、接下來到期。 */
 @Composable
 fun PeriodScreen(
     state: PeriodUiState,
     onStartCheckIn: () -> Unit,
-    onOpenForecast: () -> Unit,
+    onOpenPlan: () -> Unit,
     onToggleShowAll: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
@@ -95,6 +95,7 @@ fun PeriodScreen(
                 )
             }
 
+            // 水位圖在計畫（R-PLS-09）；今天總覽只留一句提醒與入口。
             item(key = "cash") {
                 SectionCard {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
@@ -103,22 +104,13 @@ fun PeriodScreen(
                             StatusBadge(if (months <= 0) "本月低於安全線" else "約 $months 個月後低於安全線", tone = Tone.WARNING, icon = Icons.Rounded.Warning)
                         }
                     }
-                    if (o.monthlyLows.size > 1) {
-                        CashLineChart(
-                            series = listOf(ChartSeries("現況", MaterialTheme.chartColors.at(0), o.monthlyLows)),
-                            labels = o.monthLabels,
-                            safetyLevel = o.safetyLevel,
-                            height = 120.dp,
-                            interactive = false,
-                        )
-                        Text(
-                            "最低 ${MoneyFormat.currency(o.lowest)}" + (o.lowestLabel?.let { "（$it）" } ?: ""),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (o.lowest < o.safetyLevel) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
+                    Text(
+                        "最低 ${MoneyFormat.currency(o.lowest)}" + (o.lowestLabel?.let { "（$it）" } ?: ""),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (o.lowest < o.safetyLevel) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    )
                     o.shortfall?.let { HintText(it) }
-                    TextButton(onClick = onOpenForecast, modifier = Modifier.padding(start = 0.dp)) { Text("看試算與情境") }
+                    TextButton(onClick = onOpenPlan, modifier = Modifier.padding(start = 0.dp)) { Text("到計畫看水位曲線") }
                 }
             }
 
@@ -141,7 +133,7 @@ fun PeriodScreen(
             item(key = "budget") {
                 Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                     SectionHeader(
-                        "本月可調支出",
+                        "本月支出進度",
                         action = if (o.budget.size > 4) (if (state.showAllBudget) "收起" else "全部 ${o.budget.size} 項") else null,
                         onAction = onToggleShowAll,
                     )
@@ -193,7 +185,7 @@ private fun BudgetRow(line: LineProgress) {
             .padding(horizontal = Spacing.lg, vertical = Spacing.md)
             .clearAndSetSemantics {
                 contentDescription = "${line.item.name}，${line.status.label}，" +
-                    "已花 ${MoneyFormat.currency(line.actual)}，計畫 ${MoneyFormat.currency(line.planned)}" +
+                    "已花 ${MoneyFormat.currency(line.actual)}，還剩 ${MoneyFormat.currency(line.remaining)}，計畫 ${MoneyFormat.currency(line.planned)}" +
                     (line.dailyAllowance?.let { "，每日可用 ${MoneyFormat.currency(it)}" } ?: "") +
                     (line.methodBreakdown?.let { "，這個月 $it" } ?: "")
             },
@@ -205,14 +197,32 @@ private fun BudgetRow(line: LineProgress) {
             StatusBadge(line.status.label, tone = tone)
         }
         ToneProgress(line.spentRatio.toFloat(), tone)
+        // 同一種進度條（R-BUD-10）：用了多少、還剩多少；可調項目才有時間進度與每日可用（R-BUD-05）。
         Row {
             Text(
-                "${MoneyFormat.currency(line.actual)} / ${MoneyFormat.currency(line.planned)} · 時間 ${line.timePercent}%",
+                "用了 ${MoneyFormat.currency(line.actual)} / ${MoneyFormat.currency(line.planned)}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
-            line.dailyAllowance?.let { Text("每日可用 ${MoneyFormat.currency(it)}", style = MaterialTheme.typography.bodySmall) }
+            Text("還剩 ${MoneyFormat.currency(line.remaining)}", style = MaterialTheme.typography.bodySmall)
+        }
+        if (line.flexible) {
+            Row {
+                Text(
+                    "時間 ${line.timePercent}%",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                line.dailyAllowance?.let {
+                    Text(
+                        "每日可用 ${MoneyFormat.currency(it)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
         // 預算不分支付方式，所以這裡補上這個月實際怎麼付的（R-MIX-04）。
         line.methodBreakdown?.let {

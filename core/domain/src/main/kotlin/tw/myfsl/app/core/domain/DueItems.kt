@@ -48,14 +48,23 @@ data class DueItem(
     val assumption: CardRules.PaymentAssumption? = null,
     /** 繳卡費：這一期的結帳日（帳單校正用）。 */
     val statementDate: LocalDate? = null,
+    /**
+     * 有沒有填付款日（R-PER-02）。沒填的項目 [date] 取當月最後一天（只為了排序與範圍），
+     * 整個月都可以點一下付掉，也不會提醒。
+     */
+    val dated: Boolean = true,
 ) {
     val amount: Money get() = entries.sumOf { it.amount }
     val isIncome: Boolean get() = item?.type == FlowType.INCOME
-    fun isDue(today: LocalDate): Boolean = !date.isAfter(today)
+    /** 到期了：有日期的看日期，沒日期的整個月都算（R-PER-02）。 */
+    fun isDue(today: LocalDate): Boolean = !dated || !date.isAfter(today)
     fun isOverdue(today: LocalDate): Boolean = YearMonth.from(date).isBefore(YearMonth.from(today))
 
-    /** 快到期（R-DUE-07）：[DueItems.SOON_DAYS] 天內到期，或已經過了還沒記下；記帳畫面只提示這些。 */
-    fun isSoon(today: LocalDate): Boolean = !date.isAfter(today.plusDays(DueItems.SOON_DAYS))
+/**
+     * 快到期（R-DUE-07）：[DueItems.SOON_DAYS] 天內到期，或已經過了還沒記下；記帳畫面只提示這些。
+     * 沒填付款日的不提醒（R-PER-02）——沒有哪一天可以提醒。
+     */
+    fun isSoon(today: LocalDate): Boolean = dated && !date.isAfter(today.plusDays(DueItems.SOON_DAYS))
 
     /** 支出可以選支付方式（現金／信用卡／轉帳）。 */
     val choosesMethod: Boolean get() = kind == DueKind.PLAN && item?.type == FlowType.EXPENSE
@@ -290,10 +299,14 @@ object DueItems {
 
     private fun day(ym: YearMonth, d: Int): LocalDate = ym.atDay(d.coerceIn(1, ym.lengthOfMonth()))
 
+    /** 分期那一期入帳的日子：那張卡的結帳日，沒設就當月初。 */
+    private fun postingDay(snapshot: FinanceSnapshot, cardId: Long, ym: YearMonth): LocalDate =
+        day(ym, snapshot.account(cardId)?.statementDay ?: 1)
+
     fun ymKey(ym: YearMonth) = "%04d-%02d".format(ym.year, ym.monthValue)
 
-    fun planKey(item: PlanItem, date: LocalDate) =
-        "${PostingKeys.PLAN}${item.id}:${ymKey(YearMonth.from(date))}:${date.dayOfMonth}"
+    /** 一個項目一個月只會到期一次（R-PER-01），所以識別碼只到月份：`plan:<項目>:<年月>`。 */
+    fun planKey(item: PlanItem, ym: YearMonth) = "${PostingKeys.PLAN}${item.id}:${ymKey(ym)}"
 
     fun loanKey(loanId: Long, ym: YearMonth) = "${PostingKeys.LOAN}$loanId:${ymKey(ym)}"
     fun cardInterestKey(cardId: Long, ym: YearMonth) = "${PostingKeys.CARD_INTEREST}$cardId:${ymKey(ym)}"
@@ -306,7 +319,7 @@ object DueItems {
         for (ym in months) {
             for (item in snapshot.items) {
                 if (item.tracking != TrackingMode.AUTO || !snapshot.isItemActiveIn(item, ym.year, ym.monthValue)) continue
-                if (item.type == FlowType.TRANSFER && snapshot.isAutoManagedDebt(item.toAccountId) && !item.extraRepayment) continue
+                if (!snapshot.countsAsOwnTransfer(item)) continue
                 val monthAmount = snapshot.plannedAmount(item.id, ym.year, ym.monthValue)
                 if (monthAmount <= 0) continue
                 val done = snapshot.actuals.any {
@@ -315,20 +328,21 @@ object DueItems {
                 }
                 if (done) continue
                 val method = if (item.type == FlowType.EXPENSE) EntryRules.defaultMethod(snapshot, item) else null
-                item.occurrences(ym.year, ym.monthValue, monthAmount).forEach { (date, amount) ->
-                    if (!inWindow(date)) return@forEach
-                    val key = planKey(item, date)
-                    tasks += Task(date, 4, key) { state ->
-                        // 已經自己記了多少，就少列多少；整月最多到計畫金額。
-                        var post = minOf(amount, monthAmount - state.covered(item, ym))
-                        // 還款最多還到欠款為 0（R-PAY-02）。
-                        if (item.type == FlowType.TRANSFER && state.isLiability(item.toAccountId)) {
-                            post = minOf(post, state.balance(item.toAccountId!!).coerceAtLeast(0))
-                        }
-                        if (post <= 0) return@Task null
-                        val entry = planEntry(snapshot, item, method, date, post, key) ?: return@Task null
-                        DueItem(key, DueKind.PLAN, date, item.name, listOf(entry), item, method)
+                // 一個月一次（R-PER-01）：有填付款日就在那一天，沒填就是「這個月」（R-PER-02）。
+                val due = item.dueDateIn(ym.year, ym.monthValue)
+                val date = due ?: ym.atEndOfMonth()
+                if (!inWindow(date)) continue
+                val key = planKey(item, ym)
+                tasks += Task(date, 4, key) { state ->
+                    // 已經自己記了多少，就少列多少；整月最多到計畫金額。
+                    var post = monthAmount - state.covered(item, ym)
+                    // 還款最多還到欠款為 0（R-PAY-02）。
+                    if (item.type == FlowType.TRANSFER && state.isLiability(item.toAccountId)) {
+                        post = minOf(post, state.balance(item.toAccountId!!).coerceAtLeast(0))
                     }
+                    if (post <= 0) return@Task null
+                    val entry = planEntry(snapshot, item, method, date, post, key) ?: return@Task null
+                    DueItem(key, DueKind.PLAN, date, item.name, dated = due != null, entries = listOf(entry), item = item, method = method)
                 }
             }
         }
@@ -477,13 +491,16 @@ object DueItems {
         }
     }
 
-    /** 分期：每期在該期開始那天入帳本金（變成卡債，不重算預算）與手續費（算支出）。 */
+    /**
+     * 分期：每期在那個月入帳本金（變成卡債，不重算預算）與手續費（算支出）。
+     * 一期就是一個月（R-PER-01）；入帳日看那張卡的結帳日，沒設結帳日的就當月初。
+     */
     private fun installmentTasks(snapshot: FinanceSnapshot, inWindow: (LocalDate) -> Boolean, tasks: MutableList<Task>) {
         snapshot.installments.filter { !it.settled }.forEach { installment ->
             val card = installment.cardAccountId ?: snapshot.defaultCardId ?: return@forEach
             val name = snapshot.item(installment.itemId)?.name ?: "分期"
             InstallmentRules.schedule(installment).forEach { period ->
-                val date = Period.fromIndex(period.periodIndex).startDate
+                val date = postingDay(snapshot, card, Period.fromIndex(period.periodIndex).yearMonth)
                 if (!inWindow(date)) return@forEach
                 val key = installmentKey(installment.id, period.number)
                 tasks += Task(date, 0, key) {

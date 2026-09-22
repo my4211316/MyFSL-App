@@ -71,8 +71,14 @@ class MigrationTest {
                     assertTrue("v$to 新增資料表 $table 沒有 CREATE TABLE", sql.contains("CREATE TABLE IF NOT EXISTS `$table`"))
                     return@forEach
                 }
+                // 重建資料表（改主鍵時必須這樣做）已經涵蓋新欄位，不需要再 ALTER。
+                val rebuilt = sql.contains("CREATE TABLE IF NOT EXISTS `${table}_new`") &&
+                    sql.contains("INSERT INTO `${table}_new`") &&
+                    sql.contains("DROP TABLE `$table`") &&
+                    sql.contains("ALTER TABLE `${table}_new` RENAME TO `$table`")
                 val existing = old.getValue(table).map { it.name }.toSet()
                 columns.filter { it.name !in existing }.forEach { column ->
+                    if (rebuilt) return@forEach
                     val expected = "ALTER TABLE `$table` ADD COLUMN `${column.name}` ${column.affinity}"
                     assertTrue("v$to 缺少：$expected", sql.contains(expected))
                     if (column.notNull) {

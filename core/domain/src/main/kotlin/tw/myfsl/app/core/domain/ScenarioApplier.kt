@@ -138,7 +138,8 @@ object ScenarioApplier {
                         relatedAccountId = loanId,
                         source = EventSource.SCENARIO,
                     )
-                    val firstPayment = Period(startPeriod.year, startPeriod.month, change.payHalf).plus(2)
+                    // 撥款當月入帳，下個月起繳款（R-PER-01）。
+                    val firstPayment = startPeriod.next()
                     val payments = LoanAmortization
                         .schedule(change.principal, change.annualRatePercent, change.months, change.method)
                         .flatMapIndexed { i, installment ->
@@ -146,7 +147,7 @@ object ScenarioApplier {
                                 loanAccountId = loanId,
                                 loanName = change.name,
                                 payAccountId = payAccount,
-                                period = firstPayment.plus(i * 2),
+                                period = firstPayment.plus(i),
                                 installment = installment,
                                 source = EventSource.SCENARIO,
                             )

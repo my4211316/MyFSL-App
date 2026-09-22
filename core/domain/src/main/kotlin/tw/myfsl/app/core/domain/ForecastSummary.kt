@@ -8,9 +8,8 @@ import kotlin.math.abs
 /** 試算結果的顯示規則。 */
 object ForecastSummary {
 
-    /** 每月最低水位：同一個月兩個半月的保守最低點取較小者，依月份排列。 */
-    fun monthlyLows(result: ForecastResult): List<Money> =
-        result.periods.groupBy { it.period.yearMonth }.values.map { halves -> halves.minOf { it.liquidLow } }
+    /** 每月水位：一期就是一個月（R-PER-01），一個月一個點，就是月底餘額。 */
+    fun monthlyLows(result: ForecastResult): List<Money> = result.periods.map { it.liquidEnd }
 
     /** 從 [from] 到 [to] 相隔幾個月（只看年月）。 */
     fun monthsUntil(from: Period, to: Period): Int = (to.year - from.year) * 12 + (to.month - from.month)

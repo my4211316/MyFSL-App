@@ -4,6 +4,7 @@ import tw.myfsl.app.core.model.Account
 import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.ActualStatus
 import tw.myfsl.app.core.model.CardInstallment
+import tw.myfsl.app.core.model.CardPaymentPlan
 import tw.myfsl.app.core.model.CardStatement
 import tw.myfsl.app.core.model.InstallmentFee
 import tw.myfsl.app.core.model.CardTerms
@@ -21,7 +22,6 @@ import tw.myfsl.app.core.model.PlanItem
 import tw.myfsl.app.core.model.RepaymentMethod
 import tw.myfsl.app.core.model.Scenario
 import tw.myfsl.app.core.model.ScenarioChange
-import tw.myfsl.app.core.model.Timing
 import tw.myfsl.app.core.model.TrackingMode
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -48,7 +48,15 @@ fun AccountEntity.toModel() = Account(
     paymentDueDay = paymentDueDay,
     issuer = issuer,
     statementDay = cardStatementDay,
-    card = if (cardSchedule) CardTerms(revolvingRatePercent = cardRatePercent, payAccountId = cardPayAccountId) else null,
+    card = if (cardSchedule) {
+        CardTerms(
+            revolvingRatePercent = cardRatePercent,
+            payAccountId = cardPayAccountId,
+            paymentPlan = CardPaymentPlan.entries.firstOrNull { it.name == cardPaymentPlan } ?: CardPaymentPlan.AUTO,
+        )
+    } else {
+        null
+    },
     loan = if (loanRatePercent != null && loanRemainingMonths != null && loanMethod != null &&
         loanPayAccountId != null && loanPayDay != null
     ) {
@@ -82,6 +90,7 @@ fun Account.toEntity() = AccountEntity(
     cardSchedule = card != null,
     cardRatePercent = card?.revolvingRatePercent,
     cardPayAccountId = card?.payAccountId,
+    cardPaymentPlan = card?.paymentPlan?.name.orEmpty(),
     cardStatementDay = statementDay,
     issuer = issuer,
     archived = archived,
@@ -101,7 +110,6 @@ fun PlanItemEntity.toModel() = PlanItem(
     type = FlowType.valueOf(type),
     accountId = accountId,
     toAccountId = toAccountId,
-    timing = Timing.valueOf(timing),
     flexibility = Flexibility.valueOf(flexibility),
     tracking = TrackingMode.valueOf(tracking),
     note = note,
@@ -119,7 +127,6 @@ fun PlanItem.toEntity() = PlanItemEntity(
     type = type.name,
     accountId = accountId,
     toAccountId = toAccountId,
-    timing = timing.name,
     flexibility = flexibility.name,
     tracking = tracking.name,
     note = note,

@@ -105,7 +105,7 @@ fun ForecastScreen(
                 item(key = "chart") {
                     val visible = comparison.outcomes.withIndex().filter { (_, o) -> o.scenario?.id?.let { it !in state.hidden } ?: true }
                     SectionCard {
-                        Text("每月最低現金水位", style = MaterialTheme.typography.titleSmall)
+                        Text("每月現金水位（月底）", style = MaterialTheme.typography.titleSmall)
                         CashLineChart(
                             series = visible.map { (i, o) -> ChartSeries(o.name, chart.at(i), o.monthlyLows) },
                             labels = comparison.labels,
@@ -227,8 +227,8 @@ private fun ComparisonTable(c: Comparison) {
         }
         if (multi) HintText("粗體是各列最好的數字；左右滑看其他情境。")
         HintText(
-            "最低水位是以半月為單位、同半月內支出先於收入的估算，不是某一天的銀行餘額。" +
-                "年化缺口＝(收入 − 支出 − 貸款本金) × 24 ÷ 期數，支出含利息與分期手續費。期末總負債含未入帳的分期本金。",
+            "水位是每個月底的可動用餘額（一期一個月，R-PER-01），不是某一天的銀行餘額。" +
+                "年化缺口＝(收入 − 支出 − 貸款本金) × 12 ÷ 月數，支出含利息與分期手續費。期末總負債含未入帳的分期本金。",
         )
     }
 }

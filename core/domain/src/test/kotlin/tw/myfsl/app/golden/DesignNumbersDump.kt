@@ -1,6 +1,7 @@
 package tw.myfsl.app.golden
 
 import tw.myfsl.app.core.sample.SampleHousehold
+import tw.myfsl.app.core.sample.SampleHousehold.LIVING
 import tw.myfsl.app.core.sample.SampleHousehold.BANK
 import tw.myfsl.app.core.sample.SampleHousehold.BIRTHDAY
 import tw.myfsl.app.core.sample.SampleHousehold.CARD_A
@@ -10,7 +11,6 @@ import tw.myfsl.app.core.sample.SampleHousehold.CONTEST
 import tw.myfsl.app.core.sample.SampleHousehold.FUEL
 import tw.myfsl.app.core.sample.SampleHousehold.HOUSEHOLD
 import tw.myfsl.app.core.sample.SampleHousehold.LESSONS
-import tw.myfsl.app.core.sample.SampleHousehold.LIVING
 import tw.myfsl.app.core.sample.SampleHousehold.PHONE
 import tw.myfsl.app.core.sample.SampleHousehold.RED_ENVELOPE
 import tw.myfsl.app.core.sample.SampleHousehold.TRIP
@@ -24,7 +24,6 @@ import tw.myfsl.app.core.domain.PlanSummaryCalculator
 import tw.myfsl.app.core.domain.PlanValidator
 import tw.myfsl.app.core.domain.RecordRules
 import tw.myfsl.app.core.domain.ScenarioApplier
-import tw.myfsl.app.core.model.Half
 import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.Period
 import tw.myfsl.app.core.model.RepaymentMethod
@@ -40,16 +39,16 @@ class DesignNumbersDump {
 
     private val snapshot = SampleHousehold.snapshot()
     private val base = BaselineBuilder.build(snapshot)
-    private val oct = Period(2026, 10, Half.FIRST)
+    private val oct = Period(2026, 10)
 
     private val integrate = listOf(
-        ScenarioChange.AddLoan("整合貸款", 200_000, 6.5, 60, RepaymentMethod.EQUAL_PAYMENT, oct.index, BANK, BANK, Half.SECOND),
+        ScenarioChange.AddLoan("整合貸款", 200_000, 6.5, 60, RepaymentMethod.EQUAL_PAYMENT, oct.index, BANK, BANK),
         ScenarioChange.PayOffDebts(listOf(CARD_A, CARD_B), BANK, oct.index),
         ScenarioChange.ChangeMethod(listOf(LIVING, FUEL, PHONE, CAR_SERVICE, TRIP), PaymentMethod.CREDIT_CARD, PaymentMethod.CASH, oct.index),
     )
     private val cut20 = listOf(
         ScenarioChange.AdjustItems(
-            listOf(LIVING, SampleHousehold.FOOD_CASH, HOUSEHOLD, FUEL, LESSONS, CONTEST, RED_ENVELOPE, BIRTHDAY, TRIP),
+            listOf(LIVING, HOUSEHOLD, FUEL, LESSONS, CONTEST, RED_ENVELOPE, BIRTHDAY, TRIP),
             -20.0,
             base.start.index,
         ),
@@ -119,8 +118,10 @@ class DesignNumbersDump {
             "cardPayments": ${plan.totalCardPayments},
             "loanPayments": ${plan.totalLoanPayments},
             "cardInterest": ${plan.totalCardInterest},
-            "cardDebtIncrease": ${plan.cardDebtIncrease},
+            "cardDebtChange": ${plan.cardDebtChange},
             "structuralGap": ${plan.structuralGap},
+            "debtPrincipal": ${plan.debtPrincipal},
+            "gapWithoutPrincipal": ${plan.gapWithoutPrincipal},
             "monthly": {
               "income": ${plan.income.joinToString(", ", "[", "]")},
               "cardSpending": ${plan.cardSpending.joinToString(", ", "[", "]")},

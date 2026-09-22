@@ -7,7 +7,6 @@ import tw.myfsl.app.core.sample.SampleHousehold
 import tw.myfsl.app.core.model.ActualStatus
 import tw.myfsl.app.core.model.EntrySource
 import tw.myfsl.app.core.model.FlowType
-import tw.myfsl.app.core.model.Half
 import tw.myfsl.app.core.model.ItemActual
 import tw.myfsl.app.core.model.LedgerEntry
 import tw.myfsl.app.core.model.PaymentMethod
@@ -51,7 +50,7 @@ class MappersTest {
             createdOn = LocalDate.of(2026, 9, 10),
             changes = listOf(
                 ScenarioChange.AdjustItems(listOf(501, 502), -20.0, 48_689),
-                ScenarioChange.AddLoan("整合貸款", 200_000, 6.5, 60, RepaymentMethod.EQUAL_PAYMENT, 48_690, 1, 1, Half.SECOND),
+                ScenarioChange.AddLoan("整合貸款", 200_000, 6.5, 60, RepaymentMethod.EQUAL_PAYMENT, 48_690, 1, 1),
                 ScenarioChange.PayOffDebts(listOf(3, 4), 1, 48_690, stopScheduledPayments = false),
                 ScenarioChange.ChangeMethod(listOf(501), PaymentMethod.CREDIT_CARD, PaymentMethod.CASH, 48_690),
                 ScenarioChange.OneOff("修車", 48_700, FlowType.EXPENSE, 20_000, method = PaymentMethod.CREDIT_CARD),

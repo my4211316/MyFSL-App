@@ -1,17 +1,16 @@
 package tw.myfsl.app.core.domain
 
 import tw.myfsl.app.core.sample.SampleHousehold
+import tw.myfsl.app.core.sample.SampleHousehold.LIVING
 import tw.myfsl.app.core.sample.SampleHousehold.BANK
 import tw.myfsl.app.core.sample.SampleHousehold.CARD_A
 import tw.myfsl.app.core.sample.SampleHousehold.CARD_B
 import tw.myfsl.app.core.sample.SampleHousehold.CAR_SERVICE
 import tw.myfsl.app.core.sample.SampleHousehold.FUEL
-import tw.myfsl.app.core.sample.SampleHousehold.LIVING
 import tw.myfsl.app.core.sample.SampleHousehold.PHONE
 import tw.myfsl.app.core.sample.SampleHousehold.TRIP
 import tw.myfsl.app.core.model.CheckIn
 import tw.myfsl.app.core.model.FlowType
-import tw.myfsl.app.core.model.Half
 import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.Period
 import tw.myfsl.app.core.model.RepaymentMethod
@@ -26,18 +25,18 @@ import java.time.LocalDate
 class ScenarioFormTest {
 
     private val snapshot = SampleHousehold.snapshot()
-    private val oct = Period(2026, 10, Half.FIRST)
+    private val oct = Period(2026, 10)
 
     @Test fun `月份偏移：本月下半月時 0 個月後就是今天這一期`() {
         assertEquals(oct.index, ScenarioForm.indexFor(LocalDate.of(2026, 9, 14), 1))
-        assertEquals(Period(2026, 9, Half.FIRST).index, ScenarioForm.indexFor(LocalDate.of(2026, 9, 14), 0))
-        assertEquals(Period(2026, 9, Half.SECOND).index, ScenarioForm.indexFor(LocalDate.of(2026, 9, 20), 0))
+        assertEquals(Period(2026, 9).index, ScenarioForm.indexFor(LocalDate.of(2026, 9, 14), 0))
+        assertEquals(Period(2026, 9).index, ScenarioForm.indexFor(LocalDate.of(2026, 9, 20), 0))
         assertEquals(1, ScenarioForm.offsetFor(LocalDate.of(2026, 9, 14), oct.index))
     }
 
     @Test fun `貸款整合卡債：存成新增貸款加清償兩個變動，算出來和驗收數字一樣`() {
         val consolidate = ScenarioForm.newChange(ChangeKind.CONSOLIDATE, snapshot)
-            .copy(amount = "200,000", rate = "6.5", months = "60", payHalf = Half.SECOND)
+            .copy(amount = "200,000", rate = "6.5", months = "60")
         assertEquals("預設清償所有信用卡", setOf(CARD_A, CARD_B), consolidate.debtAccountIds)
         assertEquals(BANK, consolidate.depositAccountId)
         val method = ScenarioForm.newChange(ChangeKind.METHOD, snapshot)
@@ -47,17 +46,20 @@ class ScenarioFormTest {
         val changes = result.scenario!!.changes
         assertEquals(
             listOf(
-                ScenarioChange.AddLoan("整合貸款", 200_000, 6.5, 60, RepaymentMethod.EQUAL_PAYMENT, oct.index, BANK, BANK, Half.SECOND),
+                ScenarioChange.AddLoan("整合貸款", 200_000, 6.5, 60, RepaymentMethod.EQUAL_PAYMENT, oct.index, BANK, BANK),
                 ScenarioChange.PayOffDebts(listOf(CARD_A, CARD_B), BANK, oct.index),
                 ScenarioChange.ChangeMethod(listOf(LIVING, FUEL, PHONE, CAR_SERVICE, TRIP).sorted(), PaymentMethod.CREDIT_CARD, PaymentMethod.CASH, oct.index),
             ),
             changes,
         )
         val comparison = ForecastComparisonCalculator.compare(snapshot, listOf(result.scenario), 24)
-        assertEquals(14_133L, comparison.outcomes[1].lowest)
+        assertEquals(22_543L, comparison.outcomes[1].lowest)
         assertEquals(0L, comparison.outcomes[1].endCardDebt)
-        assertEquals("現況：全部當現金付，最低 −127,561", -127_561L, comparison.outcomes[0].lowest)
-        assertEquals("整合之後比較好", 14_133L, comparison.bestLowest)
+        assertEquals("現況最低 89,465", 89_465L, comparison.outcomes[0].lowest)
+        // 水位最低點反而是現況比較高：整合把刷卡改成現金付，錢當月就出去了。
+        // 代價寫在卡債那一欄——現況兩年後還欠 330,365，整合是 0。
+        assertEquals(89_465L, comparison.bestLowest)
+        assertEquals(330_365L, comparison.outcomes[0].endCardDebt)
     }
 
     @Test fun `存回草稿：新增貸款與同期清償合併回貸款整合`() {
@@ -102,10 +104,10 @@ class ScenarioFormTest {
 
     @Test fun `反推：可調支出要減多少才不低於安全線`() {
         val flexible = snapshot.activeItems.filter { it.flexibility == tw.myfsl.app.core.model.Flexibility.FLEXIBLE }.map { it.id }.toSet()
-        val seek = ForecastComparisonCalculator.seek(snapshot, 24, flexible, GoalTarget.MinLiquid(30_000), fromMonthOffset = 0)
+        val seek = ForecastComparisonCalculator.seek(snapshot, 24, flexible, GoalTarget.MinLiquid(110_000), fromMonthOffset = 0)
         assertTrue(seek.achievable)
         assertTrue(seek.cutPercent > 0 && seek.cutPercent <= 100)
-        assertTrue(seek.result.lowestLiquid >= 30_000)
+        assertTrue(seek.result.lowestLiquid >= 110_000)
     }
 
     @Test fun `本期：檢查提醒、水位、到期清單`() {
@@ -113,11 +115,11 @@ class ScenarioFormTest {
         assertEquals(7L, overview.checkIn.daysSinceLast)
         assertTrue(overview.checkIn.due)
         assertEquals("本月漏記 1 筆 · $120", overview.checkIn.missedLabel)
-        assertEquals(-127_561L, overview.lowest)
+        assertEquals(89_465L, overview.lowest)
         assertEquals(24, overview.monthlyLows.size)
-        // 零用現金只出不進，而且付款假設是全部當現金付：9 月上 15,000 − 6,350 = 8,650，
-        // 9 月下再扣 19,850（含汽車保養 12,000、電費 1,500）就變負數（R-FC-12）
-        assertEquals("「零用現金」約 2026/9 會不夠扣款，記得先從其他帳戶轉入", overview.shortfall)
+        // 零用現金只出不進，扣的是現金列：9 月剩下 5,300（生活費 4,600、家用 700）→ 月底 9,700；
+        // 10 月要 10,000（生活費 9,000、家用 1,000）就不夠了（R-FC-12）
+        assertEquals("「零用現金」約 2026/10 會不夠扣款，記得先從其他帳戶轉入", overview.shortfall)
         assertEquals("9/14 ÷ 30 天", 47, overview.timePercent)
         assertTrue("到期清單不含刷卡消費", overview.upcoming.none { it.label.contains("生活費") })
         assertTrue(overview.upcoming.isNotEmpty())

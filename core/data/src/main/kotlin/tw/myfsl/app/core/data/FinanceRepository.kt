@@ -219,7 +219,7 @@ class FinanceRepository @Inject constructor(
             groups = d.groups.map { it.toModel() },
             items = d.items.map { it.toModel() },
             amountsByYear = d.amounts.groupBy { it.year }.mapValues { (_, rows) ->
-                rows.groupBy { PlanLine(it.itemId) }.mapValues { (_, lineRows) ->
+                rows.groupBy { PlanLine(it.itemId, methodOf(it.method)) }.mapValues { (_, lineRows) ->
                     List(12) { m -> lineRows.firstOrNull { it.month == m + 1 }?.amount ?: 0L }
                 }
             },
@@ -301,25 +301,30 @@ class FinanceRepository @Inject constructor(
         return if (entity.id == 0L) result else entity.id
     }
 
-    /** 儲存項目與各年度的 12 個月金額（R-MIX-01：一個項目一組金額）。 */
-    suspend fun saveItem(item: PlanItem, amountsByYear: Map<Int, List<Money>>, generation: Long): Long =
+    /** 儲存項目與各年度、各支付方式的 12 個月金額（R-MIX-01：一列 = 項目 × 支付方式）。 */
+    suspend fun saveItem(item: PlanItem, amountsByYear: Map<Int, Map<PaymentMethod?, List<Money>>>, generation: Long): Long =
         writing(generation) { saveItemLocked(item, amountsByYear) }
 
-    private suspend fun saveItemLocked(item: PlanItem, amountsByYear: Map<Int, List<Money>>): Long =
+    private suspend fun saveItemLocked(item: PlanItem, amountsByYear: Map<Int, Map<PaymentMethod?, List<Money>>>): Long =
         db.withTransaction {
             val entity = item.toEntity()
             val result = planDao.upsertItem(entity)
             val id = if (entity.id == 0L) result else entity.id
-            amountsByYear.forEach { (year, months) ->
+            amountsByYear.forEach { (year, byMethod) ->
                 planDao.deleteAmounts(id, year)
                 planDao.upsertAmounts(
-                    months.mapIndexedNotNull { index, amount ->
-                        if (amount != 0L) PlanAmountEntity(id, year, index + 1, amount) else null
+                    byMethod.flatMap { (method, months) ->
+                        months.mapIndexedNotNull { index, amount ->
+                            if (amount != 0L) PlanAmountEntity(id, year, index + 1, amount, method?.name.orEmpty()) else null
+                        }
                     },
                 )
             }
             id
         }
+
+    /** 資料庫存的是列舉名稱；空字串代表沒有支付方式（收入、轉帳）。 */
+    private fun methodOf(raw: String): PaymentMethod? = raw.takeIf { it.isNotEmpty() }?.let { PaymentMethod.valueOf(it) }
 
     /** 封存從本月起生效；之前月份的計畫與紀錄仍算在歷史報表裡（R-EDT-10）。 */
     suspend fun setItemArchived(id: Long, archived: Boolean, generation: Long) = writing(generation) {
@@ -518,7 +523,7 @@ class FinanceRepository @Inject constructor(
                 planDao.upsertAmounts(
                     SampleHousehold.yearlyPlan.flatMap { (line, months) ->
                         months.mapIndexedNotNull { index, amount ->
-                            if (amount != 0L) PlanAmountEntity(line.itemId, year, index + 1, amount) else null
+                            if (amount != 0L) PlanAmountEntity(line.itemId, year, index + 1, amount, line.method?.name.orEmpty()) else null
                         }
                     },
                 )

@@ -26,6 +26,8 @@ data class AccountEntity(
     val cardSchedule: Boolean = false,
     val cardRatePercent: Double? = null,
     val cardPayAccountId: Long? = null,
+    /** 每期繳款計畫（R-CARD-27）；空字串＝照紀錄推估。第 5 版以前沒有這個欄位。 */
+    val cardPaymentPlan: String = "",
     val cardStatementDay: Int? = null,
     val issuer: String = "",
     val archived: Boolean,
@@ -59,7 +61,6 @@ data class PlanItemEntity(
     val type: String,
     val accountId: Long?,
     val toAccountId: Long?,
-    val timing: String,
     val flexibility: String,
     val tracking: String,
     val note: String,
@@ -71,12 +72,14 @@ data class PlanItemEntity(
 )
 
 @Serializable
-@Entity(tableName = "plan_amounts", primaryKeys = ["itemId", "year", "month"])
+@Entity(tableName = "plan_amounts", primaryKeys = ["itemId", "method", "year", "month"])
 data class PlanAmountEntity(
     val itemId: Long,
     val year: Int,
     val month: Int,
     val amount: Long,
+    /** 支付方式（R-MIX-01）；收入與轉帳沒有支付方式，存空字串。第 4 版以前的備份沒有這個欄位。 */
+    val method: String = "",
 )
 
 @Serializable

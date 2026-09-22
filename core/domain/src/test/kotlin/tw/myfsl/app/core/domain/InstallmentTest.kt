@@ -6,7 +6,6 @@ import tw.myfsl.app.core.model.AppSettings
 import tw.myfsl.app.core.model.CardInstallment
 import tw.myfsl.app.core.model.FinanceSnapshot
 import tw.myfsl.app.core.model.FlowType
-import tw.myfsl.app.core.model.Half
 import tw.myfsl.app.core.model.InstallmentFee
 import tw.myfsl.app.core.model.LedgerEntry
 import tw.myfsl.app.core.model.Money
@@ -16,7 +15,6 @@ import tw.myfsl.app.core.model.PlanGroup
 import tw.myfsl.app.core.model.PlanItem
 import tw.myfsl.app.core.model.PlanLine
 import tw.myfsl.app.core.model.ScenarioChange
-import tw.myfsl.app.core.model.Timing
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -28,9 +26,9 @@ import java.time.LocalDate
 class InstallmentTest {
 
     private val today = LocalDate.of(2026, 9, 5)
-    private val start = Period(2026, 9, Half.FIRST)
-    private val oct = Period(2026, 10, Half.FIRST)
-    private val nov = Period(2026, 11, Half.FIRST)
+    private val start = Period(2026, 9)
+    private val oct = Period(2026, 10)
+    private val nov = Period(2026, 11)
 
     private val BANK = 1L
     private val CARD = 3L
@@ -63,14 +61,14 @@ class InstallmentTest {
         ),
         groups = listOf(PlanGroup(1, "收入", 1), PlanGroup(5, "生活", 5)),
         items = listOf(
-            PlanItem(SALARY, "薪資", 1, FlowType.INCOME, accountId = BANK, timing = Timing.FIRST_HALF),
-            PlanItem(PHONE, "手機", 5, FlowType.EXPENSE, timing = Timing.FIRST_HALF),
+            PlanItem(SALARY, "薪資", 1, FlowType.INCOME, accountId = BANK),
+            PlanItem(PHONE, "手機", 5, FlowType.EXPENSE),
         ),
         amountsByYear = mapOf(2026 to mapOf(PlanLine(SALARY) to List(12) { 80_000L })),
         actuals = emptyList(),
         ledger = emptyList(),
         installments = installments.toList(),
-        settings = AppSettings(safetyLevel = 0, horizonMonths = 24, forecastCardPercent = 100),
+        settings = AppSettings(safetyLevel = 0, horizonMonths = 24),
     )
 
     // ---------- 規則 ----------
@@ -91,7 +89,7 @@ class InstallmentTest {
         assertEquals(36_000L, InstallmentRules.totalCost(installment()))
         assertEquals(oct.index, schedule[0].periodIndex)
         assertEquals(nov.index, schedule[1].periodIndex)
-        assertEquals(Period(2027, 9, Half.FIRST).index, schedule.last().periodIndex)
+        assertEquals(Period(2027, 9).index, schedule.last().periodIndex)
     }
 
     @Test fun `每期固定手續費`() {
@@ -124,16 +122,16 @@ class InstallmentTest {
         assertEquals(36_000L, InstallmentRules.pendingPrincipal(one, start.index))
         assertEquals(12, InstallmentRules.remainingPeriods(one, start.index))
         // 已經入帳兩期之後
-        assertEquals(30_000L, InstallmentRules.pendingPrincipal(one, Period(2026, 12, Half.FIRST).index))
-        assertEquals(10, InstallmentRules.remainingPeriods(one, Period(2026, 12, Half.FIRST).index))
-        assertEquals(30_000L, InstallmentRules.payoffAmount(one, Period(2026, 12, Half.FIRST).index))
+        assertEquals(30_000L, InstallmentRules.pendingPrincipal(one, Period(2026, 12).index))
+        assertEquals(10, InstallmentRules.remainingPeriods(one, Period(2026, 12).index))
+        assertEquals(30_000L, InstallmentRules.payoffAmount(one, Period(2026, 12).index))
 
         val withFee = installment(fee = InstallmentFee.PER_PERIOD, feeValue = 50.0)
-        assertEquals(30_000L, InstallmentRules.payoffAmount(withFee, Period(2026, 12, Half.FIRST).index))
+        assertEquals(30_000L, InstallmentRules.payoffAmount(withFee, Period(2026, 12).index))
         assertEquals(
             "手續費不減免時要一起付",
             30_500L,
-            InstallmentRules.payoffAmount(withFee, Period(2026, 12, Half.FIRST).index, includeFees = true),
+            InstallmentRules.payoffAmount(withFee, Period(2026, 12).index, includeFees = true),
         )
     }
 
@@ -202,13 +200,13 @@ class InstallmentTest {
     }
 
     @Test fun `試算期間結束後才入帳的本金也算進期末總負債`() {
-        // 只看 6 個月（到 2027/2），36 期的分期大部分在期間之後
+        // 只看 12 個月（2026/9 到 2027/8），36 期的分期大部分在期間之後
         val long = installment(amount = 36_000, months = 36)
         val result = ScenarioApplier.run(BaselineBuilder.build(snapshot(long), periodCount = 12), emptyList())
         val posted = result.totalInstallmentPosted
-        assertEquals("10 月到 2 月入帳 5 期", 5_000L, posted)
-        assertEquals(31_000L, result.endPendingInstallments)
-        assertEquals("期末總負債 = 已入帳 5,000 ＋ 未入帳 31,000", 36_000L, result.endTotalDebt)
+        assertEquals("10 月到隔年 8 月入帳 11 期", 11_000L, posted)
+        assertEquals(25_000L, result.endPendingInstallments)
+        assertEquals("期末總負債 = 已入帳 11,000 ＋ 未入帳 25,000", 36_000L, result.endTotalDebt)
 
         // 清償時連期間之後的本金一起結清
         val paid = ScenarioApplier.run(

@@ -2,63 +2,65 @@
           "today": "2026-09-14",
           "scenarios": {
             "base": {
-  "lowestLiquid": -127561,
-  "lowestPeriod": "2028年2月上半月",
-  "firstBelowSafety": "2027年1月上半月",
-  "monthsUntilBelow": 4,
-  "structuralGapPerYear": -60880,
-  "endCardDebt": 0,
+  "lowestLiquid": 89465,
+  "lowestPeriod": "2027年1月",
+  "firstBelowSafety": null,
+  "monthsUntilBelow": null,
+  "structuralGapPerYear": -79936,
+  "endCardDebt": 330365,
   "endLoanDebt": 1122396,
-  "endTotalDebt": 1122396,
-  "totalCardInterest": 792,
-  "monthlyLowsThousands": [111, 94, 71, 56, -14, -53, 101, 104, 90, 65, -5, -18, -43, -41, -37, -32, -97, -128, 27, 30, 16, -9, -79, -92]
+  "endTotalDebt": 1452761,
+  "totalCardInterest": 38905,
+  "monthlyLowsThousands": [157, 155, 155, 130, 89, 208, 227, 228, 196, 175, 138, 152, 170, 177, 186, 170, 138, 257, 276, 276, 245, 224, 187, 200]
 },
             "integrate": {
-  "lowestLiquid": 14133,
-  "lowestPeriod": "2028年2月上半月",
-  "firstBelowSafety": "2028年2月上半月",
-  "monthsUntilBelow": 17,
+  "lowestLiquid": 22543,
+  "lowestPeriod": "2028年8月",
+  "firstBelowSafety": "2028年8月",
+  "monthsUntilBelow": 23,
   "structuralGapPerYear": -103728,
   "endCardDebt": 0,
   "endLoanDebt": 1256468,
   "endTotalDebt": 1256468,
   "totalCardInterest": 403,
-  "monthlyLowsThousands": [111, 234, 238, 238, 169, 135, 286, 285, 263, 234, 164, 144, 118, 117, 117, 117, 48, 14, 165, 164, 142, 113, 43, 23]
+  "monthlyLowsThousands": [157, 263, 264, 240, 200, 311, 310, 303, 263, 234, 190, 144, 142, 142, 143, 119, 79, 190, 189, 182, 142, 113, 69, 23]
 },
             "cut20": {
-  "lowestLiquid": -8187,
-  "lowestPeriod": "2027年2月上半月",
-  "firstBelowSafety": "2027年1月上半月",
-  "monthsUntilBelow": 4,
-  "structuralGapPerYear": 45876,
-  "endCardDebt": 0,
+  "lowestLiquid": 105525,
+  "lowestPeriod": "2027年1月",
+  "firstBelowSafety": null,
+  "monthsUntilBelow": null,
+  "structuralGapPerYear": 33945,
+  "endCardDebt": 204063,
   "endLoanDebt": 1122396,
-  "endTotalDebt": 1122396,
-  "totalCardInterest": 792,
-  "monthlyLowsThousands": [112, 101, 86, 82, 16, -8, 155, 165, 162, 141, 79, 87, 66, 75, 87, 100, 42, 27, 190, 200, 197, 176, 114, 122]
+  "endTotalDebt": 1326459,
+  "totalCardInterest": 24655,
+  "monthlyLowsThousands": [158, 161, 165, 143, 106, 237, 258, 263, 235, 218, 184, 201, 222, 235, 247, 234, 206, 337, 359, 364, 336, 319, 285, 302]
 }
           },
           "plan2026": {
             "income": 940000,
-            "expense": 886769,
-            "cardSpending": 0,
-            "nonCardSpending": 840000,
-            "cardPayments": 324000,
-            "loanPayments": 174084,
-            "cardInterest": 6300,
-            "cardDebtIncrease": -317700,
-            "structuralGap": -80384,
+            "expense": 739048,
+            "cardSpending": 338980,
+            "nonCardSpending": 501020,
+            "cardPayments": 180000,
+            "loanPayments": 58028,
+            "cardInterest": 2890,
+            "cardDebtChange": -5510,
+            "structuralGap": 200952,
+            "debtPrincipal": -118437,
+            "gapWithoutPrincipal": 82515,
             "monthly": {
               "income": [65000, 215000, 70000, 65000, 65000, 65000, 65000, 65000, 70000, 65000, 65000, 65000],
-              "cardSpending": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-              "nonCardSpending": [85800, 85600, 52800, 53720, 86100, 75600, 91200, 92780, 53400, 46600, 45800, 70600],
-              "cardInterest": [525, 525, 525, 525, 525, 525, 525, 525, 525, 525, 525, 525],
-              "cardPayments": [27000, 27000, 27000, 27000, 27000, 27000, 27000, 27000, 27000, 27000, 27000, 27000],
-              "loanPayments": [14507, 14507, 14507, 14507, 14507, 14507, 14507, 14507, 14507, 14507, 14507, 14507],
-              "debtPayments": [41507, 41507, 41507, 41507, 41507, 41507, 41507, 41507, 41507, 41507, 41507, 41507],
-              "cashFlow": [-62307, 87893, -24307, -30227, -62607, -52107, -67707, -69287, -24907, -23107, -22307, -47107]
+              "cardSpending": [21900, 21900, 33900, 21900, 21900, 21900, 21900, 74080, 33900, 21900, 21900, 21900],
+              "nonCardSpending": [63900, 63700, 18900, 31820, 64200, 53700, 69300, 18700, 19500, 24700, 23900, 48700],
+              "cardInterest": [0, 0, 0, 0, 0, 0, 0, 0, 525, 730, 788, 847],
+              "cardPayments": [9000, 9000, 9000, 9000, 9000, 9000, 9000, 9000, 27000, 27000, 27000, 27000],
+              "loanPayments": [0, 0, 0, 0, 0, 0, 0, 0, 14507, 14507, 14507, 14507],
+              "debtPayments": [9000, 9000, 9000, 9000, 9000, 9000, 9000, 9000, 41507, 41507, 41507, 41507],
+              "cashFlow": [-7900, 142300, 42100, 24180, -8200, 2300, -13300, 37300, 8993, -1207, -407, -25207]
             },
-            "cardDebtChangeSeptember": -26475,
+            "cardDebtChangeSeptember": 7425,
             "groups": {
     "稅費與保險": 146920,
     "生活繳費": 11100,
@@ -68,16 +70,20 @@
     "年度": 131180
             },
             "issues": [
+    {"severity": "WARNING", "message": "「信用卡 A」這一年刷 $99,600、利息 $2,890，繳 $72,000 不夠：年底欠款會從 $60,000 變成 $90,490"},
     {"severity": "INFO", "message": "「才藝課」是可調項目，建議改成依記帳，才能控管進度"},
     {"severity": "INFO", "message": "「繳信用卡 B」全年 $108,000，比「信用卡 B」目前欠款 $45,000 多；還清後試算與本月到期就不再扣款"}
             ]
           },
           "progress": [
     {"item": "交通油資", "group": "生活", "planned": 3500, "actual": 2300, "spentPercent": 66, "timePercent": 47, "paceGap": 19, "status": "花太快", "dailyAllowance": 70},
-    {"item": "生活費", "group": "生活", "planned": 16000, "actual": 9800, "spentPercent": 61, "timePercent": 47, "paceGap": 14, "status": "花太快", "dailyAllowance": 364},
-    {"item": "現金伙食", "group": "生活", "planned": 9000, "actual": 4400, "spentPercent": 49, "timePercent": 47, "paceGap": 2, "status": "正常", "dailyAllowance": 270},
+    {"item": "生活費", "group": "生活", "planned": 25000, "actual": 14200, "spentPercent": 57, "timePercent": 47, "paceGap": 10, "status": "正常", "dailyAllowance": 635},
     {"item": "家用", "group": "生活", "planned": 1000, "actual": 300, "spentPercent": 30, "timePercent": 47, "paceGap": -17, "status": "正常", "dailyAllowance": 41},
-    {"item": "才藝課", "group": "小孩活動", "planned": 6000, "actual": 0, "spentPercent": 0, "timePercent": 93, "paceGap": -93, "status": "正常", "dailyAllowance": 3000}
+    {"item": "電費", "group": "生活繳費", "planned": 1500, "actual": 0, "spentPercent": 0, "timePercent": 47, "paceGap": -47, "status": "尚未開始", "dailyAllowance": null},
+    {"item": "停車費", "group": "固定支出", "planned": 2000, "actual": 0, "spentPercent": 0, "timePercent": 47, "paceGap": -47, "status": "尚未開始", "dailyAllowance": null},
+    {"item": "手機網路", "group": "生活", "planned": 2400, "actual": 0, "spentPercent": 0, "timePercent": 47, "paceGap": -47, "status": "尚未開始", "dailyAllowance": null},
+    {"item": "才藝課", "group": "小孩活動", "planned": 6000, "actual": 0, "spentPercent": 0, "timePercent": 47, "paceGap": -47, "status": "尚未開始", "dailyAllowance": 352},
+    {"item": "汽車保養", "group": "年度", "planned": 12000, "actual": 0, "spentPercent": 0, "timePercent": 47, "paceGap": -47, "status": "尚未開始", "dailyAllowance": null}
           ],
           "accounts": {
             "liquid": 135000,
@@ -100,7 +106,7 @@
             "reportLines": 0,
             "reconciles": [
     {"name": "薪轉帳戶", "computed": 120000, "pendingRecent": 0, "defaultItem": "生活費"},
-    {"name": "零用現金", "computed": 15000, "pendingRecent": 0, "defaultItem": "現金伙食"},
+    {"name": "零用現金", "computed": 15000, "pendingRecent": 0, "defaultItem": "生活費"},
     {"name": "信用卡合計", "computed": 105000, "pendingRecent": 12100, "defaultItem": "生活費"}
             ],
             "missedLabel": "本月漏記 1 筆 · $120",

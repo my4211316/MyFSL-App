@@ -1,16 +1,15 @@
 package tw.myfsl.app.core.domain
 
 import tw.myfsl.app.core.sample.SampleHousehold
+import tw.myfsl.app.core.sample.SampleHousehold.LIVING
 import tw.myfsl.app.core.sample.SampleHousehold.BANK
 import tw.myfsl.app.core.sample.SampleHousehold.CARD_A
 import tw.myfsl.app.core.sample.SampleHousehold.CARD_B
 import tw.myfsl.app.core.sample.SampleHousehold.CASH
-import tw.myfsl.app.core.sample.SampleHousehold.LIVING
 import tw.myfsl.app.core.sample.SampleHousehold.PAY_CARD_B
 import tw.myfsl.app.core.sample.SampleHousehold.SALARY
 import tw.myfsl.app.core.model.AccountKind
 import tw.myfsl.app.core.model.FlowType
-import tw.myfsl.app.core.model.Half
 import tw.myfsl.app.core.model.PaymentMethod
 import tw.myfsl.app.core.model.Period
 import tw.myfsl.app.core.model.RepaymentMethod
@@ -23,15 +22,15 @@ import org.junit.Test
 class ScenarioAndGoalTest {
 
     private val base = BaselineBuilder.build(SampleHousehold.snapshot())
-    private val oct = Period(2026, 10, Half.FIRST)
+    private val oct = Period(2026, 10)
 
     @Test fun `調整項目：只影響指定項目與起始期之後`() {
-        val food = SampleHousehold.FOOD_CASH
+        val food = SampleHousehold.LIVING
         val applied = ScenarioApplier.apply(base, listOf(ScenarioChange.AdjustItems(listOf(food), -20.0, oct.index)))
         val sepCash = applied.events.first { it.itemId == food && it.method == PaymentMethod.CASH && it.period.month == 9 }
         val octCash = applied.events.first { it.itemId == food && it.method == PaymentMethod.CASH && it.period == oct }
-        assertEquals(2_300L, sepCash.amount)
-        assertEquals("9,000 ÷ 2 × 0.8", 3_600L, octCash.amount)
+        assertEquals("9 月只剩 9,000 − 4,400，不受影響", 4_600L, sepCash.amount)
+        assertEquals("9,000 × 0.8", 7_200L, octCash.amount)
         assertEquals(base.events.first { it.itemId == SALARY }.amount, applied.events.first { it.itemId == SALARY }.amount)
     }
 
@@ -42,12 +41,9 @@ class ScenarioAndGoalTest {
     }
 
     @Test fun `改支付方式：刷卡改現金後改由現金帳戶扣款`() {
-        // 基準線的付款假設要先是刷卡，才有東西可以改（R-MIX-02）
-        val swiping = BaselineBuilder.build(
-            SampleHousehold.snapshot().let { it.copy(settings = it.settings.copy(forecastCardPercent = 100)) },
-        )
+        // 生活費本來就有刷卡列（R-MIX-01），所以基準線裡有東西可以改
         val applied = ScenarioApplier.apply(
-            swiping,
+            base,
             listOf(ScenarioChange.ChangeMethod(listOf(LIVING), PaymentMethod.CREDIT_CARD, PaymentMethod.CASH, oct.index)),
         )
         val moved = applied.events.filter { it.itemId == LIVING && it.period >= oct }
@@ -89,14 +85,14 @@ class ScenarioAndGoalTest {
     }
 
     @Test fun `新增貸款：撥款入帳，下個月同半月開始繳款，只保留試算期間內的期數`() {
-        val change = ScenarioChange.AddLoan("整合貸款", 200_000, 6.5, 60, RepaymentMethod.EQUAL_PAYMENT, oct.index, BANK, BANK, Half.SECOND)
+        val change = ScenarioChange.AddLoan("整合貸款", 200_000, 6.5, 60, RepaymentMethod.EQUAL_PAYMENT, oct.index, BANK, BANK)
         val applied = ScenarioApplier.apply(base, listOf(change))
         val loanId = ScenarioApplier.SCENARIO_ACCOUNT_BASE
         assertEquals(AccountKind.LOAN, applied.accounts.single { it.id == loanId }.kind)
         val disbursement = applied.events.single { it.fromAccountId == loanId }
         assertEquals(oct, disbursement.period)
         val payments = applied.events.filter { it.toAccountId == loanId }
-        assertEquals(Period(2026, 11, Half.SECOND), payments.minOf { it.period })
+        assertEquals(Period(2026, 11), payments.minOf { it.period })
         assertEquals(22, payments.size)
     }
 
@@ -108,20 +104,20 @@ class ScenarioAndGoalTest {
     }
 
     @Test fun `反推：沒選項目或選的項目沒有金額，直接說沒得減（R-GS-04）`() {
-        val none = GoalSeeker.seek(base, emptySet(), GoalTarget.MinLiquid(30_000))
+        val none = GoalSeeker.seek(base, emptySet(), GoalTarget.MinLiquid(110_000))
         assertTrue(none.nothingToCut)
         assertFalse(none.achievable)
         assertEquals(0.0, none.cutPercent, 0.0)
-        assertTrue("沒有這個項目", GoalSeeker.seek(base, setOf(999L), GoalTarget.MinLiquid(30_000)).nothingToCut)
+        assertTrue("沒有這個項目", GoalSeeker.seek(base, setOf(999L), GoalTarget.MinLiquid(110_000)).nothingToCut)
     }
 
     @Test fun `反推：最低點在開始減少之前，怎麼減都來不及（R-GS-04）`() {
-        // 現況最低 18,465 在 2027/2 上半月；從 2027/6 才開始減，救不到
-        val late = GoalSeeker.seek(base, setOf(LIVING, SampleHousehold.FOOD_CASH), GoalTarget.MinLiquid(30_000), fromIndex = Period(2027, 6, Half.FIRST).index)
+        // 現況最低 89,465 在 2027/1；從 2027/6 才開始減，救不到
+        val late = GoalSeeker.seek(base, setOf(LIVING), GoalTarget.MinLiquid(110_000), fromIndex = Period(2027, 6).index)
         assertFalse(late.achievable)
         assertTrue(late.lowBeforeStart)
         // 從現在開始減就來得及
-        val now = GoalSeeker.seek(base, setOf(LIVING, SampleHousehold.FOOD_CASH), GoalTarget.MinLiquid(30_000))
+        val now = GoalSeeker.seek(base, setOf(LIVING), GoalTarget.MinLiquid(110_000))
         assertTrue(now.achievable)
         assertFalse(now.lowBeforeStart)
     }
@@ -133,30 +129,30 @@ class ScenarioAndGoalTest {
     }
 
     @Test fun `反推收支打平：收入兩萬、可調支出兩萬五，剛好要減 20%`() {
-        val start = Period(2026, 9, Half.FIRST)
+        val start = Period(2026, 9)
         val events = (0 until 24).flatMap { i ->
-            val p = start.plus(i * 2)
+            val p = start.plus(i)
             listOf(
                 FlowEvent(p, EventKind.INCOME, 20_000, "收入", toAccountId = 1),
                 FlowEvent(p, EventKind.EXPENSE, 25_000, "生活", fromAccountId = 1, itemId = 7, flexible = true),
             )
         }
-        val input = ForecastInput(start, 48, listOf(AccountSeed(1, "銀行", AccountKind.BANK, 0)), events, 0)
+        val input = ForecastInput(start, 24, listOf(AccountSeed(1, "銀行", AccountKind.BANK, 0)), events, 0)
         val result = GoalSeeker.seek(input, setOf(7), GoalTarget.NoStructuralGap)
         assertEquals(20.0, result.cutPercent, 0.0)
         assertTrue(result.achievable)
-        assertEquals(60_000L, result.cutsPerYear[7L])
+        assertEquals("每月省 5,000 × 12", 60_000L, result.cutsPerYear[7L])
     }
 
     @Test fun `反推最低水位：結果達標，少 0_2 個百分點就不達標`() {
-        // 現況最低 18,465，目標拉到安全線 30,000
-        val target = GoalTarget.MinLiquid(30_000)
+        // 現況最低 89,465，目標拉到 110,000
+        val target = GoalTarget.MinLiquid(110_000)
         val ids = setOf(LIVING, SampleHousehold.HOUSEHOLD, SampleHousehold.FUEL)
         val result = GoalSeeker.seek(base, ids, target)
         assertTrue(result.achievable)
         assertTrue(result.cutPercent > 0)
-        assertTrue(result.result.lowestLiquid >= 30_000)
+        assertTrue(result.result.lowestLiquid >= 110_000)
         val less = ScenarioApplier.run(base, listOf(ScenarioChange.AdjustItems(ids.toList(), -(result.cutPercent - 0.2), base.start.index)))
-        assertTrue(less.lowestLiquid < 30_000)
+        assertTrue(less.lowestLiquid < 110_000)
     }
 }

@@ -1,6 +1,7 @@
 package tw.myfsl.app.core.domain
 
 import tw.myfsl.app.core.sample.SampleHousehold
+import tw.myfsl.app.core.sample.SampleHousehold.LIVING
 import tw.myfsl.app.core.sample.SampleHousehold.BANK
 import tw.myfsl.app.core.sample.SampleHousehold.CARD_A
 import tw.myfsl.app.core.sample.SampleHousehold.CARD_B
@@ -8,8 +9,6 @@ import tw.myfsl.app.core.sample.SampleHousehold.CASH
 import tw.myfsl.app.core.sample.SampleHousehold.CAR_SERVICE
 import tw.myfsl.app.core.sample.SampleHousehold.HOUSEHOLD
 import tw.myfsl.app.core.sample.SampleHousehold.LESSONS
-import tw.myfsl.app.core.sample.SampleHousehold.FOOD_CASH
-import tw.myfsl.app.core.sample.SampleHousehold.LIVING
 import tw.myfsl.app.core.sample.SampleHousehold.SUBSIDY
 import tw.myfsl.app.core.model.ActualStatus
 import tw.myfsl.app.core.model.EntrySource
@@ -76,7 +75,7 @@ class CheckInTest {
         rows[1].run {
             assertEquals(15_000L, computed)
             assertEquals(PaymentMethod.CASH, method)
-            assertEquals(FOOD_CASH, defaultItem?.id)
+            assertEquals(LIVING, defaultItem?.id)
         }
         rows[2].run {
             assertEquals(listOf(CARD_A, CARD_B), accounts.map { it.id })
@@ -119,7 +118,7 @@ class CheckInTest {
 
     @Test fun `差額預設歸到的項目：這個支付方式實際用過、計畫最大的可調項目`() {
         // 9 月現金花在現金伙食（4,400）與家用（300）；刷卡花在生活費（9,800）與交通油資（2,300）
-        assertEquals(FOOD_CASH, CheckInRules.defaultItemFor(snapshot, PaymentMethod.CASH)?.id)
+        assertEquals(LIVING, CheckInRules.defaultItemFor(snapshot, PaymentMethod.CASH)?.id)
         assertEquals(LIVING, CheckInRules.defaultItemFor(snapshot, PaymentMethod.CREDIT_CARD)?.id)
         // 沒有任何轉帳記錄時，放寬到計畫最大的可調項目
         assertEquals(LIVING, CheckInRules.defaultItemFor(snapshot, PaymentMethod.TRANSFER)?.id)
@@ -135,7 +134,7 @@ class CheckInTest {
         val entry = result.entries.single()
         assertEquals(
             LedgerEntry(
-                date = snapshot.today, type = FlowType.EXPENSE, amount = 500, itemId = FOOD_CASH,
+                date = snapshot.today, type = FlowType.EXPENSE, amount = 500, itemId = LIVING,
                 method = PaymentMethod.CASH, accountId = CASH, source = EntrySource.MISSED,
             ),
             entry,
@@ -145,10 +144,10 @@ class CheckInTest {
         assertEquals(500L, result.missedTotal)
         assertTrue(result.actuals.isEmpty())
 
-        // 加上這筆之後，現金伙食本月剩 9,000 − 4,900
+        // 加上這筆之後，生活費本月剩 25,000 − 14,700
         val after = snapshot.copy(ledger = snapshot.ledger + result.entries)
-        val hint = EntryRules.budgetHint(after, after.item(FOOD_CASH)!!, PaymentMethod.CASH, 0)
-        assertEquals("現金伙食 本月剩 $4,100", EntryRules.hintText(hint))
+        val hint = EntryRules.budgetHint(after, after.item(LIVING)!!, PaymentMethod.CASH, 0)
+        assertEquals("生活費 本月剩 $10,300", EntryRules.hintText(hint))
         assertEquals("本月漏記 2 筆 · $620", RecordRules.missedLabel(RecordRules.missedSummary(after)))
     }
 
@@ -259,7 +258,7 @@ class CheckInTest {
     @Test fun `每週回報：現金問還剩多少，其他問累計，差額存成漏記`() {
         val envelope = snapshot.copy(
             items = snapshot.items.map {
-                if (it.id == LIVING || it.id == FOOD_CASH) it.copy(tracking = TrackingMode.REPORT) else it
+                if (it.id == LIVING || it.id == LIVING) it.copy(tracking = TrackingMode.REPORT) else it
             },
         )
         val lines = CheckInRules.reportLines(envelope)
@@ -283,7 +282,7 @@ class CheckInTest {
         )
         val entry = result.entries.single()
         assertEquals(120L, entry.amount)
-        assertEquals(FOOD_CASH, entry.itemId)
+        assertEquals(LIVING, entry.itemId)
         assertEquals(PaymentMethod.CASH, entry.method)
         assertEquals(EntrySource.MISSED, entry.source)
 

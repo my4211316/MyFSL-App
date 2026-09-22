@@ -20,11 +20,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.size
 import tw.myfsl.app.ui.components.MethodIcon
+import tw.myfsl.app.ui.components.SegmentedChoice
 import tw.myfsl.app.ui.theme.Spacing
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import tw.myfsl.app.core.domain.PlanTable
+import tw.myfsl.app.core.domain.PlanTableView
 import tw.myfsl.app.core.domain.TableRow
 import tw.myfsl.app.core.domain.TableRowKind
 import tw.myfsl.app.core.model.MoneyFormat
@@ -39,9 +41,17 @@ private val TotalWidth = 80.dp
  * 當月欄加底色；點項目列可以編輯；自動估算的列以灰字顯示。
  */
 @Composable
-fun PlanMonthTable(table: PlanTable, onEditItem: (Long) -> Unit, modifier: Modifier = Modifier) {
+fun PlanMonthTable(
+    table: PlanTable,
+    onEditItem: (Long) -> Unit,
+    onView: (PlanTableView) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val scroll = rememberScrollState()
     val highlight = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+
+    // 同一張表兩個問題（R-PLS-10）：刷卡是隔月繳的，「花」和「付」不在同一個月。
+    SegmentedChoice(PlanTableView.entries, table.view, { it.label }, onView, Modifier.padding(bottom = Spacing.sm))
 
     Row(modifier.fillMaxWidth()) {
         Column(Modifier.width(NameWidth)) {
@@ -77,7 +87,10 @@ fun PlanMonthTable(table: PlanTable, onEditItem: (Long) -> Unit, modifier: Modif
                         Box(Modifier.width(CellWidth * 12 + TotalWidth).height(RowHeight))
                     } else {
                         row.monthly.forEachIndexed { i, v ->
-                            ValueCell(row, v, Modifier.width(CellWidth).background(if (i + 1 == table.currentMonth) highlight else Color.Transparent))
+                            ValueCell(
+                                row, v, Modifier.width(CellWidth).background(if (i + 1 == table.currentMonth) highlight else Color.Transparent),
+                                month = i + 1,
+                            )
                         }
                         ValueCell(row, row.total, Modifier.width(TotalWidth), bold = true)
                     }
@@ -87,7 +100,16 @@ fun PlanMonthTable(table: PlanTable, onEditItem: (Long) -> Unit, modifier: Modif
     }
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     Text(
-        "向左滑看其他月份。點項目可以修改；灰字是依貸款與卡片條件自動估算的。",
+        "向左滑看其他月份。點項目可以修改；灰字是依貸款與卡片條件自動估算的。" + when (table.view) {
+            PlanTableView.SPEND ->
+                "刷卡那一列是刷的月份，要等繳卡費才真的出去，所以一欄加起來不是那個月的現金——" +
+                    "想看每個月要準備多少，切到「什麼時候付」。"
+
+            PlanTableView.CASH ->
+                "這裡的每一格都是那個月真的從帳戶出去的錢：刷卡不在這裡，繳卡費才在。" +
+                    "1 月的繳卡費繳的是去年 12 月的帳單，12 月刷的要明年 1 月才繳。" +
+                    "「已過」是今天以前的月份——那些已經發生過了，不再推估；實際繳了多少在「紀錄」裡看。"
+        },
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = Spacing.xs),
@@ -116,7 +138,14 @@ private fun HeaderCell(text: String, modifier: Modifier, align: TextAlign = Text
 }
 
 @Composable
-private fun ValueCell(row: TableRow, value: Long, modifier: Modifier, bold: Boolean = false) {
+private fun ValueCell(row: TableRow, value: Long, modifier: Modifier, bold: Boolean = false, month: Int? = null) {
+    // 「0」和「這個月已經過去、不再推估」要看得出差別（R-PLS-11）：金額 0 沿用「—」，過去的月份寫「已過」。
+    if (month != null && month in row.pastMonths) {
+        Box(modifier.height(RowHeight).padding(horizontal = Spacing.xs), contentAlignment = Alignment.CenterEnd) {
+            Text("已過", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outlineVariant, maxLines = 1)
+        }
+        return
+    }
     val negative = row.kind == TableRowKind.CASH_FLOW && value < 0
     Box(modifier.height(RowHeight).padding(horizontal = Spacing.xs), contentAlignment = Alignment.CenterEnd) {
         Text(

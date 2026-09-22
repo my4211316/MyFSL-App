@@ -42,12 +42,6 @@ data class AppSettings(
     val reminderDays: List<Int> = listOf(7, 3),
     /** 深色／淺色（R-SET-08）。 */
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    /**
-     * 試算的付款假設（R-MIX-02）：未來的計畫支出有多少比例是刷卡，0–100。
-     * 預設 0 ＝「全部當現金付」：消費當月就從帳戶扣，不靠刷卡遞延。
-     * 已經欠的卡債、分期與每期卡費不受影響（那是已經發生的事實）。
-     */
-    val forecastCardPercent: Int = 0,
 )
 
 /** 某個時間點的完整財務資料，供純計算函式使用。 */
@@ -106,6 +100,23 @@ data class FinanceSnapshot(
         return account.hasCardSchedule || account.loan != null
     }
 
+    /** 這張卡的每期繳款是不是由年度計畫編的（R-CARD-27）。 */
+    fun paysCardFromPlan(accountId: Long?): Boolean {
+        val account = account(accountId) ?: return false
+        return account.hasCardSchedule && account.card?.paymentPlan == CardPaymentPlan.PLANNED
+    }
+
+    /**
+     * 這個計畫轉帳項目要不要自己算一筆現金流：
+     * - 轉入的負債已依合約自動繳款：不算，除非勾了「額外還款」（R-PAY-03）；
+     * - 轉入的卡片選了「照計畫編的金額」：這筆**就是**那張卡的繳款，由卡片的期別去扣（R-CARD-27），這裡不能再算一次。
+     */
+    fun countsAsOwnTransfer(item: PlanItem): Boolean {
+        if (item.type != FlowType.TRANSFER) return true
+        if (paysCardFromPlan(item.toAccountId)) return false
+        return !isAutoManagedDebt(item.toAccountId) || item.extraRepayment
+    }
+
     /**
      * 某項目在某月是否仍在使用：封存只影響封存月份（含）之後，之前的計畫與紀錄照舊。
      */
@@ -128,8 +139,25 @@ data class FinanceSnapshot(
     fun planAmount(line: PlanLine, year: Int, month: Int): Money =
         planForYear(year)[line]?.getOrNull(month - 1) ?: 0
 
-    /** 項目某月的計畫金額（R-MIX-01：一個項目一個數字）。 */
-    fun plannedAmount(itemId: Long, year: Int, month: Int): Money = planAmount(PlanLine(itemId), year, month)
+    /** 項目某月的計畫金額：各支付方式的列加起來（R-MIX-01）。 */
+    fun plannedAmount(itemId: Long, year: Int, month: Int): Money =
+        planForYear(year).entries.sumOf { (line, months) ->
+            if (line.itemId == itemId) months.getOrNull(month - 1) ?: 0L else 0L
+        }
+
+    /** 這個項目某年有哪些計畫列（依支付方式，固定順序：現金、信用卡、轉帳、無）。 */
+    fun planLines(itemId: Long, year: Int): List<PlanLine> =
+        planForYear(year).keys.filter { it.itemId == itemId }.sortedBy { it.method?.ordinal ?: Int.MAX_VALUE }
+
+    /**
+     * 項目某月的計畫金額，依支付方式分開（R-MIX-01）：金額為 0 的列不回傳。
+     * 支出用它決定錢什麼時候離開帳戶——現金當月扣、刷卡進帳單、轉帳當月扣。
+     */
+    fun plannedByMethod(itemId: Long, year: Int, month: Int): Map<PaymentMethod?, Money> =
+        planForYear(year).entries
+            .filter { it.key.itemId == itemId }
+            .associate { it.key.method to (it.value.getOrNull(month - 1) ?: 0L) }
+            .filterValues { it != 0L }
 
     /** 項目某月有沒有編計畫。 */
     fun isPlanned(itemId: Long, year: Int, month: Int): Boolean = plannedAmount(itemId, year, month) > 0

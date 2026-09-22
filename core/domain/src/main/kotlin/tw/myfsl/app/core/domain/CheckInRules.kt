@@ -42,20 +42,24 @@ enum class ConfirmChoice(val label: String) {
     fun labelFor(type: FlowType): String = if (this == PAID && type == FlowType.INCOME) "已入帳" else label
 }
 
-/** 每週回報的一列（現金分信封或能單獨查到金額的項目）。 */
+/** 每週回報的一列（現金分信封或能單獨查到金額的項目）：一列 = 項目 × 支付方式（R-MIX-01）。 */
 data class ReportLine(
     val item: PlanItem,
     val method: PaymentMethod?,
     val planned: Money,
-    /** 本月已記帳的金額。 */
+    /** 本月這個支付方式已記帳的金額。 */
     val recorded: Money,
 ) {
-    val line: PlanLine get() = PlanLine(item.id)
+    val line: PlanLine get() = PlanLine(item.id, method)
     val input: ReportInput get() = CheckInRules.inputFor(method)
     val prefill: Money get() = CheckInRules.prefill(input, planned, recorded)
 }
 
-/** 到期確認的一列：本月計畫的到期項目，或之前延期、現在到期的款項（[deferral] 不為 null）。 */
+/**
+ * 到期確認的一列：本月計畫的到期項目，或之前延期、現在到期的款項（[deferral] 不為 null）。
+ * 確認的是**整個項目**本月的金額（R-MIX-01）：不管實際用哪一種方式付，都算在同一筆預算裡，
+ * 所以同一個項目就算有現金列和刷卡列，也只問一次。
+ */
 data class ConfirmLine(
     val item: PlanItem,
     val method: PaymentMethod?,
@@ -189,15 +193,22 @@ object CheckInRules {
         return DueItems.record(snapshot, due, choice)
     }
 
-    /** 每週回報的列：本月有計畫或已有記帳的支出列。 */
+    /**
+     * 每週回報的列（R-CHK-11）：本月有計畫或已有記帳的支出，**一列 = 項目 × 支付方式**。
+     * 現金列問「還剩多少」（數信封），其他方式問「累計花了多少」，所以要分開問、也要分開比對。
+     */
     fun reportLines(snapshot: FinanceSnapshot, date: LocalDate = snapshot.today): List<ReportLine> =
-        rows(snapshot, date, TrackingMode.REPORT).mapNotNull { row ->
-            if (row.item.type == FlowType.EXPENSE && (row.planned > 0 || row.recorded > 0)) {
-                ReportLine(row.item, EntryRules.defaultMethod(snapshot, row.item, date), row.planned, row.recorded)
-            } else {
-                null
+        snapshot.activeItems
+            .filter { it.tracking == TrackingMode.REPORT && it.type == FlowType.EXPENSE }
+            .flatMap { item ->
+                val lines = snapshot.planLines(item.id, date.year).ifEmpty { listOf(PlanLine(item.id, PaymentMethod.CASH)) }
+                lines.mapNotNull { line ->
+                    val planned = snapshot.planAmount(line, date.year, date.monthValue)
+                    val recorded = ActualCalculator
+                        .actualForMethod(item.id, line.method, date.year, date.monthValue, snapshot.actuals, snapshot.ledger).amount
+                    if (planned > 0 || recorded > 0) ReportLine(item, line.method, planned, recorded) else null
+                }
             }
-        }
 
     /**
      * 到期確認的列（R-CHK-02）：本月有計畫、尚未完成也未延期的列，

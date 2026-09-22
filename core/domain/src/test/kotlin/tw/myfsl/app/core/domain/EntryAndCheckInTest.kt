@@ -1,6 +1,7 @@
 package tw.myfsl.app.core.domain
 
 import tw.myfsl.app.core.sample.SampleHousehold
+import tw.myfsl.app.core.sample.SampleHousehold.LIVING
 import tw.myfsl.app.core.sample.SampleHousehold.BANK
 import tw.myfsl.app.core.sample.SampleHousehold.CARD_A
 import tw.myfsl.app.core.sample.SampleHousehold.CARD_B
@@ -9,8 +10,6 @@ import tw.myfsl.app.core.sample.SampleHousehold.CASH
 import tw.myfsl.app.core.sample.SampleHousehold.CONTEST
 import tw.myfsl.app.core.sample.SampleHousehold.FUEL
 import tw.myfsl.app.core.sample.SampleHousehold.HOUSEHOLD
-import tw.myfsl.app.core.sample.SampleHousehold.FOOD_CASH
-import tw.myfsl.app.core.sample.SampleHousehold.LIVING
 import tw.myfsl.app.core.sample.SampleHousehold.PAY_CARD_B
 import tw.myfsl.app.core.sample.SampleHousehold.CARD_B
 import tw.myfsl.app.core.sample.SampleHousehold.SALARY
@@ -61,7 +60,7 @@ class EntryAndCheckInTest {
 
     @Test fun `預設支付方式：這個項目上次用的 優先，否則整體最常用的，都沒有則現金`() {
         // 示意資料最後一筆現金伙食是現金（早餐 $85）
-        assertEquals(PaymentMethod.CASH, EntryRules.defaultMethod(snapshot, item(FOOD_CASH)))
+        assertEquals(PaymentMethod.CASH, EntryRules.defaultMethod(snapshot, item(LIVING)))
         val fresh = snapshot.copy(ledger = emptyList())
         assertEquals("完全沒有紀錄時用現金", PaymentMethod.CASH, EntryRules.defaultMethod(fresh, item(LIVING)))
         // 這個項目沒記過，但整體最常刷卡時帶刷卡
@@ -98,13 +97,14 @@ class EntryAndCheckInTest {
 
     @Test fun `預算提示文字`() {
         fun text(id: Long, method: PaymentMethod?, amount: Long) = EntryRules.hintText(EntryRules.budgetHint(snapshot, item(id), method, amount))
-        assertEquals("現金伙食 本月剩 $4,600", text(FOOD_CASH, PaymentMethod.CASH, 0))
-        assertEquals("記下後 現金伙食 剩 $4,480", text(FOOD_CASH, PaymentMethod.CASH, 120))
-        assertEquals("記下後超出 現金伙食 計畫 $7,400", text(FOOD_CASH, PaymentMethod.CASH, 12_000))
-        assertEquals("生活費 本月剩 $6,200", text(LIVING, PaymentMethod.CREDIT_CARD, 0))
+        // 記帳提示看的是項目整筆預算（R-MIX-01）：現金列 9,000 ＋ 信用卡列 16,000 = 25,000，已花 14,200
+        assertEquals("生活費 本月剩 $10,800", text(LIVING, PaymentMethod.CASH, 0))
+        assertEquals("記下後 生活費 剩 $10,680", text(LIVING, PaymentMethod.CASH, 120))
+        assertEquals("記下後超出 生活費 計畫 $1,200", text(LIVING, PaymentMethod.CASH, 12_000))
+        assertEquals("生活費 本月剩 $10,800", text(LIVING, PaymentMethod.CREDIT_CARD, 0))
         // 換一種方式付，仍然算在同一筆預算裡（R-MIX-01）
-        assertEquals("生活費 本月剩 $6,200", text(LIVING, PaymentMethod.TRANSFER, 0))
-        assertEquals("記下後 生活費 剩 $5,700", text(LIVING, PaymentMethod.TRANSFER, 500))
+        assertEquals("生活費 本月剩 $10,800", text(LIVING, PaymentMethod.TRANSFER, 0))
+        assertEquals("記下後 生活費 剩 $10,300", text(LIVING, PaymentMethod.TRANSFER, 500))
         assertEquals("不在本月計畫內，會列入計畫外支出", text(CONTEST, PaymentMethod.CASH, 100))
         assertEquals("不影響支出進度", text(SALARY, null, 65_000))
         val overspent = snapshot.copy(ledger = snapshot.ledger + expense(HOUSEHOLD, PaymentMethod.CASH, 1_000, CASH))
@@ -113,8 +113,8 @@ class EntryAndCheckInTest {
 
     @Test fun `預算提示警示色`() {
         fun warn(id: Long, method: PaymentMethod?, amount: Long) = EntryRules.isWarning(EntryRules.budgetHint(snapshot, item(id), method, amount))
-        assertFalse(warn(FOOD_CASH, PaymentMethod.CASH, 4_600))
-        assertTrue(warn(FOOD_CASH, PaymentMethod.CASH, 4_601))
+        assertFalse(warn(LIVING, PaymentMethod.CASH, 10_800))
+        assertTrue(warn(LIVING, PaymentMethod.CASH, 10_801))
         assertFalse("換方式付不再是警示（R-MIX-01）", warn(LIVING, PaymentMethod.TRANSFER, 0))
         assertFalse(warn(CONTEST, PaymentMethod.CASH, 100))
         assertFalse(warn(SALARY, null, 1))
@@ -150,9 +150,9 @@ class EntryAndCheckInTest {
     }
 
     @Test fun `記下後的提示與今天提示列`() {
-        assertEquals("已記下 早餐 $85 · 現金伙食剩 $4,515", EntryRules.savedMessage(snapshot, item(FOOD_CASH), PaymentMethod.CASH, 85, "早餐"))
-        assertEquals("已記下 現金伙食 $85 · 現金伙食剩 $4,515", EntryRules.savedMessage(snapshot, item(FOOD_CASH), PaymentMethod.CASH, 85, "  "))
-        assertEquals("已記下 生活費 $500 · 生活費剩 $5,700", EntryRules.savedMessage(snapshot, item(LIVING), PaymentMethod.TRANSFER, 500, ""))
+        assertEquals("已記下 早餐 $85 · 生活費剩 $10,715", EntryRules.savedMessage(snapshot, item(LIVING), PaymentMethod.CASH, 85, "早餐"))
+        assertEquals("已記下 生活費 $85 · 生活費剩 $10,715", EntryRules.savedMessage(snapshot, item(LIVING), PaymentMethod.CASH, 85, "  "))
+        assertEquals("已記下 生活費 $500 · 生活費剩 $10,300", EntryRules.savedMessage(snapshot, item(LIVING), PaymentMethod.TRANSFER, 500, ""))
         assertEquals("已記下 薪資 $65,000", EntryRules.savedMessage(snapshot, item(SALARY), null, 65_000, ""))
         val today = snapshot.copy(
             ledger = listOf(

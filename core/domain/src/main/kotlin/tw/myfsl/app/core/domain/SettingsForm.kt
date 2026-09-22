@@ -21,10 +21,6 @@ data class SettingsDraft(
     val reminderDays: String = "7, 3",
     /** 深色／淺色（R-SET-08）。 */
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
-    /** 試算是否假設會刷卡（R-MIX-02）；false ＝ 全部當現金付。 */
-    val forecastUsesCard: Boolean = false,
-    /** 刷卡比例（1–100），[forecastUsesCard] 為 true 時才用。 */
-    val forecastCardPercent: String = "40",
 )
 
 object SettingsForm {
@@ -56,8 +52,6 @@ object SettingsForm {
         defaultCardId = settings.defaultCardId,
         reminderDays = settings.reminderDays.joinToString(", "),
         themeMode = settings.themeMode,
-        forecastUsesCard = settings.forecastCardPercent > 0,
-        forecastCardPercent = settings.forecastCardPercent.takeIf { it > 0 }?.toString() ?: "40",
     )
 
     fun validate(draft: SettingsDraft, current: AppSettings, accounts: List<Account>): Result {
@@ -76,12 +70,6 @@ object SettingsForm {
         }
         val reminders = parseReminderDays(draft.reminderDays)
         if (reminders == null) errors[Field.REMINDER_DAYS] = "用逗號分開的天數，每個 1 到 30，例如 7, 3"
-        val cardPercent = if (!draft.forecastUsesCard) {
-            0
-        } else {
-            draft.forecastCardPercent.trim().toIntOrNull()?.takeIf { it in 1..100 }
-                .also { if (it == null) errors[Field.CARD_PERCENT] = "刷卡比例要是 1 到 100 之間的數字" }
-        }
         if (errors.isNotEmpty()) return Result(null, errors)
         return Result(
             current.copy(
@@ -95,7 +83,6 @@ object SettingsForm {
                 defaultCardId = draft.defaultCardId,
                 reminderDays = reminders!!,
                 themeMode = draft.themeMode,
-                forecastCardPercent = cardPercent!!,
             ),
             emptyMap(),
         )
