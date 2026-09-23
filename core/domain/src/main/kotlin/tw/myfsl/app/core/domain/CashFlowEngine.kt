@@ -75,6 +75,11 @@ data class ForecastInput(
     val installmentsBeyond: Map<Long, Money> = emptyMap(),
     /** 有繳款條件的卡：試算開始時這一期帳單還沒繳的部分（R-CARD-20）。 */
     val openStatements: Map<Long, Money> = emptyMap(),
+    /**
+     * 有帳單週期（依帳單繳款）的卡。這些卡才分得出「帳單該繳沒繳掉的」與「還沒出帳的」；
+     * 沒有週期的卡整筆欠款都算卡債（R-CARD-28）。
+     */
+    val statementCards: Set<Long> = emptySet(),
 ) {
     /** 帳戶 id 原樣回傳（每張卡各自模擬）。保留給情境套用時統一使用。 */
     fun mapAccount(id: Long?): Long? = id
@@ -94,7 +99,10 @@ data class PeriodResult(
      * 月內誰先誰後不猜——沒填付款日的項目本來就沒有「哪一天」。
      */
     val liquidEnd: Money,
+    /** 期末**卡債**：帳單該繳而沒繳掉的部分（R-CARD-28）。 */
     val cardDebtEnd: Money,
+    /** 期末**未繳卡款**＝卡債 ＋ 還沒出帳的新刷卡。只用在額度與負債合計。 */
+    val cardUnpaidEnd: Money,
     val loanDebtEnd: Money,
     val income: Money,
     val expense: Money,
@@ -128,16 +136,27 @@ class ForecastResult(
     val totalInstallmentPosted: Money = periods.sumOf { it.installmentPosted }
     val totalBorrowing: Money = periods.sumOf { it.borrowing }
     val endLiquid: Money = periods.lastOrNull()?.liquidEnd ?: startLiquid
+    /** 期末**卡債**（帳單該繳沒繳掉的部分，R-CARD-28）。比較表的「期末卡債」用這個。 */
     val endCardDebt: Money = periods.lastOrNull()?.cardDebtEnd
         ?: input.accounts.filter { it.kind == AccountKind.CREDIT_CARD }.sumOf { it.balance }
+
+    /** 期末**未繳卡款**＝卡債 ＋ 還沒出帳的新刷卡。負債合計用這個。 */
+    val endCardUnpaid: Money = periods.lastOrNull()?.cardUnpaidEnd
+        ?: input.accounts.filter { it.kind == AccountKind.CREDIT_CARD }.sumOf { it.balance }
+
+    /** 期末還沒出帳的新刷卡（繳清就不會變成卡債）。 */
+    val endCardNotDue: Money get() = endCardUnpaid - endCardDebt
     val endLoanDebt: Money = periods.lastOrNull()?.loanDebtEnd
         ?: input.accounts.filter { it.kind.isLiability && it.kind != AccountKind.CREDIT_CARD }.sumOf { it.balance }
 
     /** 期末仍未入帳的分期本金（試算期間之後才入帳）。 */
     val endPendingInstallments: Money = input.installmentsBeyond.values.sum()
 
-    /** 期末總負債 = 卡債 ＋ 未入帳分期本金 ＋ 貸款與保單借款。 */
-    val endTotalDebt: Money = endCardDebt + endPendingInstallments + endLoanDebt
+    /**
+     * 期末總負債 = **未繳卡款**（卡債 ＋ 還沒出帳的）＋ 未入帳分期本金 ＋ 貸款與保單借款。
+     * 負債合計要算你實際欠銀行多少，所以用未繳卡款，不是只算卡債（R-CARD-28）。
+     */
+    val endTotalDebt: Money = endCardUnpaid + endPendingInstallments + endLoanDebt
 
     /**
      * 試算期間年化缺口：(收入 − 支出 − 貸款本金還款) × 12 ÷ 期數。一期就是一個月（R-PER-01）。
@@ -303,7 +322,12 @@ object CashFlowEngine {
                 liquidIn = liquidIn,
                 liquidOut = liquidOut,
                 liquidEnd = sumOf(balances, kinds) { it.isLiquid },
-                cardDebtEnd = sumOf(balances, kinds) { it == AccountKind.CREDIT_CARD },
+                // 卡債 vs 未繳卡款（R-CARD-28）：有帳單週期的卡，卡債就是這一期帳單還沒繳的部分
+                // （`billed − paid`），餘額減掉它就是結帳後才刷、還沒出帳的；沒有週期的卡整筆都是卡債。
+                cardDebtEnd = balances.entries.filter { kinds[it.key] == AccountKind.CREDIT_CARD }.sumOf { (id, balance) ->
+                    if (id in input.statementCards) minOf(unpaidOf(id), balance.coerceAtLeast(0)) else balance.coerceAtLeast(0)
+                },
+                cardUnpaidEnd = sumOf(balances, kinds) { it == AccountKind.CREDIT_CARD },
                 loanDebtEnd = sumOf(balances, kinds) { it.isLiability && it != AccountKind.CREDIT_CARD },
                 income = income,
                 expense = expense,

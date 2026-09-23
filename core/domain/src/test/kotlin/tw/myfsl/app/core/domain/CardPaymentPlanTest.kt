@@ -82,7 +82,10 @@ class CardPaymentPlanTest {
         assertEquals("60,000 ＋ 20,000×3", 120_000L, s.totalCardPayments)
         assertEquals("全額繳清不會有循環利息", 0L, s.totalCardInterest)
         assertEquals(60_000L, s.cardDebtStart)
-        assertEquals("永遠有一個月的刷卡浮在卡上", 20_000L, s.cardDebtEnd)
+        // 每期都把帳單繳掉 → 卡債歸 0；月底留著的 20,000 是當月新刷、還沒出帳的未到期卡款（R-CARD-28）
+        assertEquals("全額繳清就沒有卡債", 0L, s.cardDebtEnd)
+        assertEquals("永遠有一個月的刷卡還沒到期", 20_000L, s.cardUnpaidEnd)
+        assertEquals(20_000L, s.cardNotDueEnd)
         assertEquals(listOf(60_000L, 20_000L, 20_000L, 20_000L), s.cardPayments.subList(8, 12))
     }
 
@@ -93,7 +96,8 @@ class CardPaymentPlanTest {
         // 11 月 (40,630−30,000)×1.25% = 133 → 30,763
         // 12 月 (30,763−30,000)×1.25% =  10 → 20,773
         assertEquals(773L, s.totalCardInterest)
-        assertEquals(20_773L, s.cardDebtEnd)
+        assertEquals("沒繳完的部分才是卡債", 773L, s.cardDebtEnd)
+        assertEquals("未繳卡款＝773 ＋ 12 月刷的 20,000", 20_773L, s.cardUnpaidEnd)
         // 繳款金額要套還款上限（R-PAY-02），上限只有逐月滾動算得出來，所以和其他依帳單繳款的卡一樣
         // 只算「有編計畫、而且今天以後」的月份（R-PLS-05）：今天 9/1，所以是 9–12 月。
         assertEquals("30,000 × 4 期", 120_000L, s.totalCardPayments)

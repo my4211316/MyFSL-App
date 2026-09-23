@@ -238,9 +238,12 @@ class CardInterestTest {
         assertEquals(19_612L, summary.totalCardInterest)
         assertEquals(240_000L, summary.totalCardSpending)
         assertEquals("18,000 × 4 個月", 72_000L, summary.totalCardPayments)
-        assertEquals("年底 427,612 − 年初 400,000", 27_612L, summary.cardDebtChange)
+        // 卡債只算帳單該繳沒繳掉的部分；12 月刷的 20,000 還沒出帳，是未到期卡款（R-CARD-28）
+        assertEquals("年底 407,612 − 年初 400,000", 7_612L, summary.cardDebtChange)
         assertEquals(400_000L, summary.cardDebtStart)
-        assertEquals(427_612L, summary.cardDebtEnd)
+        assertEquals(407_612L, summary.cardDebtEnd)
+        assertEquals("未繳卡款＝407,612 ＋ 12 月刷的 20,000", 427_612L, summary.cardUnpaidEnd)
+        assertEquals(20_000L, summary.cardNotDueEnd)
         assertEquals("卡債變多，標題要跟著方向走（R-PLS-07）", "卡債全年增加", summary.cardDebtLabel)
         // 支出＝實際要繳出去的錢：全部刷卡，所以只有繳卡費 72,000 真的離開帳戶（R-PLS-04）
         assertEquals("960,000 − 72,000", 888_000L, summary.structuralGap)

@@ -75,7 +75,8 @@ class ScenarioAndGoalTest {
         assertTrue("A 卡的合約照舊", applied.events.any { it.relatedAccountId == CARD_A && it.source == EventSource.CARD_SCHEDULE && it.period > oct })
         val result = CashFlowEngine.run(applied)
         val octResult = result.periods.first { it.period == oct }
-        val debtBefore = result.periods.first { it.period == oct.plus(-1) }.cardDebtEnd
+        // 清償付的是**全部餘額**（未繳卡款），不只帳單沒繳掉的那部分（R-CARD-28）
+        val debtBefore = result.periods.first { it.period == oct.plus(-1) }.cardUnpaidEnd
         // 10/1 結帳和 10/15 截止同一個半月：先計 A 卡利息（9/1 帳單 50,200 − 9/15 已繳 18,000 = 32,200 × 15% ÷ 12 = 402.5 → 403）再清償（R-ORD-01）
         assertEquals(debtBefore + 403, octResult.debtPayoff)
         assertEquals(0L, octResult.cardPayments)

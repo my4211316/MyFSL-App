@@ -118,6 +118,18 @@ object CardRules {
 
         val paysFull: Boolean get() = source == Source.LAST_FULL || source == Source.NO_RECORD
 
+        /**
+         * 繳款依據的短標籤，貼在推估出來的金額旁邊（R-CARD-26）：
+         * 那些金額不是使用者編的，畫面上要看得出來它是怎麼來的。
+         */
+        val basis: String get() = when (source) {
+            Source.LAST_FULL -> "照上一期，假設每期全額繳清"
+            Source.LAST_AMOUNT -> "照上一期，假設每期繳 ${MoneyFormat.currency(amount)}"
+            Source.STATEMENT_MINIMUM -> "照帳單最低 ${MoneyFormat.currency(amount)}"
+            Source.NO_RECORD -> if (needsBill) "還沒有帳單，暫且假設每期全額繳清" else "還沒有繳款紀錄，假設每期全額繳清"
+            Source.PLANNED -> "照計畫編的金額"
+        }
+
         /** 給畫面顯示的說明。 */
         fun describe(cardName: String): String = when (source) {
             Source.LAST_FULL -> "$cardName：照上一期，假設每期全額繳清"

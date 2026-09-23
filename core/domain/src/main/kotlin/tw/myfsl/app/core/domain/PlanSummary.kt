@@ -27,10 +27,19 @@ data class GroupTotal(val group: PlanGroup, val monthly: List<Money>) {
 data class CardProjection(
     val accountId: Long,
     val name: String,
-    /** 這一年開始時的欠款（從今天的餘額一路滾過來）。 */
+    /** 這一年開始時的**未繳卡款**（卡債 ＋ 未到期卡款；從今天的餘額一路滾過來）。 */
     val start: Money,
-    /** 這一年結束時的欠款。 */
+    /** 這一年結束時的**未繳卡款**。只用在額度與負債合計，不當「卡債」的標題（R-CARD-28）。 */
     val end: Money,
+    /** 年初的**卡債**：帳單沒繳清、在計息的部分。期初的欠款都算卡債（那是使用者輸入的既有欠款）。 */
+    val startDebt: Money = start,
+    /** 年底的**卡債**。這才是「卡債全年增加／減少」要講的數字（R-PLS-07、R-CARD-28）。 */
+    val endDebt: Money = end,
+    /**
+     * 繳款金額是怎麼來的（R-CARD-26 的推估依據）。依帳單繳款的卡才有；
+     * 沒有條件的卡是使用者自己在計畫裡編的，所以為 null。
+     */
+    val paymentBasis: String? = null,
     val spending: Money,
     val interest: Money,
     val payments: Money,
@@ -129,8 +138,20 @@ data class PlanSummary(
     val monthlyCashFlow: List<Money> get() = List(12) { income[it] - nonCardSpending[it] - cardPayments[it] - loanPayments[it] }
 
     /** 年初、年底的卡債與貸款餘額（R-PLS-06）。 */
-    val cardDebtStart: Money get() = cards.sumOf { it.start }
-    val cardDebtEnd: Money get() = cards.sumOf { it.end }
+    /** 年初的卡債（計息的部分，R-CARD-28）。 */
+    val cardDebtStart: Money get() = cards.sumOf { it.startDebt }
+
+    /** 年底的卡債（計息的部分）。 */
+    val cardDebtEnd: Money get() = cards.sumOf { it.endDebt }
+
+    /** 年初的未繳卡款＝卡債 ＋ 未到期卡款。只用在額度與負債合計。 */
+    val cardUnpaidStart: Money get() = cards.sumOf { it.start }
+
+    /** 年底的未繳卡款。 */
+    val cardUnpaidEnd: Money get() = cards.sumOf { it.end }
+
+    /** 年底還沒到截止日的卡款：刷了要付，但繳清就不計息，不是卡債（R-CARD-28）。 */
+    val cardNotDueEnd: Money get() = cardUnpaidEnd - cardDebtEnd
     val loanDebtStart: Money get() = loans.sumOf { it.start }
     val loanDebtEnd: Money get() = loans.sumOf { it.end }
 
@@ -263,13 +284,20 @@ object PlanSummaryCalculator {
             // 繳款由計畫編的卡：照期別計息，但繳款金額看計畫，而且不再往 cardPay 加一次。
             val fromPlan = scheduled && snapshot.paysCardFromPlan(account.id)
             var balance = CardRules.baseBalance(snapshot, account).coerceAtLeast(0)
+            var rolled: Pair<Money, Money>? = null
             if (scheduled) {
                 // 照計畫編的卡，中間每一個月都要用那個月編的金額，不能一路用「目前這一期」的（V37-02）。
                 val plannedOf: ((Int, Int) -> Money)? =
                     if (fromPlan) { y, m -> CardRules.plannedPayment(snapshot, account.id, y, m) } else null
-                balance = rollTo(balance, terms!!, assumption!!, snapshot, year, ownSpending, plannedOf)
+                rolled = rollTo(balance, terms!!, assumption!!, snapshot, year, ownSpending, plannedOf)
+                balance = rolled.first + rolled.second
             }
             val start = balance
+            // 兩條線（R-CARD-28）：卡債＝帳單沒繳清、在計息的部分；未到期卡款＝當月新刷、還沒出帳的。
+            // 期初的欠款一律算卡債——那是使用者輸入的既有欠款（他自己說那是在算循環利息的部分）。
+            var debt = rolled?.first ?: balance
+            var notDue = rolled?.second ?: 0L
+            val startDebt = debt
             var spent = 0L
             var paid = 0L
             var owed = 0L
@@ -301,7 +329,11 @@ object PlanSummaryCalculator {
                 paid += payment
                 owed += monthInterest
                 perMonth[month - 1] = payment
-                balance = (balance + monthInterest + spending - payment).coerceAtLeast(0)
+                // 這一期的帳單 = 上個月結轉的（卡債 ＋ 上個月新刷的，那些這期出帳了）。
+                // 繳款先抵帳單，沒繳掉的加上利息就是卡債；這個月新刷的還沒出帳，是未到期卡款。
+                debt = (debt + notDue + monthInterest - payment).coerceAtLeast(0)
+                notDue = spending
+                balance = debt + notDue
             }
             val monthly = autoMonths.map { ownSpending(year, it) }
             CardProjection(
@@ -320,6 +352,9 @@ object PlanSummaryCalculator {
                 // 逐卡列要和合計列對得起來（R-PLS-10）：依帳單繳款的卡用滾動的結果，
                 // 沒有條件的卡用計畫原樣（那也正是上面加進 cardPay 的金額）。
                 monthlyPayments = if (scheduled) perMonth.toList() else (planCardPay[account.id]?.toList() ?: List(12) { 0L }),
+                startDebt = startDebt,
+                endDebt = debt,
+                paymentBasis = assumption?.basis,
             )
         }
 
@@ -407,8 +442,10 @@ object PlanSummaryCalculator {
         spendingOf: (Int, Int) -> Money,
         /** 照計畫編的金額時，那個月想繳多少；其他繳法為 null（照 [assumption]）。 */
         paymentOf: ((Int, Int) -> Money)? = null,
-    ): Money {
-        var current = balance
+    ): Pair<Money, Money> {
+        // 回傳（卡債, 未到期卡款）：兩條線一起滾，下一年的年初才分得清哪一半在計息（R-CARD-28）。
+        var debt = balance
+        var notDue = 0L
         var ym = java.time.YearMonth.from(snapshot.today)
         val target = java.time.YearMonth.of(year, 1)
         val months = mutableMapOf<Int, List<Int>>()
@@ -417,12 +454,13 @@ object PlanSummaryCalculator {
             val allowed = months.getOrPut(ym.year) { autoMonthsOf(snapshot, ym.year) }
             if (ym.monthValue in allowed) {
                 val spending = spendingOf(ym.year, ym.monthValue)
-                val outlook = CardRules.outlook(current, terms, assumption, spending, paymentOf?.invoke(ym.year, ym.monthValue))
-                current = (current + outlook.interest + spending - outlook.payment).coerceAtLeast(0)
+                val outlook = CardRules.outlook(debt + notDue, terms, assumption, spending, paymentOf?.invoke(ym.year, ym.monthValue))
+                debt = (debt + notDue + outlook.interest - outlook.payment).coerceAtLeast(0)
+                notDue = spending
             }
             ym = ym.plusMonths(1)
         }
-        return current
+        return debt to notDue
     }
 
     private const val MAX_ROLL_MONTHS = 600

@@ -49,8 +49,11 @@ class DesignGoldenTest {
         assertEquals(Period(2027, 1), result.lowest?.period)
         assertNull("兩年內都沒有低於安全線——但卡債一路長大，看 endCardDebt", result.firstBelowSafety)
         assertEquals(-79_936L, result.structuralGapPerYear)
-        assertEquals("每月刷 21,900、只繳 18,000，兩年後卡債從 105,000 長到 330,365", 330_365L, result.endCardDebt)
-        assertEquals(1_452_761L, result.endTotalDebt)
+        // 卡債＝帳單該繳沒繳掉的部分；未繳卡款還含最後一期刷的（2028/8 有家族旅遊，21,900 ＋ 52,180 = 74,080，R-CARD-28）
+        assertEquals("每月刷 21,900、只繳 18,000，兩年後卡債從 105,000 長到 256,285", 256_285L, result.endCardDebt)
+        assertEquals(330_365L, result.endCardUnpaid)
+        assertEquals(74_080L, result.endCardNotDue)
+        assertEquals("負債合計用未繳卡款", 1_452_761L, result.endTotalDebt)
         assertEquals("每期都沒繳清，兩年的循環利息", 38_905L, result.totalCardInterest)
         assertEquals(
             listOf(157L, 155, 155, 130, 89, 208, 227, 228, 196, 175, 138, 152, 170, 177, 186, 170, 138, 257, 276, 276, 245, 224, 187, 200),
@@ -89,7 +92,10 @@ class DesignGoldenTest {
         assertEquals(Period(2027, 1), result.lowest?.period)
         assertNull("減 20% 之後不會低於安全線", result.firstBelowSafety)
         assertEquals("減 20% 之後結構由負轉正，但已經欠的還是要還", 33_945L, result.structuralGapPerYear)
-        assertEquals("刷卡列也減了，卡債長得比較慢，但還是在長", 204_063L, result.endCardDebt)
+        // 可調項目減 20%（手機網路不是可調，沒減）：2028/8 刷卡 (16,000+3,500)×0.8 ＋ 2,400 ＋ 52,180×0.8 = 59,744
+        assertEquals("刷卡列也減了，卡債長得比較慢，但還是在長", 144_319L, result.endCardDebt)
+        assertEquals(204_063L, result.endCardUnpaid)
+        assertEquals(59_744L, result.endCardNotDue)
         assertEquals(1_326_459L, result.endTotalDebt)
         assertEquals(24_655L, result.totalCardInterest)
         assertEquals(

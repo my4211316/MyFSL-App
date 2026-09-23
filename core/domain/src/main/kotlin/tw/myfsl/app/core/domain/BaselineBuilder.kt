@@ -156,7 +156,13 @@ object BaselineBuilder {
         val beyond = addInstallments(snapshot, input, end, events)
         val open = addCardSchedule(snapshot, input, end, events)
         addLoanSchedules(snapshot, input, end, events)
-        return input.copy(events = events, installmentsBeyond = beyond, openStatements = open)
+        return input.copy(
+            events = events,
+            installmentsBeyond = beyond,
+            openStatements = open,
+            // 有帳單週期的卡才分得出「帳單沒繳掉的」與「還沒出帳的」（R-CARD-28）
+            statementCards = snapshot.activeCards.filter { it.hasCardSchedule }.map { it.id }.toSet(),
+        )
     }
 
     private fun MutableList<FlowEvent>.addIfInRange(

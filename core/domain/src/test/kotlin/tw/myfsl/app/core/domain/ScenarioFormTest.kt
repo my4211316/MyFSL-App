@@ -59,7 +59,8 @@ class ScenarioFormTest {
         // 水位最低點反而是現況比較高：整合把刷卡改成現金付，錢當月就出去了。
         // 代價寫在卡債那一欄——現況兩年後還欠 330,365，整合是 0。
         assertEquals(89_465L, comparison.bestLowest)
-        assertEquals(330_365L, comparison.outcomes[0].endCardDebt)
+        // 比較表的「期末卡債」＝帳單該繳沒繳掉的部分（R-CARD-28），不含最後一期還沒出帳的刷卡
+        assertEquals(256_285L, comparison.outcomes[0].endCardDebt)
     }
 
     @Test fun `存回草稿：新增貸款與同期清償合併回貸款整合`() {

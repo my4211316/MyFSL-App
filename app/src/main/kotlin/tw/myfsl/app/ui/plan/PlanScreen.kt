@@ -173,14 +173,24 @@ fun PlanScreen(
                                 )
                             }
                             // 還本金不是花掉，是把負債換成淨值，所以另外標出來（R-PLS-04）。
+                            // 方向要跟著數字走（R-PLS-07 的同一條原則）：負數代表債務在長大，
+                            // 不能寫成「−$127,632 是在還債務本金」。
                             if (summary.debtPrincipal != 0L) {
+                                val principal = summary.debtPrincipal
+                                val gap = summary.gapWithoutPrincipal
                                 HintText(
-                                    "其中 ${MoneyFormat.currency(summary.debtPrincipal)} 是在還債務本金；" +
-                                        "不算還本金的話，費用比收入${if (summary.gapWithoutPrincipal < 0) "多" else "少"} " +
-                                        MoneyFormat.currency(kotlin.math.abs(summary.gapWithoutPrincipal)),
+                                    if (principal > 0) {
+                                        "其中 ${MoneyFormat.currency(principal)} 是在還債務本金"
+                                    } else {
+                                        "債務反而增加 ${MoneyFormat.currency(-principal)}（刷卡與利息比繳出去的多）"
+                                    } + "；不算債務本金的話，費用比收入${if (gap < 0) "多" else "少"} " +
+                                        MoneyFormat.currency(kotlin.math.abs(gap)),
+                                    color = if (principal < 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                             // 卡債的標題跟著方向走（R-PLS-07）：不會用「增加」描述一個負數。
+                            // 卡債只算「帳單該繳沒繳掉」的部分，不含還沒出帳的刷卡（R-CARD-28）——
+                            // 把時間差算進卡債，這個數字的方向會反過來。
                             if (summary.cards.isNotEmpty()) {
                                 HintText(
                                     "${summary.cardDebtLabel} ${MoneyFormat.currency(kotlin.math.abs(summary.cardDebtChange))}：" +
@@ -188,14 +198,24 @@ fun PlanScreen(
                                         "年底 ${MoneyFormat.currency(summary.cardDebtEnd)}",
                                     color = if (summary.cardDebtChange > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                if (summary.cardNotDueEnd > 0) {
+                                    HintText(
+                                        "另有 ${MoneyFormat.currency(summary.cardNotDueEnd)} 是還沒到期的卡款" +
+                                            "（年底刷的、下一期繳，繳清就不會變成卡債）；" +
+                                            "未繳卡款合計 ${MoneyFormat.currency(summary.cardUnpaidEnd)}",
+                                    )
+                                }
                                 // 逐卡把「刷多少 vs 繳多少」講出來（R-PLS-10）：這是編刷卡列時最需要看到的一句話。
+                                // 繳款是推估的，不是使用者編的，所以要標出依據（R-CARD-26）。
                                 summary.cards.filter { it.spending > 0 || it.payments > 0 }.forEach { card ->
                                     HintText(
                                         "${card.name}：刷 ${MoneyFormat.currency(card.spending)}" +
                                             "、利息 ${MoneyFormat.currency(card.interest)}" +
                                             "、繳 ${MoneyFormat.currency(card.payments)}" +
-                                            " → 年底 ${MoneyFormat.currency(card.end)}",
-                                        color = if (card.change > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            " → 年底卡債 ${MoneyFormat.currency(card.endDebt)}" +
+                                            (if (card.end > card.endDebt) "（另有未到期 ${MoneyFormat.currency(card.end - card.endDebt)}）" else "") +
+                                            (card.paymentBasis?.let { "；繳款是推估的：$it" } ?: ""),
+                                        color = if (card.endDebt > card.startDebt) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                             }

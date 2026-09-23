@@ -140,9 +140,12 @@ class BudgetPlanAccountTest {
         assertEquals(-118_437L, summary.debtPrincipal)
         assertEquals("不算還本金：200,952 − 118,437", 82_515L, summary.gapWithoutPrincipal)
         // 卡債變化看年底與年初的餘額差（R-PLS-06）：A 卡 60,000 → 90,490，B 卡 45,000 → 9,000。
+        // 卡債＝帳單該繳沒繳掉的部分；12 月刷的 21,900 還沒出帳，是未到期卡款（R-CARD-28）
         assertEquals(105_000L, summary.cardDebtStart)
-        assertEquals(99_490L, summary.cardDebtEnd)
-        assertEquals(-5_510L, summary.cardDebtChange)
+        assertEquals("A 卡 68,590 ＋ B 卡 9,000", 77_590L, summary.cardDebtEnd)
+        assertEquals(-27_410L, summary.cardDebtChange)
+        assertEquals("未繳卡款＝卡債 ＋ 未到期", 99_490L, summary.cardUnpaidEnd)
+        assertEquals("12 月刷的還沒出帳", 21_900L, summary.cardNotDueEnd)
         assertEquals("卡債變少，標題要跟著方向走（R-PLS-07）", "卡債全年減少", summary.cardDebtLabel)
         assertEquals("9 月：525 ＋ 33,900 − 27,000", 7_425L, summary.cardDebtChange(9))
         assertEquals(listOf(33_900L, 21_900L, 21_900L, 21_900L), summary.cardSpending.subList(8, 12))
